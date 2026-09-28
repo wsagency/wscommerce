@@ -37,6 +37,7 @@ import type {
 	QuoteFailureReason,
 	QuoteRequestWire,
 	QuoteResult,
+	SellableVariantPriceWire,
 } from "../product-commerce/commerce-client.js";
 import type { RouteHandler } from "../types.js";
 import {
@@ -325,11 +326,27 @@ export function createCheckoutSummaryRouteHandler(): RouteHandler<CheckoutSummar
 			let pricing: CartPricingWire;
 			try {
 				let commerceById = new Map<string, CatalogProductCommerce | null>();
+				let variantPrices: SellableVariantPriceWire[] = [];
 				if (productIds.length > 0) {
 					const loader = await createCommerceLoader(ctx);
 					commerceById = await loader.loadMany(productIds);
+					// A line selling a size is priced at the size's price: one more
+					// batch, and only for the products a line sells a size of.
+					const sizes = new Set<string>();
+					for (const line of cart.lines) {
+						if (line.productId === null) continue;
+						const product = commerceById.get(line.productId) ?? null;
+						if (product !== null && product.sku !== line.sku) sizes.add(line.productId);
+					}
+					if (sizes.size > 0) variantPrices = await client.getSellableVariantPrices([...sizes]);
 				}
-				pricing = buildCartPricing(cart.lines, commerceById, cart.currency, input.locale);
+				pricing = buildCartPricing(
+					cart.lines,
+					commerceById,
+					cart.currency,
+					input.locale,
+					variantPrices,
+				);
 			} catch (err) {
 				console.error(`[otta] ${STOREFRONT_CHECKOUT_SUMMARY_ROUTE} pricing join failed:`, err);
 				pricing = DEGRADED_CART_PRICING;
