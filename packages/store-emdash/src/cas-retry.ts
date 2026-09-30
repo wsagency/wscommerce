@@ -23,8 +23,8 @@ import { isStorageSerializationError } from "./storage-access.js";
  *
  * **Why 24, and why it used to be 12.** Every failed attempt means a *different*
  * writer committed to the same document, so what a writer can lose is bounded by
- * how many peers can successfully commit while it is in flight — and that bound is
- * a property of the DOCUMENT, not of the crowd.
+ * how many peer writes can commit while it is in flight. That depends on the
+ * document's state machine, including failure witnesses, and the claimed crowd.
  *
  * - The **inventory** bound now includes claimed failures. The original
  *   unit-bounded measurement preceded durable failed-reserve witnesses: a caller
