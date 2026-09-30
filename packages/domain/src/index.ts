@@ -292,6 +292,12 @@ export {
 } from "./orders/order-address.js";
 export type { CreateOrderFailure, SettleFailure } from "./orders/errors.js";
 export {
+	acceptCODOrder,
+	confirmOfflinePayment,
+	type OfflinePaymentResult,
+	type OfflinePaymentFailure,
+} from "./orders/offline-payment.js";
+export {
 	codAcceptanceOutcome,
 	offlineReceiptOutcome,
 	offlineProviderRef,

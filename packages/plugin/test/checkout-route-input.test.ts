@@ -44,6 +44,25 @@ describe("parseCheckoutSummaryInput", () => {
 });
 
 describe("parseCheckoutPlaceInput", () => {
+	test("accepts explicit offline methods and immutable billing fields, rejects unknown methods and oversized tax identifiers", () => {
+		const base = { cartId: "cart-1", buyerRef: "buyer@example.test", idempotencyKey: "k" };
+		for (const paymentMethod of ["bank_transfer", "cod"]) {
+			expect(
+				parseCheckoutPlaceInput({
+					...base,
+					paymentMethod,
+					billingAddress: { ...ADDRESS, company: " Acme ", taxNumber: " TAX123 ", vatId: null },
+				}),
+			).toMatchObject({ paymentMethod, billingAddress: { company: "Acme", taxNumber: "TAX123" } });
+		}
+		expect(parseCheckoutPlaceInput({ ...base, paymentMethod: "paid" })).toBeNull();
+		expect(
+			parseCheckoutPlaceInput({
+				...base,
+				billingAddress: { ...ADDRESS, taxNumber: "x".repeat(65) },
+			}),
+		).toBeNull();
+	});
 	test("accepts the minimum viable checkout — cartId, buyerRef, idempotencyKey", () => {
 		expect(
 			parseCheckoutPlaceInput({

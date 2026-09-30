@@ -157,7 +157,7 @@ afterAll(async () => {
  * `createFromCart` lands an order in `pending` and `markPaid` moves it.
  */
 async function seedOrder(
-	options: { paid?: boolean; capturedCents?: number } = {},
+	options: { paid?: boolean; capturedCents?: number; offline?: "bank_transfer" | "cod" } = {},
 ): Promise<string> {
 	seq += 1;
 	const suffix = `${NS}-${String(seq)}`;
@@ -169,7 +169,25 @@ async function seedOrder(
 		idempotencyKey: idempotencyKey(`create-${suffix}`),
 		holdExpiresAt: "2099-01-01T00:00:00.000Z",
 		buyerRef: `alice-${suffix}@example.com`,
-		paymentMethod: "stripe",
+		paymentMethod: options.offline ?? "stripe",
+		...(options.offline
+			? {
+					offlinePayment: {
+						method: options.offline,
+						instructions: "Local test instructions",
+						paymentReference: id,
+						paymentDueAt: "2099-01-01T00:00:00.000Z",
+						status: "awaiting" as const,
+						acceptedAt: null,
+						acceptedBy: null,
+						acceptanceKey: null,
+						receivedAt: null,
+						recordedBy: null,
+						receiptRef: null,
+						confirmationKey: null,
+					},
+				}
+			: {}),
 		lines: [
 			{
 				productId: toProductId(`prod-${suffix}`),
@@ -178,7 +196,7 @@ async function seedOrder(
 				unitPrice: cents(TOTAL_CENTS),
 				currency: currency("USD"),
 				quantity: 1,
-				fulfillmentKind: "digital",
+				fulfillmentKind: options.offline === "cod" ? "physical" : "digital",
 				reservationId: null,
 			},
 		],
@@ -265,10 +283,12 @@ describe("the Orders write path (workerd sandbox)", () => {
 		// The combination that used to blank a console: a control rendered for an id
 		// the dispatcher does not know. The set is read straight off the dispatch
 		// table, and this drives every member to prove it.
-		// 5 named + one per order state + one per ONE-CLICK cancellation reason.
+		// 7 named + one per order state + one per ONE-CLICK cancellation reason.
 		// `other` has no one-click control, so it derives no id (and the deleted
 		// `-review` pair derives none either).
-		expect(ORDERS_ACTION_IDS.size).toBe(5 + 10 + 4);
+		expect(ORDERS_ACTION_IDS.size).toBe(7 + 10 + 4);
+		expect(ORDERS_ACTION_IDS.has("orders:accept-cod")).toBe(true);
+		expect(ORDERS_ACTION_IDS.has("orders:confirm-offline-payment")).toBe(true);
 		expect(ORDERS_ACTION_IDS.has("orders:cancel-other")).toBe(false);
 		expect(ORDERS_ACTION_IDS.has("orders:cancel-review")).toBe(false);
 		expect(ORDERS_ACTION_IDS.has("orders:refund-review")).toBe(false);
@@ -281,6 +301,47 @@ describe("the Orders write path (workerd sandbox)", () => {
 	});
 
 	// -- transitions ------------------------------------------------------------
+
+	test("private COD acceptance stays unpaid; stale/invalid receipts do nothing and a witnessed receipt captures once", async () => {
+		const id = await seedOrder({ paid: false, offline: "cod" });
+		const missingWatermark = await act("orders:accept-cod", { orderId: id, acceptedBy: "staff" });
+		expect(missingWatermark.notice?.variant).toBe("error");
+		expect((await readOrder(id)).state).toBe("pending");
+		const accepted = await act("orders:accept-cod", {
+			orderId: id,
+			state: "pending",
+			acceptedBy: "staff",
+		});
+		expect(accepted.notice?.title).toBe("COD accepted for dispatch");
+		expect((await readOrder(id)).state).toBe("processing");
+		expect((await readOrder(id)).offlinePayment?.status).toBe("accepted");
+		expect(await orderStore.getCapturedPayments(toOrderId(id))).toEqual([]);
+		const receipt = {
+			orderId: id,
+			state: "processing",
+			receiptRef: `cod-receipt-${id}`,
+			amountCents: "1500",
+			currency: "USD",
+			recordedBy: "staff",
+		};
+		expect(
+			(await act("orders:confirm-offline-payment", { ...receipt, state: "pending" })).notice
+				?.variant,
+		).toBe("error");
+		expect(
+			(await act("orders:confirm-offline-payment", { ...receipt, amountCents: "1499" })).notice
+				?.description,
+		).toContain("exactly match");
+		expect(await orderStore.getCapturedPayments(toOrderId(id))).toEqual([]);
+		expect((await act("orders:confirm-offline-payment", receipt)).notice?.title).toBe(
+			"Payment receipt recorded",
+		);
+		expect((await act("orders:confirm-offline-payment", receipt)).notice?.title).toBe(
+			"Receipt already recorded",
+		);
+		expect((await readOrder(id)).state).toBe("processing");
+		expect(await orderStore.getCapturedPayments(toOrderId(id))).toHaveLength(1);
+	});
 
 	test("a transition APPLIES to the persisted order and reports no notice", async () => {
 		// What the deleted POST-body assertion was a proxy for. There is no request

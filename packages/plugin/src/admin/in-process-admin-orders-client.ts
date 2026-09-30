@@ -93,6 +93,8 @@ import {
 	appendOrderNote,
 	cancelOrder as cancelOrderUseCase,
 	computeRefundCeiling,
+	acceptCODOrder as acceptCODOrderUseCase,
+	confirmOfflinePayment as confirmOfflinePaymentUseCase,
 	getOrderCustomerContext,
 	getOrderTimeline,
 	idempotencyKey as toIdempotencyKey,
@@ -128,6 +130,8 @@ import {
 	CommerceInputError,
 	isCommerceInputError,
 	requireBoundedText,
+	requireMoney,
+	requireIdempotencyKey,
 	requireCurrencyCode,
 	requireIdToken,
 } from "../commerce/commerce-input.js";
@@ -140,6 +144,7 @@ import type { PluginContext } from "../types.js";
 import type {
 	AddNoteResult,
 	AdminOrdersSurface,
+	OfflinePaymentActionResult,
 	CancelOrderResult,
 	CustomerContextWire,
 	OrderDetailResult,
@@ -239,7 +244,10 @@ export class InProcessAdminOrdersClient implements AdminOrdersSurface {
 		if (order === null) return null;
 		return {
 			order: toOrderDetailWire(order),
-			allowedTransitions: [...legalNextStates(order.state)],
+			allowedTransitions: legalNextStates(order.state).filter(
+				(state) =>
+					!(state === "paid" && order.offlinePayment && order.offlinePayment.status !== "received"),
+			),
 		};
 	}
 
@@ -357,6 +365,87 @@ export class InProcessAdminOrdersClient implements AdminOrdersSurface {
 		if (res.reason === "ORDER_NOT_FOUND") return { ok: false, status: 404, reason: res.reason };
 		if (res.reason === "NOT_FULFILLABLE") return { ok: false, status: 409, reason: res.reason };
 		return { ok: false, status: 400, reason: res.reason };
+	}
+
+	async acceptCODOrder(
+		orderId: string,
+		acceptance: { acceptedBy: string },
+		opts: { idempotencyKey: string },
+	): Promise<OfflinePaymentActionResult> {
+		try {
+			requireIdToken("orderId", orderId);
+			requireBoundedText("acceptedBy", acceptance.acceptedBy, 1, 200);
+			requireIdempotencyKey(opts.idempotencyKey);
+		} catch (err) {
+			if (isCommerceInputError(err)) return { ok: false, status: 400, reason: "INVALID_INPUT" };
+			throw err;
+		}
+		const result = await acceptCODOrderUseCase(
+			{
+				orderStore: this.#stores.orderStore,
+				inventoryStore: this.#stores.inventory,
+				entitlementStore: this.#stores.entitlementStore,
+				paymentEventStore: this.#stores.paymentEventStore,
+				clock: this.#stores.clock,
+			},
+			{
+				orderId: toOrderId(orderId),
+				acceptedBy: acceptance.acceptedBy,
+				idempotencyKey: toIdempotencyKey(opts.idempotencyKey),
+			},
+		);
+		if (!result.ok)
+			return {
+				ok: false,
+				status:
+					result.reason === "ORDER_NOT_FOUND" ? 404 : result.reason === "INVALID_INPUT" ? 400 : 409,
+				reason: result.reason,
+			};
+		await this.#stores.orderStore.completeHoldCommit(toOrderId(orderId));
+		return { ok: true, applied: result.applied };
+	}
+
+	async confirmOfflinePayment(
+		orderId: string,
+		receipt: { receiptRef: string; amountCents: number; currency: string; recordedBy: string },
+		opts: { idempotencyKey: string },
+	): Promise<OfflinePaymentActionResult> {
+		try {
+			requireIdToken("orderId", orderId);
+			requireBoundedText("receiptRef", receipt.receiptRef, 1, 200);
+			requireBoundedText("recordedBy", receipt.recordedBy, 1, 200);
+			requireIdempotencyKey(opts.idempotencyKey);
+			requireMoney("receipt", { amount: receipt.amountCents, currency: receipt.currency });
+		} catch (err) {
+			if (isCommerceInputError(err)) return { ok: false, status: 400, reason: "INVALID_INPUT" };
+			throw err;
+		}
+		const result = await confirmOfflinePaymentUseCase(
+			{
+				orderStore: this.#stores.orderStore,
+				inventoryStore: this.#stores.inventory,
+				entitlementStore: this.#stores.entitlementStore,
+				paymentEventStore: this.#stores.paymentEventStore,
+				clock: this.#stores.clock,
+			},
+			{
+				orderId: toOrderId(orderId),
+				receiptRef: receipt.receiptRef,
+				amount: toCents(receipt.amountCents),
+				currency: toCurrency(receipt.currency),
+				recordedBy: receipt.recordedBy,
+				idempotencyKey: toIdempotencyKey(opts.idempotencyKey),
+			},
+		);
+		if (!result.ok)
+			return {
+				ok: false,
+				status:
+					result.reason === "ORDER_NOT_FOUND" ? 404 : result.reason === "INVALID_INPUT" ? 400 : 409,
+				reason: result.reason,
+			};
+		await this.#stores.orderStore.completeHoldCommit(toOrderId(orderId));
+		return { ok: true, applied: result.applied };
 	}
 
 	/** POST cancel an order WITH a structured reason. Cancelling records the reason
@@ -678,6 +767,8 @@ function toOrderDetailWire(order: Order): OrderDetailWire {
 		fulfillment: order.fulfillment,
 		cancellation: order.cancellation,
 		shippingAddress: order.shippingAddress,
+		billingAddress: order.billingAddress ?? null,
+		offlinePayment: order.offlinePayment ?? null,
 		totals: {
 			currency: order.totals.currency,
 			subtotalCents: order.totals.subtotal,

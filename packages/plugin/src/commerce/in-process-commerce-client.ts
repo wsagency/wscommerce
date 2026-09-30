@@ -153,6 +153,7 @@ import {
 	requirePriceTaxMode,
 	requireQty,
 	requireShippingAddress,
+	requireBillingAddress,
 	requireSku,
 	requireTitle,
 	requireVariantKey,
@@ -957,6 +958,8 @@ export class InProcessCommerceClient implements CommerceClient {
 		if (input.couponCode !== undefined)
 			requireBoundedText("couponCode", input.couponCode, 1, COUPON_CODE_MAX);
 		if (input.shippingAddress !== undefined) requireShippingAddress(input.shippingAddress);
+		if (input.billingAddress !== undefined && input.billingAddress !== null)
+			requireBillingAddress(input.billingAddress);
 		const result = await createOrderFromCart(this.#createOrderDeps, {
 			cartId: input.cartId,
 			idempotencyKey: toIdempotencyKey(idempotencyKey),
@@ -965,6 +968,7 @@ export class InProcessCommerceClient implements CommerceClient {
 			...(input.shippingMethodId !== undefined ? { shippingMethodId: input.shippingMethodId } : {}),
 			...(input.couponCode !== undefined ? { couponCode: input.couponCode } : {}),
 			...(input.shippingAddress !== undefined ? { shippingAddress: input.shippingAddress } : {}),
+			...(input.billingAddress !== undefined ? { billingAddress: input.billingAddress } : {}),
 		});
 		if (!result.ok) return { ok: false, reason: result.reason };
 		return {
@@ -972,6 +976,17 @@ export class InProcessCommerceClient implements CommerceClient {
 			order: serializePublicOrder(result.order),
 			intent: serializeIntent(result.intent),
 		};
+	}
+
+	async checkoutPaymentMethods(): Promise<
+		Array<{ id: "stripe" | "bank_transfer" | "cod"; label: string }>
+	> {
+		const gateways = this.#createOrderDeps.gateways;
+		return [
+			...(gateways.stripe ? [{ id: "stripe" as const, label: "Card" }] : []),
+			...(gateways.bank_transfer ? [{ id: "bank_transfer" as const, label: "Bank transfer" }] : []),
+			...(gateways.cod ? [{ id: "cod" as const, label: "Cash on delivery" }] : []),
+		];
 	}
 
 	/**
@@ -1206,6 +1221,17 @@ function serializePublicOrder(order: Order): PublicOrderWire {
 		state: order.state,
 		currency: order.currency,
 		paymentMethod: order.paymentMethod,
+		...(order.offlinePayment
+			? {
+					offlinePayment: {
+						method: order.offlinePayment.method,
+						status: order.offlinePayment.status,
+						instructions: order.offlinePayment.instructions,
+						paymentReference: order.offlinePayment.paymentReference,
+						paymentDueAt: order.offlinePayment.paymentDueAt,
+					},
+				}
+			: {}),
 		holdExpiresAt: order.holdExpiresAt,
 		createdAt: order.createdAt,
 		totals: {

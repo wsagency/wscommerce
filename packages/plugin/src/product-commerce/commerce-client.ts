@@ -231,6 +231,8 @@ export type VariantUpdateResult =
 // ── end variants wire types ──────────────────────────────────────────────
 
 export interface CommerceClient {
+	/** Configured storefront methods. Optional for older in-process clients. */
+	checkoutPaymentMethods?(): Promise<CheckoutPaymentMethodWire[]>;
 	upsertProductCommerce(
 		productId: string,
 		input: UpsertProductCommerceInput,
@@ -525,7 +527,7 @@ export interface ShippingAddressWire {
 
 export interface CheckoutRequestWire {
 	cartId: string;
-	paymentMethod: "stripe" | "x402";
+	paymentMethod: "stripe" | "x402" | "bank_transfer" | "cod";
 	/** Email/session claim token (ADR-0004). Stored VERBATIM by the service —
 	 *  the site trims but never lowercases it. */
 	buyerRef: string;
@@ -535,6 +537,18 @@ export interface CheckoutRequestWire {
 	/** Required for a cart that ships, in a store with zones. The country is an
 	 *  ISO alpha-2 code and a region an ISO 3166-2 code, on EVERY order. */
 	shippingAddress?: ShippingAddressWire;
+	billingAddress?: BillingAddressWire | null;
+}
+
+export interface CheckoutPaymentMethodWire {
+	id: "stripe" | "bank_transfer" | "cod";
+	label: string;
+}
+
+export interface BillingAddressWire extends ShippingAddressWire {
+	company?: string | null;
+	taxNumber?: string | null;
+	vatId?: string | null;
 }
 
 /** The domain's `ClientAction` verbatim — passed through unmodified; the
@@ -542,6 +556,13 @@ export interface CheckoutRequestWire {
 export type ClientActionWire =
 	| { kind: "stripe_client_secret"; clientSecret: string }
 	| { kind: "x402_challenge"; accepts: string[]; price: number; payTo: string }
+	| {
+			kind: "offline_instructions";
+			method: "bank_transfer" | "cod";
+			instructions: string;
+			paymentReference: string;
+			paymentDueAt: string;
+	  }
 	| { kind: "none" };
 
 export interface PaymentIntentWire {
@@ -558,6 +579,13 @@ export interface PublicOrderWire {
 	state: string;
 	currency: string;
 	paymentMethod: string | null;
+	offlinePayment?: {
+		method: "bank_transfer" | "cod";
+		status: "awaiting" | "accepted" | "received";
+		instructions: string;
+		paymentReference: string;
+		paymentDueAt: string;
+	};
 	holdExpiresAt: string;
 	createdAt: string;
 	/** `shippingZoneId` / `shippingMethodId` are read off the order's shipping
@@ -594,6 +622,7 @@ export type CheckoutFailureReason =
 	| "CURRENCY_MISMATCH"
 	| "INVALID_SHIPPING_ADDRESS"
 	| "PAYMENT_INTENT_FAILED"
+	| "PAYMENT_METHOD_NOT_AVAILABLE"
 	/** The idempotency key already names an order of ANOTHER cart (issue #133):
 	 *  a stale/second checkout tab. Nothing was placed; the cart is untouched. */
 	| "IDEMPOTENCY_KEY_REUSED"

@@ -88,6 +88,8 @@ const ACTION_CANCEL = ORDERS_ACTIONS.custom("cancel");
 /** Both the DA-2b full-remaining refund and the partial refund the surface
  *  confirms for itself. */
 const ACTION_REFUND = ORDERS_ACTIONS.custom("refund");
+const ACTION_ACCEPT_COD = ORDERS_ACTIONS.custom("accept-cod");
+const ACTION_CONFIRM_OFFLINE = ORDERS_ACTIONS.custom("confirm-offline-payment");
 
 /** `transition-<state>` — one DISTINCT verb per state, derived. */
 const transitionVerb = (state: string): string => `transition-${state}`;
@@ -780,6 +782,96 @@ function refundFailureNotice(reason: string | undefined): Notice {
 
 // -- dispatch -----------------------------------------------------------------
 
+const acceptCODAction: OrdersAction = async (client, payload) => {
+	const orderId = readString(payload["orderId"]);
+	const state = readWatermark(payload["state"]);
+	const acceptedBy = readString(payload["acceptedBy"])?.trim();
+	if (!orderId || !state || !acceptedBy || client.acceptCODOrder === undefined)
+		return applied(UNREADABLE);
+	const live = await client.getOrder(orderId);
+	if (live === null || live.order.state !== state)
+		return applied({
+			variant: "error",
+			title: "Order changed — reload",
+			description: "Review the current order before accepting it for dispatch.",
+		});
+	const result = await client.acceptCODOrder(
+		orderId,
+		{ acceptedBy },
+		{ idempotencyKey: `admin-accept-cod:${orderId}` },
+	);
+	return applied(
+		result.ok
+			? {
+					variant: "default",
+					title: result.applied ? "COD accepted for dispatch" : "COD already accepted",
+					description: "Stock is committed. Payment remains unpaid until a receipt is recorded.",
+				}
+			: {
+					variant: "error",
+					title: "COD not accepted",
+					description:
+						"Only a pending physical COD order within its deadline can be accepted. Reload and review its status.",
+				},
+	);
+};
+
+const confirmOfflineAction: OrdersAction = async (client, payload) => {
+	const orderId = readString(payload["orderId"]);
+	const state = readWatermark(payload["state"]);
+	const receiptRef = readString(payload["receiptRef"])?.trim();
+	const recordedBy = readString(payload["recordedBy"])?.trim();
+	const currency = readString(payload["currency"]);
+	const amountCents = parseCents(payload["amountCents"]);
+	if (
+		!orderId ||
+		!state ||
+		!receiptRef ||
+		receiptRef.length > 100 ||
+		!recordedBy ||
+		!currency ||
+		amountCents === null ||
+		client.confirmOfflinePayment === undefined
+	)
+		return applied({
+			variant: "error",
+			title: "Receipt not recorded",
+			description:
+				"Enter a receipt reference (at most 100 characters), exact amount in minor units, currency, and recorder.",
+		});
+	const live = await client.getOrder(orderId);
+	if (live === null || live.order.state !== state)
+		return applied({
+			variant: "error",
+			title: "Order changed — reload",
+			description: "Review the current order and receipt before recording payment.",
+		});
+	const result = await client.confirmOfflinePayment(
+		orderId,
+		{ receiptRef, recordedBy, currency, amountCents },
+		{ idempotencyKey: `admin-offline:${orderId}:${receiptRef}` },
+	);
+	return applied(
+		result.ok
+			? {
+					variant: "default",
+					title: result.applied ? "Payment receipt recorded" : "Receipt already recorded",
+					description:
+						"The frozen order amount is captured once. Fulfillment status is preserved for accepted COD.",
+				}
+			: {
+					variant: "error",
+					title: "Receipt not recorded",
+					description:
+						result.reason === "AMOUNT_MISMATCH"
+							? "The receipt amount and currency must exactly match the frozen order total."
+							: result.reason === "RECEIPT_CONFLICT" || result.reason === "IDEMPOTENCY_KEY_REUSED"
+								? "That receipt or command key is already bound. Review the existing receipt before retrying."
+								: "The order is not payable automatically. Check its deadline/status and use manual reconciliation for a late or cancelled-order receipt.",
+				},
+	);
+};
+
 /**
  * Every Orders write, keyed by the action id that names it.
  *
@@ -795,6 +887,8 @@ const ORDERS_ACTIONS_BY_ID: Readonly<Record<string, OrdersAction>> = {
 	[ACTION_RECORD_FULFILLMENT]: recordFulfillmentAction,
 	[ACTION_CANCEL]: cancelOrderAction,
 	[ACTION_REFUND]: refundOrderAction,
+	[ACTION_ACCEPT_COD]: acceptCODAction,
+	[ACTION_CONFIRM_OFFLINE]: confirmOfflineAction,
 	// One handler per state, keyed by the SAME derived id the control uses.
 	...Object.fromEntries(
 		ORDER_STATES.map((state) => [

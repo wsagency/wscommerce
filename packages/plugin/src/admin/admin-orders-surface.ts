@@ -112,6 +112,25 @@ export interface OrderDetailWire {
 	 *  the order predates capture or is digital-only. Authoritative — never the
 	 *  profile book (which is prefill/context, on the customer panel). */
 	shippingAddress: OrderAddressWire | null;
+	billingAddress?:
+		| (OrderAddressWire & {
+				company: string | null;
+				taxNumber: string | null;
+				vatId: string | null;
+		  })
+		| null;
+	offlinePayment?: {
+		method: "bank_transfer" | "cod";
+		status: "awaiting" | "accepted" | "received";
+		instructions: string;
+		paymentReference: string;
+		paymentDueAt: string;
+		acceptedAt: string | null;
+		acceptedBy: string | null;
+		receiptRef: string | null;
+		receivedAt: string | null;
+		recordedBy: string | null;
+	} | null;
 	totals: OrderTotalsWire;
 	lines: OrderLineWire[];
 }
@@ -385,6 +404,16 @@ export type CancelOrderResult =
  * one class happens to expose.
  */
 export interface AdminOrdersSurface {
+	acceptCODOrder?(
+		orderId: string,
+		acceptance: { acceptedBy: string },
+		opts: { idempotencyKey: string },
+	): Promise<OfflinePaymentActionResult>;
+	confirmOfflinePayment?(
+		orderId: string,
+		receipt: { receiptRef: string; amountCents: number; currency: string; recordedBy: string },
+		opts: { idempotencyKey: string },
+	): Promise<OfflinePaymentActionResult>;
 	/**
 	 * THE FILTER TRAVELS BESIDE THE CURSOR, and it did not used to.
 	 *
@@ -522,3 +551,7 @@ export interface AdminOrdersSurface {
 		opts: { idempotencyKey: string },
 	): Promise<AddNoteResult>;
 }
+
+export type OfflinePaymentActionResult =
+	| { ok: true; applied: boolean }
+	| { ok: false; status: number; reason?: string };

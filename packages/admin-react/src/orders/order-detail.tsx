@@ -56,6 +56,7 @@ import {
 	REFUND_ADDITIVE_NOTE,
 	REFUND_AMOUNT_INVALID,
 	REFUND_BY_REQUIRED,
+	OFFLINE_PAYMENT_COPY,
 	REFUND_PARTIAL_GROUP_LABEL,
 	RESOLVE_RECONCILIATION_NOTE,
 	SHIPPING_ADDRESS_ABSENT,
@@ -85,6 +86,7 @@ import {
 	performAction,
 	type CustomerContext,
 	type DetailPayload,
+	type OrderDetail as OrderDetailRecord,
 	type RefundsSummary,
 	type TimelineEntry,
 } from "../console-api.js";
@@ -670,6 +672,109 @@ export function RefundsPanel({
 	);
 }
 
+export function OfflinePaymentPanel({
+	order,
+	busy,
+	ask,
+}: {
+	order: OrderDetailRecord;
+	busy: boolean;
+	ask: (action: PendingAction) => void;
+}): React.ReactElement | null {
+	const [recorder, setRecorder] = React.useState("");
+	const [receipt, setReceipt] = React.useState("");
+	const [amount, setAmount] = React.useState(String(order.totals.totalCents));
+	const payment = order.offlinePayment;
+	if (!payment) return null;
+	const title =
+		payment.status === "received"
+			? OFFLINE_PAYMENT_COPY.received
+			: payment.status === "accepted"
+				? OFFLINE_PAYMENT_COPY.accepted
+				: OFFLINE_PAYMENT_COPY.awaiting;
+	return (
+		<Group label={`${OFFLINE_PAYMENT_COPY.label} — ${title}`} testId="offline-payment">
+			<Fields
+				entries={[
+					["Method", payment.method],
+					["Payment deadline", formatTimestamp(payment.paymentDueAt)],
+					["Reference", payment.paymentReference],
+					["Receipt", payment.receiptRef ?? "—"],
+				]}
+			/>
+			{payment.status !== "received" && (
+				<div style={{ display: "grid", gap: 10, marginBlockStart: 12 }}>
+					<Field label={OFFLINE_PAYMENT_COPY.recorder}>
+						<input
+							aria-label={OFFLINE_PAYMENT_COPY.recorder}
+							value={recorder}
+							maxLength={200}
+							onChange={(event) => setRecorder(event.target.value)}
+						/>
+					</Field>
+					{payment.method === "cod" &&
+						payment.status === "awaiting" &&
+						order.state === "pending" && (
+							<Button
+								label={OFFLINE_PAYMENT_COPY.accept}
+								disabled={busy || recorder.trim().length === 0}
+								testId="accept-cod"
+								onClick={() =>
+									ask({
+										actionId: "orders:accept-cod",
+										value: { orderId: order.id, state: order.state, acceptedBy: recorder },
+										title: OFFLINE_PAYMENT_COPY.accept,
+										text: OFFLINE_PAYMENT_COPY.acceptText,
+										confirmLabel: "Accept",
+										denyLabel: "Go back",
+									})
+								}
+							/>
+						)}
+					<Field label={OFFLINE_PAYMENT_COPY.receipt}>
+						<input
+							aria-label={OFFLINE_PAYMENT_COPY.receipt}
+							value={receipt}
+							maxLength={100}
+							onChange={(event) => setReceipt(event.target.value)}
+						/>
+					</Field>
+					<Field label={`${OFFLINE_PAYMENT_COPY.amount} — ${order.totals.currency}`}>
+						<input
+							aria-label={OFFLINE_PAYMENT_COPY.amount}
+							value={amount}
+							inputMode="numeric"
+							onChange={(event) => setAmount(event.target.value)}
+						/>
+					</Field>
+					<Button
+						label={OFFLINE_PAYMENT_COPY.confirm}
+						disabled={busy || !recorder.trim() || !receipt.trim() || !/^\d+$/.test(amount)}
+						testId="confirm-offline-payment"
+						onClick={() =>
+							ask({
+								actionId: "orders:confirm-offline-payment",
+								value: {
+									orderId: order.id,
+									state: order.state,
+									receiptRef: receipt,
+									amountCents: amount,
+									currency: order.totals.currency,
+									recordedBy: recorder,
+								},
+								title: OFFLINE_PAYMENT_COPY.confirm,
+								text: OFFLINE_PAYMENT_COPY.confirmText,
+								confirmLabel: "Record receipt",
+								denyLabel: "Go back",
+							})
+						}
+					/>
+				</div>
+			)}
+		</Group>
+	);
+}
+
 export function OrderDetail({
 	orderId,
 	onBack,
@@ -901,6 +1006,8 @@ export function OrderDetail({
 					testId="detail-reconciliation"
 				/>
 			)}
+
+			<OfflinePaymentPanel key={order.id} order={order} busy={busy} ask={setPending} />
 
 			<section style={panelStyle}>
 				<Fields

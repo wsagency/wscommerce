@@ -50,6 +50,8 @@ export async function transitionOrder(
 ): Promise<TransitionOrderResult> {
 	const order = await deps.orderStore.getById(cmd.orderId);
 	if (order === null) return { ok: false, reason: "ORDER_NOT_FOUND" };
+	if (cmd.toState === "paid" && order.offlinePayment && order.offlinePayment.status !== "received")
+		return { ok: false, reason: "INVALID_TRANSITION" };
 	// Idempotent no-op: already at the target (a redelivery / double admin call).
 	if (order.state === cmd.toState) return { ok: true, transitioned: false, order };
 	if (!isLegalOrderTransition(order.state, cmd.toState)) {

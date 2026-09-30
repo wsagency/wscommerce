@@ -1,5 +1,10 @@
 import { EMAIL_FROM_KEY } from "../email/ctx-http-email-sender.js";
 import { isPlausiblePayTo, X402_ACCEPTS_KEY, X402_PAYTO_KEY } from "../payments/x402-wiring.js";
+import {
+	OFFLINE_SETTING_KEYS,
+	readOfflineSettings,
+	offlineSettingsError,
+} from "../payments/offline-gateway.js";
 import { isValidLoginLinkUrl, LOGIN_LINK_URL_KEY } from "../storefront/login-link.js";
 import {
 	EMAIL_API_KEY_KEY,
@@ -222,6 +227,42 @@ const PLAIN_PAYMENT_SETTINGS: readonly PlainSettingSpec[] = [
 		kvKey: EMAIL_FROM_KEY,
 		label: "Order email from-address",
 		placeholder: "no-reply@otta.local",
+	},
+	{
+		fieldId: "bankTransferEnabled",
+		kvKey: OFFLINE_SETTING_KEYS.bankEnabled,
+		label: "Enable bank transfer (true or false)",
+		placeholder: "false",
+	},
+	{
+		fieldId: "bankTransferInstructions",
+		kvKey: OFFLINE_SETTING_KEYS.bankInstructions,
+		label: "Bank transfer instructions shown to buyers",
+		placeholder: "Bank account details and payment reference instructions",
+	},
+	{
+		fieldId: "bankTransferWindowHours",
+		kvKey: OFFLINE_SETTING_KEYS.bankWindowHours,
+		label: "Bank transfer payment deadline (whole hours, 1–720)",
+		placeholder: "72",
+	},
+	{
+		fieldId: "codEnabled",
+		kvKey: OFFLINE_SETTING_KEYS.codEnabled,
+		label: "Enable cash on delivery (true or false)",
+		placeholder: "false",
+	},
+	{
+		fieldId: "codInstructions",
+		kvKey: OFFLINE_SETTING_KEYS.codInstructions,
+		label: "Cash on delivery instructions shown to buyers",
+		placeholder: "Pay the carrier on delivery",
+	},
+	{
+		fieldId: "codWindowHours",
+		kvKey: OFFLINE_SETTING_KEYS.codWindowHours,
+		label: "COD acceptance deadline (whole hours, 1–720)",
+		placeholder: "168",
 	},
 	// Issue #306 — where the emailed sign-in link points, and the ONLY place it may
 	// point: required for customer login (unset ⇒ no link is sent). Read back for
@@ -533,6 +574,15 @@ export function createSettingsFormHandler(): RouteHandler<SettingsFormInput> {
 				}),
 			);
 			const payTo = submitted.get(X402_PAYTO_KEY) ?? "";
+			const offlineSettings = await readOfflineSettings(ctx);
+			for (const [key, value] of submitted) offlineSettings.set(key, value);
+			const offlineError = offlineSettingsError(offlineSettings);
+			if (offlineError !== null)
+				return renderPage(ctx, client, {
+					variant: "error",
+					title: "Payment settings not saved",
+					description: `${offlineError} Nothing was saved.`,
+				});
 			if (payTo.length > 0 && !isPlausiblePayTo(payTo)) {
 				// Names the FIELD and the SHAPE, never the rejected value — the value
 				// is an address, not a secret, but echoing rejected input back into a
@@ -560,7 +610,7 @@ export function createSettingsFormHandler(): RouteHandler<SettingsFormInput> {
 			const page = await renderPage(ctx, client, {
 				variant: "default",
 				title: "Payment settings saved",
-				description: "Email, sign-in link and x402 settings were updated.",
+				description: "Email, sign-in link, x402 and offline payment settings were updated.",
 			});
 			return {
 				...page,

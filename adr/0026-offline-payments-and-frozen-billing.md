@@ -32,6 +32,16 @@ Accepted COD is no longer pending, so the pending-order expiry sweep cannot rele
 its dispatched stock. Before acceptance, its explicit configured deadline applies.
 Provider-paid methods retain their current checkout deadlines and confirmation flow.
 
+The payment settings form enables each method only with `true`, buyer-facing
+instructions, and an explicit window of 1–720 whole hours (at most 30 days).
+`bankTransferEnabled`, `bankTransferInstructions`, `bankTransferWindowHours`,
+`codEnabled`, `codInstructions`, and `codWindowHours` use the `settings:` KV
+namespace. All default disabled. Invalid settings are refused before the submit
+writes any field. Each created order freezes its instructions, reference and
+deadline; subsequent configuration changes cannot rewrite them. The public order
+projection exposes only that buyer instruction envelope, never billing identity,
+operator names, command keys or receipt evidence.
+
 Each order may capture a billing address plus nullable company, tax number and VAT
 identifier. This is an immutable copy of checkout input, not a pointer to a customer
 profile or address book. Legacy absent billing is null. Billing jurisdiction drives

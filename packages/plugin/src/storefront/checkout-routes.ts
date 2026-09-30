@@ -100,6 +100,7 @@ export interface CheckoutSummaryRouteInput {
 	/** `{ country, region? }` — ISO codes (ADR-0021). The coarse ship-to the
 	 *  review is priced for; the zone is derived from it. Never a street address. */
 	destination?: unknown;
+	taxDestination?: unknown;
 	// There is deliberately NO `shippingZoneId`: the tax zone is never the
 	// client's to choose. A body that carries one is read for nothing.
 }
@@ -111,6 +112,8 @@ export interface CheckoutPlaceRouteInput {
 	 *  (`checkoutIdempotencyKey` is how the summary derives it). */
 	idempotencyKey?: unknown;
 	shippingAddress?: unknown;
+	billingAddress?: unknown;
+	paymentMethod?: unknown;
 	/** The same selection the summary priced — see {@link CheckoutSummaryRouteInput}. */
 	couponCode?: unknown;
 	shippingMethodId?: unknown;
@@ -128,6 +131,7 @@ export interface OrderRouteInput {
 /** What the totals were computed WITH — the form echoes it, so the place
  *  prices exactly what the buyer reviewed. `null` ⇒ not applied. */
 export interface CheckoutSelectionView {
+	taxDestination?: { country: string; region: string | null } | null;
 	couponCode: string | null;
 	shippingMethodId: string | null;
 	/** The destination the totals were priced for (uppercased codes; region
@@ -141,6 +145,12 @@ export interface CheckoutSelectionView {
  * reasons are derived from the wire union (`Extract<>`), so they cannot drift.
  */
 export interface CheckoutSelectionErrors {
+	taxDestination?: {
+		reason: Extract<
+			QuoteFailureReason,
+			"INVALID_TAX_DESTINATION" | "TAX_REGION_CODE_REQUIRED" | "TAX_DESTINATION_NOT_MATCHED"
+		>;
+	};
 	/** `code` is the code AS TYPED, so the page can put it back for correcting. */
 	coupon?: { code: string; reason: CouponSelectionReason };
 	shippingMethod?: { reason: ShippingSelectionReason };
@@ -170,6 +180,9 @@ export interface CheckoutLockedOrderView {
 }
 
 interface CheckoutSummaryViewBase {
+	paymentMethods?: Array<{ id: "stripe" | "bank_transfer" | "cod"; label: string }>;
+	billingRequired?: boolean;
+	taxDestination?: QuoteDestinationWire;
 	ok: true;
 	cartId: string;
 	currency: string;
@@ -262,13 +275,14 @@ export type OrderRouteResult =
  */
 function quoteSelection(
 	selection: CheckoutSelection,
-): Pick<QuoteRequestWire, "couponCode" | "shippingMethodId" | "destination"> {
+): Pick<QuoteRequestWire, "couponCode" | "shippingMethodId" | "destination" | "taxDestination"> {
 	return {
 		...(selection.couponCode !== undefined ? { couponCode: selection.couponCode } : {}),
 		...(selection.shippingMethodId !== undefined
 			? { shippingMethodId: selection.shippingMethodId }
 			: {}),
 		...(selection.destination !== undefined ? { destination: selection.destination } : {}),
+		...(selection.taxDestination !== undefined ? { taxDestination: selection.taxDestination } : {}),
 	};
 }
 
@@ -378,6 +392,14 @@ export function createCheckoutSummaryRouteHandler(): RouteHandler<CheckoutSummar
 				if (isCouponSelectionReason(reason) && selection.couponCode !== undefined) {
 					selectionErrors.coupon = { code: selection.couponCode, reason };
 					selection = without(selection, "couponCode");
+				} else if (
+					selection.taxDestination !== undefined &&
+					(reason === "INVALID_TAX_DESTINATION" ||
+						reason === "TAX_REGION_CODE_REQUIRED" ||
+						reason === "TAX_DESTINATION_NOT_MATCHED")
+				) {
+					selectionErrors.taxDestination = { reason };
+					selection = without(selection, "taxDestination");
 				} else if (isDestinationSelectionReason(reason) && selection.destination !== undefined) {
 					selectionErrors.destination = { reason };
 					selection = without(selection, "destination", "shippingMethodId");
@@ -432,6 +454,7 @@ export function createCheckoutSummaryRouteHandler(): RouteHandler<CheckoutSummar
 			}
 
 			const methodSelected = selection.shippingMethodId !== undefined;
+			const paymentMethods = await client.checkoutPaymentMethods?.();
 			const status = quote.destination.status;
 			const shipping: CheckoutShippingView = {
 				status,
@@ -446,6 +469,15 @@ export function createCheckoutSummaryRouteHandler(): RouteHandler<CheckoutSummar
 
 			return {
 				ok: true as const,
+				...(paymentMethods === undefined
+					? {}
+					: {
+							paymentMethods: paymentMethods.filter(
+								(method) => method.id !== "cod" || quote.requiresShipping,
+							),
+							billingRequired: true,
+						}),
+				...(quote.taxDestination === undefined ? {} : { taxDestination: quote.taxDestination }),
 				cartId: cart.cartId,
 				currency: cart.currency,
 				lines: buildCheckoutLines(cart.lines, pricing),
@@ -459,6 +491,14 @@ export function createCheckoutSummaryRouteHandler(): RouteHandler<CheckoutSummar
 				idempotencyKey: checkoutIdempotencyKey(cart.cartId),
 				hasUnpricedLines: !pricing.allLinesPriced,
 				selection: {
+					...(selection.taxDestination
+						? {
+								taxDestination: {
+									country: selection.taxDestination.country,
+									region: selection.taxDestination.region ?? null,
+								},
+							}
+						: {}),
 					couponCode: selection.couponCode ?? null,
 					shippingMethodId: selection.shippingMethodId ?? null,
 					destination:
@@ -474,9 +514,10 @@ export function createCheckoutSummaryRouteHandler(): RouteHandler<CheckoutSummar
 				shipping,
 				addressRequired: quote.requiresShipping && status !== "no_zones",
 				readyToPlace:
-					!quote.requiresShipping ||
-					status === "no_zones" ||
-					(status === "matched" && methodSelected),
+					selectionErrors.taxDestination === undefined &&
+					(!quote.requiresShipping ||
+						status === "no_zones" ||
+						(status === "matched" && methodSelected)),
 				uncalculatedReason: uncalculatedReasonFor(status, methodSelected),
 				orderCreated: false as const,
 				order: null,
@@ -557,12 +598,13 @@ export function createCheckoutPlaceRouteHandler(): RouteHandler<CheckoutPlaceRou
 			const result = await client.createOrder(
 				{
 					cartId: input.cartId,
-					paymentMethod: PAYMENT_METHOD,
+					paymentMethod: input.paymentMethod ?? PAYMENT_METHOD,
 					buyerRef: input.buyerRef,
 					...quoteSelection(input.selection),
 					...(input.shippingAddress !== undefined
 						? { shippingAddress: input.shippingAddress }
 						: {}),
+					...(input.billingAddress !== undefined ? { billingAddress: input.billingAddress } : {}),
 				},
 				input.idempotencyKey,
 			);

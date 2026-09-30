@@ -1,6 +1,6 @@
 import type { Cents, Currency } from "../money/cents.js";
 import type { IdempotencyKey, OrderId } from "../money/ids.js";
-import type { PaymentMethod } from "../orders/model.js";
+import type { PaymentMethod, OfflinePayment } from "../orders/model.js";
 
 /**
  * The `PaymentGateway` port (Phase 4 §5). Pure types — NO pg / ctx / fetch. The
@@ -21,6 +21,8 @@ export interface PaymentGateway {
 	 * refund API with), surfaced honestly rather than failing on first use.
 	 */
 	readonly refundable: boolean;
+	/** Per-store offline policy; only configured adapters supply it. */
+	readonly checkoutPolicy?: { holdTtlMs: number; offlineInstructions: string };
 	/**
 	 * Begin payment for an order; returns the buyer-facing next action.
 	 *
@@ -200,6 +202,10 @@ export interface CreateIntentInput {
 	 * be worse than omitting it.
 	 */
 	shipTo?: CreateIntentShipTo;
+	offlinePayment?: Pick<
+		OfflinePayment,
+		"method" | "instructions" | "paymentReference" | "paymentDueAt"
+	>;
 }
 
 export interface PaymentIntentErrorInput {
@@ -263,6 +269,13 @@ export interface PaymentIntentHandle {
 export type ClientAction =
 	| { kind: "stripe_client_secret"; clientSecret: string }
 	| { kind: "x402_challenge"; accepts: string[]; price: Cents; payTo: string }
+	| {
+			kind: "offline_instructions";
+			method: "bank_transfer" | "cod";
+			instructions: string;
+			paymentReference: string;
+			paymentDueAt: string;
+	  }
 	| { kind: "none" };
 
 export type RawConfirmation =

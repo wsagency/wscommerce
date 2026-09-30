@@ -205,6 +205,7 @@ export interface PublicOrderView {
 	state: string;
 	currency: string;
 	paymentMethod: string | null;
+	offlinePayment?: PublicOrderWire["offlinePayment"];
 	holdExpiresAt: string;
 	createdAt: string;
 	totals: CheckoutTotalsView;
@@ -253,6 +254,7 @@ export function buildOrderView(order: PublicOrderWire, locale: string): PublicOr
 		state: order.state,
 		currency: order.currency,
 		paymentMethod: order.paymentMethod,
+		...(order.offlinePayment ? { offlinePayment: order.offlinePayment } : {}),
 		holdExpiresAt: order.holdExpiresAt,
 		createdAt: order.createdAt,
 		totals: buildCheckoutTotals(order.totals, { locale, ...orderTotalsFlags(order.totals) }),

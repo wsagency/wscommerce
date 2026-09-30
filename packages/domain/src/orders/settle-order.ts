@@ -238,7 +238,17 @@ async function applyPaidSideEffects(
 		currency: conf.currency,
 		status: "succeeded",
 	});
+	await applyOrderFulfillment(deps, order, conf.gateway, now);
+}
 
+/** Idempotent stock/access effects shared by verified payment and private offline commands. */
+export async function applyOrderFulfillment(
+	deps: SettleDeps,
+	order: Order,
+	gateway: NonNullable<Order["paymentMethod"]>,
+	now: string,
+	grantDigital = true,
+): Promise<void> {
 	// Physical lines: ONE batched held|adopted → committed flip (PR B). Each LOST
 	// hold in the result is a resold-under-a-paid-order invariant violation — the
 	// loud COMMIT_LOST anomaly + manual-reconciliation flag, NEVER a silent no-op.
@@ -254,7 +264,7 @@ async function applyPaidSideEffects(
 		if (order.reconciliationFlag === null) {
 			await deps.paymentEventStore.recordAnomaly({
 				orderId: order.id,
-				gateway: conf.gateway,
+				gateway,
 				kind: "COMMIT_LOST",
 				detail: `commit matched 0 rows for reservation ${reservationId}`,
 				now,
@@ -269,13 +279,13 @@ async function applyPaidSideEffects(
 	// Digital lines: grant-once entitlement, per-line and UNCHANGED (disjoint
 	// state, idempotent under the deterministic (order, sku) grant key).
 	for (const line of order.lines) {
-		if (line.fulfillmentKind === "digital") {
+		if (grantDigital && line.fulfillmentKind === "digital") {
 			await deps.entitlementStore.grant({
 				orderId: order.id,
 				productId: line.productId,
 				sku: line.sku,
 				buyerRef: order.buyerRef,
-				source: conf.gateway === "x402" ? "x402" : "order_paid",
+				source: gateway === "x402" ? "x402" : "order_paid",
 				// Deterministic grant-once key per (order, sku): replay grants nothing.
 				grantIdempotencyKey: idempotencyKey(`ent:${order.id}:${line.sku}`),
 			});

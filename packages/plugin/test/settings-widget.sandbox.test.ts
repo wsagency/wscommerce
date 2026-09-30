@@ -534,6 +534,59 @@ describe("Settings admin form (workerd sandbox)", () => {
 		expect(field(form, "x402Accepts")?.["initial_value"]).toBe("eip155:8453, eip155:1");
 	});
 
+	test("offline methods require explicit instructions and a bounded payment window before any settings are saved", async () => {
+		sandbox = await loadPluginInSandbox({ allowedHosts: [], storage: true });
+		const initial = formFor(
+			blocksOf(await sandbox.invokeRoute("admin", { type: "page_load", page: "/settings" })),
+			"save-payment-settings",
+		);
+		expect(field(initial, "bankTransferEnabled")?.initial_value).toBe("");
+		expect(field(initial, "codEnabled")?.initial_value).toBe("");
+		const invalid = await sandbox.invokeRoute("admin", {
+			type: "form_submit",
+			action_id: "save-payment-settings",
+			values: {
+				bankTransferEnabled: "true",
+				bankTransferInstructions: "Local test bank instructions",
+				bankTransferWindowHours: "0",
+				emailFrom: "must-not-save@example.test",
+			},
+		});
+		expect(JSON.stringify(invalid)).toContain("Nothing was saved");
+		const unchanged = formFor(
+			blocksOf(await sandbox.invokeRoute("admin", { type: "page_load", page: "/settings" })),
+			"save-payment-settings",
+		);
+		expect(field(unchanged, "bankTransferEnabled")?.initial_value).toBe("");
+		expect(field(unchanged, "emailFrom")?.initial_value).toBe("");
+		await sandbox.invokeRoute("admin", {
+			type: "form_submit",
+			action_id: "save-payment-settings",
+			values: {
+				bankTransferEnabled: "true",
+				bankTransferInstructions: "Local test bank instructions",
+				bankTransferWindowHours: "72",
+				codEnabled: "true",
+				codInstructions: "Pay the carrier on delivery",
+				codWindowHours: "168",
+			},
+		});
+		const saved = formFor(
+			blocksOf(await sandbox.invokeRoute("admin", { type: "page_load", page: "/settings" })),
+			"save-payment-settings",
+		);
+		expect(field(saved, "bankTransferEnabled")?.initial_value).toBe("true");
+		expect(field(saved, "bankTransferWindowHours")?.initial_value).toBe("72");
+		expect(field(saved, "codEnabled")?.initial_value).toBe("true");
+		expect(field(saved, "codWindowHours")?.initial_value).toBe("168");
+		const refused = await sandbox.invokeRoute("admin", {
+			type: "form_submit",
+			action_id: "save-payment-settings",
+			values: { codWindowHours: "721" },
+		});
+		expect(JSON.stringify(refused)).toContain("Nothing was saved");
+	});
+
 	test("INC-C5: a PARTIAL submit leaves untouched settings alone — absent is not empty", async () => {
 		// The save path only writes fields PRESENT as strings in the submit —
 		// an absent field is skipped entirely, never coerced to `""` and

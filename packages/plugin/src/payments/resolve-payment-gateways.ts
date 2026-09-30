@@ -23,15 +23,18 @@ import { IN_PROCESS_EGRESS_URLS } from "../manifest.js";
 import type { PluginContext } from "../types.js";
 import { stripeGatewayFromCtx } from "./stripe-wiring.js";
 import { x402GatewayFromCtx } from "./x402-wiring.js";
+import { offlineGatewaysFromCtx } from "./offline-gateway.js";
 
 export type PaymentGateways = Partial<Record<PaymentMethod, PaymentGateway>>;
 
 export async function resolvePaymentGateways(ctx: PluginContext): Promise<PaymentGateways> {
-	const [x402, stripe] = await Promise.all([
+	const [x402, stripe, offline] = await Promise.all([
 		x402GatewayFromCtx(ctx, { facilitatorUrl: IN_PROCESS_EGRESS_URLS.facilitatorUrl }),
 		stripeGatewayFromCtx(ctx),
+		offlineGatewaysFromCtx(ctx),
 	]);
 	return {
+		...offline,
 		...(x402 === undefined ? {} : { x402 }),
 		...(stripe === undefined ? {} : { stripe }),
 	};

@@ -122,6 +122,25 @@ export interface OrderDetail {
 	readonly fulfillment: OrderFulfillment | null;
 	readonly cancellation: OrderCancellation | null;
 	readonly shippingAddress: ShippingAddress | null;
+	readonly billingAddress?:
+		| (ShippingAddress & {
+				readonly company: string | null;
+				readonly taxNumber: string | null;
+				readonly vatId: string | null;
+		  })
+		| null;
+	readonly offlinePayment?: {
+		readonly method: "bank_transfer" | "cod";
+		readonly status: "awaiting" | "accepted" | "received";
+		readonly instructions: string;
+		readonly paymentReference: string;
+		readonly paymentDueAt: string;
+		readonly acceptedAt: string | null;
+		readonly acceptedBy: string | null;
+		readonly receivedAt: string | null;
+		readonly receiptRef: string | null;
+		readonly recordedBy: string | null;
+	} | null;
 	readonly totals: OrderTotals;
 	readonly lines: readonly OrderLine[];
 }

@@ -22,6 +22,7 @@ import { COUNTRY_SHAPE, COUPON_CODE_MAX, isIdToken } from "../commerce/commerce-
 import type {
 	DestinationRequestWire,
 	ShippingAddressWire,
+	BillingAddressWire,
 } from "../product-commerce/commerce-client.js";
 import { sanitizeLocale } from "./route-input.js";
 
@@ -51,6 +52,7 @@ const ADDRESS_FIELDS = {
  * Neither parser reads it; PR 2 derives it from the ship-to address.
  */
 export interface CheckoutSelection {
+	taxDestination?: DestinationRequestWire;
 	/** Trimmed, case KEPT — coupon lookup is case-sensitive. */
 	couponCode?: string;
 	shippingMethodId?: string;
@@ -73,6 +75,8 @@ export interface CheckoutPlaceParsedInput {
 	buyerRef: string;
 	idempotencyKey: string;
 	shippingAddress?: ShippingAddressWire;
+	billingAddress?: BillingAddressWire;
+	paymentMethod?: "stripe" | "x402" | "bank_transfer" | "cod";
 	/** Display only — it formats the order total this route returns and reaches
 	 *  no upstream call. Sanitized like the other routes' (a malformed tag falls
 	 *  back rather than rejecting: a bad locale must not fail an order). */
@@ -127,6 +131,7 @@ export function parseCheckoutSummaryInput(input: {
 	couponCode?: unknown;
 	shippingMethodId?: unknown;
 	destination?: unknown;
+	taxDestination?: unknown;
 }): CheckoutSummaryParsedInput | null {
 	const cartId = nonEmptyString(input.cartId);
 	if (cartId === null) return null;
@@ -134,10 +139,16 @@ export function parseCheckoutSummaryInput(input: {
 	if (selection === null) return null;
 	const destination = parseDestination(input.destination);
 	if (destination === null) return null;
+	const taxDestination = parseDestination(input.taxDestination);
+	if (taxDestination === null) return null;
 	return {
 		cartId,
 		locale: sanitizeLocale(input.locale),
-		selection: { ...selection, ...(destination !== undefined ? { destination } : {}) },
+		selection: {
+			...selection,
+			...(destination !== undefined ? { destination } : {}),
+			...(taxDestination !== undefined ? { taxDestination } : {}),
+		},
 	};
 }
 
@@ -176,6 +187,8 @@ export function parseCheckoutPlaceInput(input: {
 	buyerRef?: unknown;
 	idempotencyKey?: unknown;
 	shippingAddress?: unknown;
+	billingAddress?: unknown;
+	paymentMethod?: unknown;
 	locale?: unknown;
 	couponCode?: unknown;
 	shippingMethodId?: unknown;
@@ -192,6 +205,15 @@ export function parseCheckoutPlaceInput(input: {
 	if (cartId === null || buyerRef === null || idempotencyKey === null) return null;
 	const selection = parseCheckoutSelection(input);
 	if (selection === null) return null;
+	const paymentMethod = input.paymentMethod;
+	if (
+		paymentMethod !== undefined &&
+		paymentMethod !== "stripe" &&
+		paymentMethod !== "x402" &&
+		paymentMethod !== "bank_transfer" &&
+		paymentMethod !== "cod"
+	)
+		return null;
 
 	const parsed: CheckoutPlaceParsedInput = {
 		cartId,
@@ -199,6 +221,7 @@ export function parseCheckoutPlaceInput(input: {
 		idempotencyKey,
 		locale: sanitizeLocale(input.locale),
 		selection,
+		...(paymentMethod !== undefined ? { paymentMethod } : {}),
 	};
 
 	if (input.shippingAddress !== undefined) {
@@ -206,7 +229,26 @@ export function parseCheckoutPlaceInput(input: {
 		if (address === null) return null;
 		parsed.shippingAddress = address;
 	}
+	if (input.billingAddress !== undefined && input.billingAddress !== null) {
+		const address = parseBillingAddress(input.billingAddress);
+		if (address === null) return null;
+		parsed.billingAddress = address;
+	}
 	return parsed;
+}
+
+export function parseBillingAddress(value: unknown): BillingAddressWire | null {
+	const address = parseShippingAddress(value);
+	if (address === null) return null;
+	const raw = value as Record<string, unknown>;
+	const billing: BillingAddressWire = { ...address };
+	for (const field of ["company", "taxNumber", "vatId"] as const) {
+		const v = raw[field];
+		if (v === undefined || v === null) continue;
+		if (typeof v !== "string" || v.trim().length > (field === "company" ? 200 : 64)) return null;
+		if (v.trim()) billing[field] = v.trim();
+	}
+	return billing;
 }
 
 /**

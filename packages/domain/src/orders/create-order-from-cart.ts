@@ -132,10 +132,23 @@ export async function createOrderFromCart(
 	deps: CreateOrderDeps,
 	command: CreateOrderCommand,
 ): Promise<CreateOrderFromCartResult> {
+	const already = await deps.orderStore.getByIdempotencyKey(command.idempotencyKey);
+	if (
+		already !== null &&
+		(already.cartId !== command.cartId || already.paymentMethod !== command.paymentMethod)
+	)
+		return { ok: false, reason: "IDEMPOTENCY_KEY_REUSED" };
 	const gateway = deps.gateways[command.paymentMethod];
 	if (gateway === undefined) {
+		if (command.paymentMethod === "bank_transfer" || command.paymentMethod === "cod")
+			return { ok: false, reason: "PAYMENT_METHOD_NOT_AVAILABLE" };
 		throw new Error(`no payment gateway configured for method "${command.paymentMethod}"`);
 	}
+	if (
+		(command.paymentMethod === "bank_transfer" || command.paymentMethod === "cod") &&
+		gateway.checkoutPolicy === undefined
+	)
+		return { ok: false, reason: "PAYMENT_METHOD_NOT_AVAILABLE" };
 
 	// I1 — top-level idempotency short-circuit (CLAUDE.md idempotency, plan §1
 	// case 6). A replay of the same key must return the ORIGINAL order WITHOUT
@@ -143,7 +156,6 @@ export async function createOrderFromCart(
 	// usesCount>=maxUses / expiresAt check that would wrongly reject a replay of a
 	// checkout that consumed the coupon's last use (or whose coupon has since
 	// expired). Re-issuing the payment intent is idempotent under the same key.
-	const already = await deps.orderStore.getByIdempotencyKey(command.idempotencyKey);
 	if (already !== null) {
 		// Issue #133: a key is a replay only of the request it first carried. The
 		// same key aimed at ANOTHER cart (a stale/second tab whose form still holds
@@ -314,6 +326,8 @@ export async function createOrderFromCart(
 	// derived from the address inside the quote (ADR-0021), so the review and
 	// the order resolve it identically.
 	const requiresShipping = lines.some((line) => line.fulfillmentKind === "physical");
+	if (command.paymentMethod === "cod" && lines.some((line) => line.fulfillmentKind !== "physical"))
+		return { ok: false, reason: "PAYMENT_METHOD_NOT_AVAILABLE" };
 	const taxAddress = billingAddress ?? shippingAddress;
 	const quote = await computeQuote(
 		{
@@ -363,7 +377,9 @@ export async function createOrderFromCart(
 			: null;
 
 	const freshOrderId = brandOrderId(deps.idGen.newId());
-	const holdExpiresAt = new Date(deps.clock.now().getTime() + ttl(deps)).toISOString();
+	const holdExpiresAt = new Date(
+		deps.clock.now().getTime() + (gateway.checkoutPolicy?.holdTtlMs ?? ttl(deps)),
+	).toISOString();
 
 	// Coupon redemption is the GATE, before order creation (§5): redeem atomically
 	// under the SAME idempotency key so a replay never double-redeems. If order
@@ -516,6 +532,24 @@ async function finalizeOrder(
 		// guarded insert. A replay re-inserts nothing (idempotency-key conflict).
 		shippingAddress: ctx.shippingAddress,
 		billingAddress: ctx.billingAddress,
+		...(command.paymentMethod === "bank_transfer" || command.paymentMethod === "cod"
+			? {
+					offlinePayment: {
+						method: command.paymentMethod,
+						instructions: ctx.gateway.checkoutPolicy!.offlineInstructions,
+						paymentReference: ctx.freshOrderId,
+						paymentDueAt: ctx.holdExpiresAt,
+						status: "awaiting",
+						acceptedAt: null,
+						acceptedBy: null,
+						acceptanceKey: null,
+						receivedAt: null,
+						recordedBy: null,
+						receiptRef: null,
+						confirmationKey: null,
+					},
+				}
+			: {}),
 		totals: {
 			subtotal: breakdown.subtotalCents,
 			total: breakdown.totalCents,
@@ -540,7 +574,7 @@ async function finalizeOrder(
 	// winner's order. That order is not this cart's — adopting its holds is
 	// harmless but stamping it on THIS cart (step 3) would check out a cart that
 	// was never ordered. Refuse before anything moves; the winner owns its order.
-	if (order.cartId !== command.cartId) {
+	if (order.cartId !== command.cartId || order.paymentMethod !== command.paymentMethod) {
 		await ctx.onForeignOrder();
 		return { ok: false, reason: "IDEMPOTENCY_KEY_REUSED" };
 	}
@@ -799,6 +833,16 @@ function intentInputFor(order: Order, key: IdempotencyKey): CreateIntentInput {
 		currency: order.totals.currency,
 		idempotencyKey: key,
 		lines: order.lines.map((line) => ({ title: line.title, quantity: line.quantity })),
+		...(order.offlinePayment
+			? {
+					offlinePayment: {
+						method: order.offlinePayment.method,
+						instructions: order.offlinePayment.instructions,
+						paymentReference: order.offlinePayment.paymentReference,
+						paymentDueAt: order.offlinePayment.paymentDueAt,
+					},
+				}
+			: {}),
 		// ADR-0009's frozen ship-to, narrowed to the postal fields: a provider's
 		// export rules want a destination, never the buyer's contact channels.
 		...(address === null

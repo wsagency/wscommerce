@@ -282,6 +282,21 @@ export function requireShippingAddress(address: {
 		requireBoundedText("shippingAddress.phone", address.phone, 0, 64);
 }
 
+export function requireBillingAddress(
+	address: Parameters<typeof requireShippingAddress>[0] & {
+		company?: string | null;
+		taxNumber?: string | null;
+		vatId?: string | null;
+	},
+): void {
+	requireShippingAddress(address);
+	for (const field of ["company", "taxNumber", "vatId"] as const) {
+		const value = address[field];
+		if (value !== undefined && value !== null)
+			requireBoundedText(`billingAddress.${field}`, value, 0, field === "company" ? 200 : 64);
+	}
+}
+
 /**
  * ADR-0021: a destination's SHAPE — a two-letter country and, when given, a
  * code-shaped region. Shape only: whether the codes are REAL (in CLDR) is the

@@ -62,6 +62,21 @@
 import { fitBanner } from "./copy.js";
 import type { RowNoun, ZeroStateCopy } from "./list-outcome.js";
 
+export const OFFLINE_PAYMENT_COPY = {
+	label: "Offline payment",
+	awaiting: "Awaiting payment",
+	accepted: "Accepted for dispatch — unpaid",
+	received: "Payment received",
+	recorder: "Recorded by",
+	receipt: "Receipt reference",
+	amount: "Amount (minor units)",
+	accept: "Accept COD for dispatch",
+	acceptText: "Commit the stock and accept this COD order for dispatch. This records no payment.",
+	confirm: "Record payment receipt",
+	confirmText:
+		"Record witnessed payment for the exact frozen total. Receipt references are globally bound and this order is captured once.",
+} as const;
+
 /** How the Orders list names one row and many. */
 export const ORDERS_NOUN: RowNoun = { one: "order", other: "orders" };
 

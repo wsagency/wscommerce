@@ -42,6 +42,7 @@ export type CreateOrderFailure =
 	 * dedupes. The service maps this to 502 (a bad upstream, not a bad request).
 	 */
 	| "PAYMENT_INTENT_FAILED"
+	| "PAYMENT_METHOD_NOT_AVAILABLE"
 	/**
 	 * The `idempotencyKey` already names an order minted from a DIFFERENT cart
 	 * (issue #133) — e.g. a stale or second tab submitting the old cart's
