@@ -18,6 +18,8 @@
  */
 import type { CartPricingWire } from "@otta-sh/plugin";
 import { moneyCellText } from "./totals.js";
+import { message } from "./messages.js";
+import { SITE_LOCALE, type SiteLocale } from "./site-locale.js";
 
 /** The line is real and orderable-looking, but no live price could be joined
  *  here. (Such a line in fact cannot be ordered — checkout answers
@@ -215,10 +217,12 @@ export function cartMoneyCell(
 export function lineMoneyText(
 	formatted: string | null | undefined,
 	pricingDegraded: boolean,
+	locale: SiteLocale = SITE_LOCALE,
 ): string {
 	const cell = cartMoneyCell(formatted, pricingDegraded);
 	return moneyCellText(
-		cell === PRICED_AT_CHECKOUT_LABEL ? PRICED_AT_CHECKOUT_CELL : cell,
-		PRICE_UNAVAILABLE_CELL,
+		cell === PRICED_AT_CHECKOUT_LABEL ? message(locale, PRICED_AT_CHECKOUT_CELL) : cell,
+		message(locale, PRICE_UNAVAILABLE_CELL),
+		locale,
 	);
 }

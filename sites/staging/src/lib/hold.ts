@@ -30,6 +30,9 @@
  *  drained it half again too fast).
  *  A store on a longer TTL is clamped, never overflowed; `holdView` takes an
  *  explicit `windowSeconds` for that case. */
+import { message, quantityUnit } from "./messages.js";
+import { SITE_LOCALE, type SiteLocale } from "./site-locale.js";
+
 export const HOLD_WINDOW_SECONDS = 900;
 
 /**
@@ -41,16 +44,33 @@ export const HOLD_WINDOW_SECONDS = 900;
  * this renders on a public page) states no figure at all rather than "for NaN
  * minutes" — a sentence a shopper can plan around, or none.
  */
-export function holdNote(minutes: number | undefined): string {
-	const lead = "Adding this holds one in stock";
+export function holdNote(minutes: number | undefined, locale: SiteLocale = SITE_LOCALE): string {
 	if (minutes === undefined || !Number.isInteger(minutes) || minutes <= 0) {
-		return `${lead} for you while you check out.`;
+		return message(locale, "Adding this holds one in stock for you while you check out.");
 	}
 	if (minutes % 60 === 0) {
 		const hours = minutes / 60;
-		return `${lead} for ${String(hours)} ${hours === 1 ? "hour" : "hours"}.`;
+		const unit =
+			locale === "hr"
+				? quantityUnit(hours, locale, ["sat", "sata", "sati"])
+				: hours === 1
+					? "hour"
+					: "hours";
+		return message(locale, "Adding this holds one in stock for {count} {unit}.", {
+			count: hours,
+			unit,
+		});
 	}
-	return `${lead} for ${String(minutes)} ${minutes === 1 ? "minute" : "minutes"}.`;
+	const unit =
+		locale === "hr"
+			? quantityUnit(minutes, locale, ["minutu", "minute", "minuta"])
+			: minutes === 1
+				? "minute"
+				: "minutes";
+	return message(locale, "Adding this holds one in stock for {count} {unit}.", {
+		count: minutes,
+		unit,
+	});
 }
 
 /** Under a minute, the ribbon turns bronze and changes what it calls itself. */
@@ -66,6 +86,16 @@ export const HOLD_LABELS: Record<HoldState, string> = {
 	expiring: "Expiring",
 	released: "Hold released",
 };
+
+const CROATIAN_HOLD_LABELS: Record<HoldState, string> = {
+	held: "Rezervirano za vas",
+	expiring: "Istječe",
+	released: "Rezervacija je istekla",
+};
+
+export function holdLabel(state: HoldState, locale: SiteLocale): string {
+	return (locale === "hr" ? CROATIAN_HOLD_LABELS : HOLD_LABELS)[state];
+}
 
 /** What to do once a hold has lapsed. §6: the released state carries a line
  *  telling the shopper the next move — a dead end without a door is not a
@@ -117,6 +147,7 @@ export function holdView(
 	expiresAt: string | null | undefined,
 	now: Date = new Date(),
 	windowSeconds: number = HOLD_WINDOW_SECONDS,
+	locale: SiteLocale = SITE_LOCALE,
 ): HoldView | null {
 	if (expiresAt === null || expiresAt === undefined || expiresAt === "") return null;
 	const expiry = Date.parse(expiresAt);
@@ -128,7 +159,7 @@ export function holdView(
 		state,
 		secondsLeft,
 		percent: clamp((secondsLeft / windowSeconds) * 100, 0, 100),
-		label: HOLD_LABELS[state],
+		label: holdLabel(state, locale),
 		clock: holdClock(secondsLeft),
 	};
 }

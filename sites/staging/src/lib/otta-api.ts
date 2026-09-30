@@ -24,6 +24,8 @@ import {
 } from "@otta-sh/plugin";
 import type { PublicPluginApiRouteHandler } from "emdash/plugin-utils";
 import { cartErrorMessage } from "./error-messages.js";
+import { message as translate } from "./messages.js";
+import { SITE_LOCALE, type SiteLocale } from "./site-locale.js";
 
 /** The plugin's "the store is busy, try again" token (`renderGuard`'s `BUSY`):
  *  storage contention — the refused step wrote nothing. */
@@ -113,14 +115,14 @@ function escapeHtml(text: string): string {
  * ({@link sameSitePath}): a browser resolves `/\evil.com` and `/.//evil.com`
  * like `//evil.com`, so a string check alone is not a same-site guarantee.
  */
-export function busyResponse(backTo: string): Response {
-	const message = escapeHtml(cartErrorMessage(BUSY));
+export function busyResponse(backTo: string, locale: SiteLocale = SITE_LOCALE): Response {
+	const message = escapeHtml(cartErrorMessage(BUSY, locale));
 	const href = escapeHtml(sameSitePath(backTo));
 	const body =
-		'<!doctype html><html lang="en"><head><meta charset="utf-8">' +
+		`<!doctype html><html lang="${locale}"><head><meta charset="utf-8">` +
 		'<meta name="viewport" content="width=device-width, initial-scale=1">' +
-		`<title>Busy — please try again</title></head><body><main><p>${message}</p>` +
-		`<p><a href="${href}">Go back</a></p></main></body></html>`;
+		`<title>${escapeHtml(translate(locale, "Busy — please try again"))}</title></head><body><main><p>${message}</p>` +
+		`<p><a href="${href}">${escapeHtml(translate(locale, "Go back"))}</a></p></main></body></html>`;
 	return new Response(body, {
 		status: 503,
 		headers: {

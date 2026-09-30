@@ -138,10 +138,10 @@ describe("the /checkout form contract", () => {
 	test("both totals-bearing panels are real headings, not styled spans", () => {
 		// The eyebrow is a TREATMENT. Losing the <h2> costs screen-reader
 		// heading navigation and shows up in no screenshot.
-		expect(REVIEW).toMatch(/<h2 class="u-label head-label">Your details<\/h2>/);
-		expect(REVIEW).toMatch(/<h2 class="u-label head-label">Your order<\/h2>/);
-		expect(ORDER).toMatch(/<h2 class="u-label head-label">Items<\/h2>/);
-		expect(ORDER).toMatch(/<h2 class="u-label head-label">Totals<\/h2>/);
+		expect(REVIEW).toMatch(/<h2 class="u-label head-label">\{t\("Your details"\)\}<\/h2>/);
+		expect(REVIEW).toMatch(/<h2 class="u-label head-label">\{t\("Your order"\)\}<\/h2>/);
+		expect(ORDER).toMatch(/<h2 class="u-label head-label">\{t\("Items"\)\}<\/h2>/);
+		expect(ORDER).toMatch(/<h2 class="u-label head-label">\{t\("Totals"\)\}<\/h2>/);
 	});
 });
 
@@ -179,9 +179,7 @@ describe("/checkout — the coupon", () => {
 
 	test("the page passes the coupon into the summary dispatch", () => {
 		expect(REVIEW).toContain("readCouponParam(Astro.url)");
-		expect(REVIEW).toMatch(
-			/\{\s*cartId,\s*locale: SITE_LOCALE,\s*\.\.\.\(coupon\.couponCode !== undefined/,
-		);
+		expect(REVIEW).toMatch(/\{\s*cartId,\s*locale,\s*\.\.\.\(coupon\.couponCode !== undefined/);
 	});
 
 	test("the coupon form is hidden once the cart has become an order", () => {
@@ -229,8 +227,9 @@ describe("/checkout — the coupon", () => {
 	 */
 	test("the ENDED notice makes NO claim about a charge, and links to the order", () => {
 		const notice =
-			/<Notice lead="This checkout has ended\.">[\s\S]*?<\/Notice>/.exec(templateOf(REVIEW))?.[0] ??
-			"";
+			/<Notice lead=\{t\("This checkout has ended\."\)\}>[\s\S]*?<\/Notice>/.exec(
+				templateOf(REVIEW),
+			)?.[0] ?? "";
 		expect(notice, "no ended notice").not.toBe("");
 		expect(notice).not.toMatch(/charged|no charge/i);
 		// A charge on a failed/expired order goes to manual reconciliation, where
@@ -356,7 +355,9 @@ describe("/checkout — delivery (ADR-0021)", () => {
 	});
 
 	test("the place form states the method being charged, beside the submit", () => {
-		expect(PLACE).toMatch(/Delivery: \{chosenOption\.label\} \(\{chosenOption\.price\}\)/);
+		expect(PLACE).toContain(
+			't("Delivery: {label} ({price})", { label: chosenOption.label, price: chosenOption.price })',
+		);
 	});
 
 	test("the submit requires the plugin's readyToPlace answer and a reviewed billing destination", () => {
@@ -384,9 +385,9 @@ describe("/checkout — delivery (ADR-0021)", () => {
 	// Country names and money must read in the SAME language: one site locale,
 	// passed to the summary (which formats the money) and to the country labels.
 	test("the country labels use the site locale the summary formats money in — never a hard-coded one", () => {
-		expect(REVIEW).toContain("countryOptions(SITE_LOCALE)");
+		expect(REVIEW).toContain("countryOptions(locale)");
 		expect(REVIEW).not.toMatch(/countryOptions\("[a-z]/);
-		expect(REVIEW).toMatch(/cartId,\s*locale: SITE_LOCALE,/);
+		expect(REVIEW).toMatch(/cartId,\s*locale,/);
 	});
 
 	test("the totals footnote says WHY the total is incomplete (uncalculatedReason)", () => {
@@ -441,7 +442,9 @@ describe("/checkout/pay — the money path is wired before the decoration", () =
 		const mount = PAY.indexOf("elements = mountElements(options);");
 		expect(safe).toBeGreaterThan(-1);
 		expect(safe).toBeLessThan(mount);
-		expect(PAY).toContain("elements = mountElements({ clientSecret: clientSecret });");
+		expect(PAY).toContain(
+			"elements = mountElements({ clientSecret: clientSecret, locale: locale });",
+		);
 		// …and the appearance refuses to half-build itself off an unloaded
 		// token layer, which is what would make Stripe throw in the first place.
 		expect(PAY).toMatch(
@@ -510,12 +513,13 @@ describe("/checkout/pay — the button states the amount (§7)", () => {
 		expect(body).not.toMatch(/["'`]Pay \$/);
 	});
 
-	test("the amount comes from the STASH, not from a commerce read on this page", () => {
-		// Which is the whole reason it is captured at place-time: the cart stays
-		// live and mutable, the charge does not. A dispatch here would also break
-		// the "this page makes no commerce call" property the design leans on.
+	test("the label comes from the same immutable private order with a stash fallback", () => {
+		// The guarded read localizes the original order. It cannot reprice the
+		// cart or create an intent; payment-page-language.test.ts verifies the
+		// actual request and unchanged amount, currency and private capability.
 		const { frontmatter } = splitAstro(PAY);
-		expect(frontmatter).toContain("stash.total?.formatted");
+		expect(frontmatter).toContain("localizedCheckoutTotal(stash, locale,");
+		expect(frontmatter).toContain("payButtonLabel(displayTotal?.formatted, locale)");
 		expect(frontmatter).not.toContain("dispatchOttaRoute");
 	});
 
@@ -523,7 +527,7 @@ describe("/checkout/pay — the button states the amount (§7)", () => {
 		// So a pre-total stash names neither. Naming a currency under a "Pay now"
 		// button would be the footer claiming the page priced something it did not
 		// (§7) — `footer-currency.test.ts` owns the positive half of this rule.
-		expect(PAY).toMatch(/<Base[^>]*currency=\{stash\.total\?\.currency \?\? null\}/);
+		expect(PAY).toMatch(/<Base[^>]*currency=\{displayTotal\?\.currency \?\? null\}/);
 	});
 });
 
@@ -573,6 +577,6 @@ describe("/orders/<id> — the state is the page, and it ships no JavaScript", (
 	});
 
 	test("the total reads Paid once the order settled, by MAP not comparison", () => {
-		expect(ORDER).toContain('const TOTAL_LABEL: Record<string, string> = { paid: "Paid" };');
+		expect(ORDER).toContain('const TOTAL_LABEL: Record<string, string> = { paid: t("Paid") };');
 	});
 });

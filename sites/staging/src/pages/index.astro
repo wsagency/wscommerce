@@ -22,6 +22,7 @@ import { STOREFRONT_LIST_ROUTE, type PlpRouteResult, type ProductViewModel } fro
 import { getEmDashCollection, getSiteSettings } from "emdash";
 import { getPublicPluginApiRouteHandler } from "emdash/plugin-utils";
 import PriceTag from "../components/PriceTag.astro";
+import { demoSettings } from "../lib/demo-content.js";
 import Base from "../layouts/Base.astro";
 import { toCmsProductContent, type ProductEntryData } from "../lib/products.js";
 import {
@@ -35,6 +36,9 @@ import {
 	type StoreSettings,
 } from "../lib/tape.js";
 import { dispatchOttaRoute, isBusyResult, markBusy } from "../lib/otta-api.js";
+import { storefrontPresentation } from "../lib/messages.js";
+
+const { locale, t } = storefrontPresentation(Astro);
 
 /**
  * BOTH reads on this page are guarded, and the settings read needs it as much
@@ -90,7 +94,7 @@ const result =
 		: await dispatchOttaRoute<PlpRouteResult>(
 				getPublicPluginApiRouteHandler(Astro.locals),
 				STOREFRONT_LIST_ROUTE,
-				{ items, query: { kind: "all" } },
+				{ items, query: { kind: "all" }, locale },
 				Astro.url,
 			);
 const view: ProductViewModel[] | null = result !== null && result.ok ? result.items : null;
@@ -100,7 +104,7 @@ const view: ProductViewModel[] | null = result !== null && result.ok ? result.it
    instead of keeping the tapeless one as a healthy 200. */
 if (isBusyResult(result)) markBusy(Astro.response);
 
-const rows = tapeRows(view);
+const rows = tapeRows(view, undefined, locale);
 
 /* §7: the currency the page quoted, from the view model that knows it. */
 const currency = view?.find((product) => product.price !== null)?.price?.currency ?? null;
@@ -110,12 +114,13 @@ const currency = view?.find((product) => product.price !== null)?.price?.currenc
    holds for small stores is a count that lies to exactly the stores that grow. */
 const count = entries === null ? null : exactCount(entries.length, TAPE_FETCH_LIMIT, hasMore);
 
+settings = demoSettings(settings, locale);
 const thesis = storeThesis(settings);
 const lede =
 	rows.length > 0
-		? "Everything in the shop, with what it costs and what's on the shelf right now."
-		: "Everything in the shop, on one page.";
-const shopLabel = shopLinkLabel(count);
+		? t("Everything in the shop, with what it costs and what's on the shelf right now.")
+		: t("Everything in the shop, on one page.");
+const shopLabel = shopLinkLabel(count, locale);
 ---
 
 <Base title={storeTitle(settings)} description={storeDescription(settings)} currency={currency}>
@@ -138,7 +143,7 @@ const shopLabel = shopLinkLabel(count);
 					    visual cost. They live on an inner element, not on `.tape`:
 					    a `role="table"` may only contain rows, and the foot below
 					    is a caption-ish aside that is not one. */}
-					<div class="rows" role="table" aria-label="Items, prices and stock">
+					<div class="rows" role="table" aria-label={t("Items, prices and stock")}>
 						<div class="row row-head" role="row">
 							{/* `Stock`, not `In stock`: the cells below hold the WORDS
 							    "In stock" and "Sold out", and a column headed with one
@@ -148,13 +153,13 @@ const shopLabel = shopLinkLabel(count);
 							    eyebrow label and keeps `.u-label`'s size — it only
 							    borrows the data column's alignment. */}
 							<span class="u-label" role="columnheader">
-								Item
+								{t("Item")}
 							</span>
 							<span class="u-label" role="columnheader">
-								Price
+								{t("Price")}
 							</span>
 							<span class="u-label stock-head" role="columnheader">
-								Stock
+								{t("Stock")}
 							</span>
 						</div>
 						{rows.map((row) => (
@@ -185,7 +190,7 @@ const shopLabel = shopLinkLabel(count);
 							</div>
 						))}
 					</div>
-					<p class="tape-foot">Stock updates as people buy.</p>
+					<p class="tape-foot">{t("Stock updates as people buy.")}</p>
 				</div>
 			)
 		}

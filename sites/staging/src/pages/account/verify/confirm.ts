@@ -42,6 +42,8 @@ function sameSitePath(target: string): string {
 		: ACCOUNT_HOME_PATH;
 }
 
+import { siteLocale } from "../../../lib/site-locale.js";
+
 export const POST: APIRoute = async (context) => {
 	// CSRF FIRST. Here it also stops LOGIN CSRF: a cross-site form carrying the
 	// attacker's own link would otherwise sign the victim into the attacker's
@@ -66,7 +68,7 @@ export const POST: APIRoute = async (context) => {
 	// Busy: the challenge was NOT consumed (a busy step writes nothing), so the
 	// emailed link still works — the 503 invites another click. The way back is
 	// the login page, never this URL: it must not carry the one-time token.
-	if (isBusyResult(result)) return busyResponse(LOGIN_PATH);
+	if (isBusyResult(result)) return busyResponse(LOGIN_PATH, siteLocale(context));
 	if (!result.ok) {
 		return seeOther(
 			context,

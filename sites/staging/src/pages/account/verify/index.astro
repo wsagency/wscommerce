@@ -20,6 +20,9 @@ import Notice from "../../../components/Notice.astro";
 import Base from "../../../layouts/Base.astro";
 import { ACCOUNT_NO_STORE } from "../../../lib/account.js";
 import { cartErrorMessage } from "../../../lib/error-messages.js";
+import { storefrontPresentation } from "../../../lib/messages.js";
+
+const { locale, t } = storefrontPresentation(Astro);
 
 Astro.response.headers.set("Cache-Control", ACCOUNT_NO_STORE);
 
@@ -28,29 +31,29 @@ const token = Astro.url.searchParams.get("token") ?? "";
 const usable = challenge.length > 0 && token.length > 0;
 ---
 
-<Base title="Sign in">
+<Base title={t("Sign in")}>
 	<meta name="referrer" content="same-origin" slot="head" />
-	<h1 class="title">Sign in</h1>
+	<h1 class="title">{t("Sign in")}</h1>
 
 	{
 		usable ? (
 			<form method="POST" action="/account/verify/confirm" class="form">
 				<input type="hidden" name="challenge" value={challenge} />
 				<input type="hidden" name="token" value={token} />
-				<p class="lede">Continue to finish signing in. The link works once.</p>
+				<p class="lede">{t("Continue to finish signing in. The link works once.")}</p>
 				<div>
 					<button type="submit" class="u-btn">
-						Continue signing in
+						{t("Continue signing in")}
 					</button>
 				</div>
 			</form>
 		) : (
 			<>
 				<div class="notice-slot" role="alert">
-					<Notice>{cartErrorMessage("LOGIN_LINK_INVALID")}</Notice>
+					<Notice>{cartErrorMessage("LOGIN_LINK_INVALID", locale)}</Notice>
 				</div>
 				<p class="back">
-					<a href="/account/login">Request a new sign-in link</a>
+					<a href="/account/login">{t("Request a new sign-in link")}</a>
 				</p>
 			</>
 		)

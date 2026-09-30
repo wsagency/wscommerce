@@ -27,7 +27,8 @@
  * querying and the writing, this module decides what should be written. Which
  * is what lets the three behaviours above be driven by a fake clock.
  */
-import { HOLD_LABELS, type HoldState, holdClock, holdState } from "./hold.js";
+import { type HoldState, holdClock, holdLabel, holdState } from "./hold.js";
+import { SITE_LOCALE, type SiteLocale } from "./site-locale.js";
 
 /** Once a second. Matches the fill's `transition: width 1s linear`, so the bar
  *  drains continuously rather than stepping. */
@@ -65,18 +66,19 @@ export function holdFrame(
 	windowSeconds: number,
 	shownState: string,
 	now: number,
+	locale: SiteLocale = SITE_LOCALE,
 ): HoldFrame | null {
 	if (Number.isNaN(expiry)) return null;
 	const left = Math.max(0, Math.floor((expiry - now) / 1000));
 	const state = holdState(left);
 	return {
 		state,
-		label: HOLD_LABELS[state],
+		label: holdLabel(state, locale),
 		clock: holdClock(left),
 		// Clamped: a hold longer than the window the page assumed must not draw
 		// a fill wider than its track.
 		fill: `${Math.min(100, (left / windowSeconds) * 100).toFixed(1)}%`,
-		announce: state === shownState ? null : HOLD_LABELS[state],
+		announce: state === shownState ? null : holdLabel(state, locale),
 		live: left > 0,
 	};
 }
@@ -84,6 +86,7 @@ export function holdFrame(
 /** One ribbon on the page, as the tick sees it. The script implements this over
  *  real elements; a test implements it over a plain object. */
 export interface HoldRibbonPort {
+	readonly locale?: SiteLocale;
 	/** The absolute expiry in ms since epoch — `Date.parse` of the server's
 	 *  `data-expires`. `NaN` ⇒ nothing to count. */
 	readonly expiry: number;
@@ -105,7 +108,7 @@ export interface HoldRibbonPort {
 export function tickHoldRibbons(ribbons: readonly HoldRibbonPort[], now: number): boolean {
 	let live = false;
 	for (const ribbon of ribbons) {
-		const frame = holdFrame(ribbon.expiry, ribbon.window, ribbon.shownState, now);
+		const frame = holdFrame(ribbon.expiry, ribbon.window, ribbon.shownState, now, ribbon.locale);
 		if (frame === null) continue;
 		if (frame.live) live = true;
 		ribbon.render(frame);

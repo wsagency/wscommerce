@@ -12,6 +12,8 @@
  * without a CMS, a commerce service or a DOM.
  */
 import type { ProductViewModel } from "@otta-sh/plugin";
+import { itemCount, message } from "./messages.js";
+import { SITE_LOCALE, type SiteLocale } from "./site-locale.js";
 
 /**
  * How many rows the hero tape shows.
@@ -45,7 +47,7 @@ export const TAPE_ROWS = 6;
 export const TAPE_FETCH_LIMIT = TAPE_ROWS * 2;
 
 /** The name a store falls back to when it has neither tagline nor title. */
-export const FALLBACK_THESIS = "Otta";
+export const FALLBACK_THESIS = "WSCommerce";
 
 export interface TapeRow {
 	/** The sku — the store's own name for the thing. A product with no
@@ -84,6 +86,7 @@ export interface TapeRow {
 export function tapeRows(
 	view: readonly ProductViewModel[] | null,
 	limit: number = TAPE_ROWS,
+	locale: SiteLocale = SITE_LOCALE,
 ): TapeRow[] {
 	return (view ?? [])
 		.flatMap((product) => {
@@ -99,7 +102,11 @@ export function tapeRows(
 				{
 					item: product.sku ?? product.title,
 					price: product.price.formatted,
-					stock: soldOut ? "Sold out" : product.availability === "in_stock" ? "In stock" : "",
+					stock: soldOut
+						? message(locale, "Sold out")
+						: product.availability === "in_stock"
+							? message(locale, "In stock")
+							: "",
 					soldOut,
 				},
 			];
@@ -137,9 +144,12 @@ export function exactCount(fetched: number, limit: number, hasMore?: boolean): n
 
 /** `n items`, singular at one. `null` in — an unknown count — `null` out, and
  *  the caller renders no eyebrow rather than an empty one. */
-export function itemCountLabel(count: number | null): string | null {
+export function itemCountLabel(
+	count: number | null,
+	locale: SiteLocale = SITE_LOCALE,
+): string | null {
 	if (count === null) return null;
-	return count === 1 ? "1 item" : `${count} items`;
+	return itemCount(count, locale);
 }
 
 /**
@@ -150,9 +160,13 @@ export function itemCountLabel(count: number | null): string | null {
  * unknown it says "Shop everything" — the same promise, minus the figure. At one
  * item or none a number is noise, so it is simply "Shop".
  */
-export function shopLinkLabel(count: number | null): string {
-	if (count === null) return "Shop everything";
-	return count > 1 ? `Shop all ${count} items` : "Shop";
+export function shopLinkLabel(count: number | null, locale: SiteLocale = SITE_LOCALE): string {
+	if (count === null) return message(locale, "Shop everything");
+	return count > 1
+		? message(locale, "Shop all {items}", {
+				items: locale === "hr" ? itemCount(count, locale) : String(count) + " items",
+			})
+		: message(locale, "Shop");
 }
 
 /** The subset of EmDash site settings the home page reads. */

@@ -52,6 +52,8 @@ import Notice from "../../components/Notice.astro";
 import PriceTag from "../../components/PriceTag.astro";
 import QtyField from "../../components/QtyField.astro";
 import Sum from "../../components/Sum.astro";
+import { itemCount as itemCountLabel } from "../../lib/messages.js";
+import { demoProduct } from "../../lib/demo-content.js";
 import Base from "../../layouts/Base.astro";
 import {
 	CART_CHECKED_OUT_BODY,
@@ -69,6 +71,10 @@ import { cartErrorMessage } from "../../lib/error-messages.js";
 import { productImage, type ProductEntryData } from "../../lib/products.js";
 import { isUnpricedText, type SumRow } from "../../lib/totals.js";
 import { BUSY, dispatchOttaRoute, isBusyResult, markBusy } from "../../lib/otta-api.js";
+import { storefrontPresentation } from "../../lib/messages.js";
+
+const { locale, t } = storefrontPresentation(Astro);
+Astro.response.headers.set("Cache-Control", "private, no-store");
 
 const cartId = Astro.cookies.get(CART_COOKIE_NAME)?.value;
 const error = Astro.url.searchParams.get("error");
@@ -78,7 +84,7 @@ const result =
 		? await dispatchOttaRoute<CartReadRouteResult>(
 				getPublicPluginApiRouteHandler(Astro.locals),
 				STOREFRONT_CART_READ_ROUTE,
-				{ cartId },
+				{ cartId, locale },
 				Astro.url,
 			)
 		: null;
@@ -298,9 +304,10 @@ if (productIds.length > 0) {
  * the title-or-SKU fallback rule to drift.
  */
 const lineViews = lines.map((line, index) => {
-	const content = line.productId === null ? null : (contentById.get(line.productId) ?? null);
+	const sourceContent = line.productId === null ? null : (contentById.get(line.productId) ?? null);
+	const content = sourceContent === null ? null : demoProduct(sourceContent, locale);
 	const linePricing = pricing?.lines.find((entry) => entry.lineId === line.lineId) ?? null;
-	const unitPrice = lineMoneyText(linePricing?.unitPrice?.formatted, pricingDegraded);
+	const unitPrice = lineMoneyText(linePricing?.unitPrice?.formatted, pricingDegraded, locale);
 	return {
 		line,
 		index,
@@ -313,12 +320,12 @@ const lineViews = lines.map((line, index) => {
 		/** Keys the coil (§5). Any stable per-product string; the SKU is the
 		 *  last resort so a contentless line still draws its own art. */
 		artKey: content?.slug ?? line.productId ?? line.sku,
-		money: lineMoneyText(linePricing?.lineTotal?.formatted, pricingDegraded),
+		money: lineMoneyText(linePricing?.lineTotal?.formatted, pricingDegraded, locale),
 		/** Only when it says something the line total does not: at qty 1 the two
 		 *  figures are the same number twice, and when the unit price is PROSE
 		 *  ("Priced at checkout") the line total is already saying it — "Priced
 		 *  at checkout each" is not a sentence. */
-		each: line.qty > 1 && !isUnpricedText(unitPrice) ? `${unitPrice} each` : null,
+		each: line.qty > 1 && !isUnpricedText(unitPrice) ? t("{price} each", { price: unitPrice }) : null,
 		// One fresh key per rendered form (double-submit = replay, not duplicate).
 		updateKey: crypto.randomUUID(),
 		removeKey: crypto.randomUUID(),
@@ -354,7 +361,7 @@ const itemCount = cart === null ? 0 : totalQty(cart);
 const summary =
 	cart === null || lines.length === 0
 		? null
-		: `${itemCount} ${itemCount === 1 ? "item" : "items"}`;
+		: itemCountLabel(itemCount, locale);
 
 /**
  * The totals block (§7). The cart has ONE figure — the sum of the lines that
@@ -368,18 +375,18 @@ const asProse = (label: string): CheckoutAmountView => ({ money: null, label });
 const cartTotal = pricing?.total ?? null;
 /** Nothing on this cart carries a figure — and the two reasons for that read
  *  differently to a shopper, so they are not collapsed into one sentence. */
-const NO_SUBTOTAL = pricingDegraded ? "Unavailable right now" : PRICED_AT_CHECKOUT_CELL;
-const NO_TOTAL = pricingDegraded ? "Unavailable right now" : "Confirmed at checkout";
+const NO_SUBTOTAL = pricingDegraded ? t("Unavailable right now") : t(PRICED_AT_CHECKOUT_CELL);
+const NO_TOTAL = pricingDegraded ? t("Unavailable right now") : t("Confirmed at checkout");
 
 const sumRows: SumRow[] = [
 	{
-		label: "Subtotal",
+		label: t("Subtotal"),
 		amount: cartTotal === null ? asProse(NO_SUBTOTAL) : asMoney(cartTotal),
 		fallback: NO_SUBTOTAL,
 	},
 	// The cart cannot know a shipping figure — it is quoted one step later — and
 	// §7 forbids rendering that as "Free" or as "$0.00".
-	{ label: "Shipping", amount: asProse("At checkout"), fallback: "At checkout" },
+	{ label: t("Shipping"), amount: asProse(t("At checkout")), fallback: t("At checkout") },
 ];
 const totalAmount = cartTotal === null ? asProse(NO_TOTAL) : asMoney(cartTotal);
 
@@ -387,7 +394,7 @@ const totalAmount = cartTotal === null ? asProse(NO_TOTAL) : asMoney(cartTotal);
  *  partial total is only honest when it says what it is short of. */
 const partialNote =
 	cartTotal !== null && pricing !== null && !pricing.allLinesPriced
-		? "Some items are priced at checkout, so this total isn't complete yet."
+		? t("Some items are priced at checkout, so this total isn't complete yet.")
 		: null;
 ---
 
@@ -403,13 +410,13 @@ const partialNote =
     currency is NOT suppressed with it — the cart still has one, and the footer
     naming it is still true. */}
 <Base
-	title="Cart"
+	title={t("Cart")}
 	cartCount={cart === null || terminal ? null : totalQty(cart)}
 	currency={cart?.currency ?? null}
 >
 	<header class="cart-head">
 		{summary !== null && <p class="u-label summary">{summary}</p>}
-		<h1 class="title">Cart</h1>
+		<h1 class="title">{t("Cart")}</h1>
 	</header>
 
 	{/* §4's degraded surface, on all three of this page's banners. They were the
@@ -421,7 +428,7 @@ const partialNote =
 	    owns (see src/lib/rest-props.ts). */}
 	{error !== null && (
 		<div class="notice-slot">
-			<Notice>{cartErrorMessage(error)}</Notice>
+			<Notice>{cartErrorMessage(error, locale)}</Notice>
 		</div>
 	)}
 	{degraded && (
@@ -438,8 +445,8 @@ const partialNote =
 		   for a cart it just admitted it cannot see. What is certainly true is
 		   the narrower thing: this failed read changed nothing. */
 		<div class="notice-slot">
-			<Notice lead={busy ? cartErrorMessage(BUSY) : "Your cart is unavailable right now."}>
-				We haven't changed anything — try again in a moment.
+			<Notice lead={busy ? cartErrorMessage(BUSY, locale) : t("Your cart is unavailable right now.")}>
+				{t("We haven't changed anything — try again in a moment.")}
 			</Notice>
 		</div>
 	)}
@@ -458,8 +465,8 @@ const partialNote =
 		   right now" because a catalog shows prices; a cart shows a total, which
 		   is the number the shopper is here for and the one that is missing. */
 		<div class="notice-slot">
-			<Notice lead="Totals are unavailable right now.">
-				Your quantities and your holds are still exact.
+			<Notice lead={t("Totals are unavailable right now.")}>
+				{t("Your quantities and your holds are still exact.")}
 			</Notice>
 		</div>
 	)}
@@ -473,12 +480,12 @@ const partialNote =
 			   the banner above is already saying so. */
 			!degraded && (
 				<div class="empty">
-					<h2 class="empty-title">Nothing held yet.</h2>
+					<h2 class="empty-title">{t("Nothing held yet.")}</h2>
 					<p>
-						Your cart is empty. Pick something and we'll hold the stock while you decide.
+						{t("Your cart is empty. Pick something and we'll hold the stock while you decide.")}
 					</p>
 					<a href="/products" class="u-btn u-btn-ghost">
-						Browse products
+						{t("Browse products")}
 					</a>
 				</div>
 			)
@@ -495,8 +502,8 @@ const partialNote =
 			   a checked-out cart that somehow carries no lines still gets the
 			   invitation rather than a panel about nothing. */
 			<div class="terminal">
-				<h2 class="terminal-title">{CART_CHECKED_OUT_TITLE}</h2>
-				<p class="terminal-body">{CART_CHECKED_OUT_BODY}</p>
+				<h2 class="terminal-title">{t(CART_CHECKED_OUT_TITLE)}</h2>
+				<p class="terminal-body">{t(CART_CHECKED_OUT_BODY)}</p>
 
 				{/* Title AND sku, by the live arm's own rule (`.line-id`): the title
 				    only when this store can name the line, the SKU always. A buyer
@@ -510,7 +517,7 @@ const partialNote =
 								{view.title !== null && <span class="terminal-name">{view.title}</span>}
 								<span class="u-mono terminal-sku">{view.line.sku}</span>
 							</span>
-							<span class="u-mono terminal-qty">Qty {view.line.qty}</span>
+							<span class="u-mono terminal-qty">{t("Qty")} {view.line.qty}</span>
 						</li>
 					))}
 				</ul>
@@ -523,7 +530,7 @@ const partialNote =
 					    payment" itself when that applies — which is also why a
 					    stamped-but-unpaid cart may land here safely. */}
 					{placedOrderId !== null && (
-						<a href={`/orders/${encodeURIComponent(placedOrderId)}`} class="u-btn">View your order</a>
+						<a href={`/orders/${encodeURIComponent(placedOrderId)}`} class="u-btn">{t("View your order")}</a>
 					)}
 
 					{/* CASE B — the cart names no order. Uncommon now, and kept
@@ -538,9 +545,9 @@ const partialNote =
 					    they still owe money. */}
 					{placedOrderId === null && (
 						<div class="terminal-resume">
-							<a href="/checkout" class="u-btn">Return to this checkout</a>
-							<p class="terminal-note">{CART_RESUME_PURPOSE}</p>
-							<p class="terminal-note">{CART_NO_ORDER_LINK}</p>
+							<a href="/checkout" class="u-btn">{t("Return to this checkout")}</a>
+							<p class="terminal-note">{t(CART_RESUME_PURPOSE)}</p>
+							<p class="terminal-note">{t(CART_NO_ORDER_LINK)}</p>
 						</div>
 					)}
 
@@ -549,9 +556,9 @@ const partialNote =
 					    too, so a payment still in flight loses its client secret. */}
 					<div class="terminal-restart">
 						<form method="POST" action="/checkout/new-cart">
-							<button type="submit" class="u-btn u-btn-ghost">Start a new cart</button>
+							<button type="submit" class="u-btn u-btn-ghost">{t("Start a new cart")}</button>
 						</form>
-						<p class="terminal-note">{CART_NEW_CART_CONSEQUENCE}</p>
+						<p class="terminal-note">{t(CART_NEW_CART_CONSEQUENCE)}</p>
 					</div>
 				</div>
 			</div>
@@ -603,18 +610,18 @@ const partialNote =
 									<QtyField
 										value={view.line.qty}
 										size="sm"
-										label={`Quantity, ${view.name}`}
+										label={t("Quantity, {name}", { name: view.name })}
 										hideLabel
 									/>
 									<button type="submit" class="link-btn">
-										Update<span class="u-sr-only"> {view.name}</span>
+										{t("Update")}<span class="u-sr-only"> {view.name}</span>
 									</button>
 								</form>
 								<form method="POST" action="/cart/remove">
 									<input type="hidden" name="lineId" value={view.line.lineId} />
 									<input type="hidden" name="idempotencyKey" value={view.removeKey} />
 									<button type="submit" class="link-btn">
-										Remove<span class="u-sr-only"> {view.name}</span>
+										{t("Remove")}<span class="u-sr-only"> {view.name}</span>
 									</button>
 								</form>
 							</div>
@@ -628,14 +635,14 @@ const partialNote =
 
 				<div class="cart-foot">
 					<a href="/checkout" class="u-btn">
-						Check out
+						{t("Check out")}
 					</a>
 					{/* §7, and the reason it says both halves: the figures above are a
 					    LIVE join, not a snapshot the cart is holding, and the ribbon
 					    beside them reserves STOCK — a hold is not a price lock. Saying
 					    only "confirmed at checkout" beside a countdown invites exactly
 					    the reading the hold does not support. */}
-					<p>Prices are live and may change; your total is confirmed at checkout.</p>
+					<p>{t("Prices are live and may change; your total is confirmed at checkout.")}</p>
 				</div>
 			</div>
 		)

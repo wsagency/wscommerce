@@ -34,11 +34,15 @@ import { getEmDashCollection } from "emdash";
 import { getPublicPluginApiRouteHandler } from "emdash/plugin-utils";
 import Notice from "../../components/Notice.astro";
 import ProductCard from "../../components/ProductCard.astro";
+import { demoProduct } from "../../lib/demo-content.js";
 import Base from "../../layouts/Base.astro";
 import { toCmsProductContent, type ProductEntryData } from "../../lib/products.js";
 import { exactCount, itemCountLabel } from "../../lib/tape.js";
 import { cartErrorMessage } from "../../lib/error-messages.js";
 import { BUSY, dispatchOttaRoute, isBusyResult, markBusy } from "../../lib/otta-api.js";
+import { storefrontPresentation } from "../../lib/messages.js";
+
+const { locale, t } = storefrontPresentation(Astro);
 
 const {
 	entries,
@@ -61,7 +65,7 @@ const items = entries
 const result = await dispatchOttaRoute<PlpRouteResult>(
 	getPublicPluginApiRouteHandler(Astro.locals),
 	STOREFRONT_LIST_ROUTE,
-	{ items, query: { kind: "all" } },
+	{ items, query: { kind: "all" }, locale },
 	Astro.url,
 );
 const view: ProductViewModel[] | null = result !== null && result.ok ? result.items : null;
@@ -73,8 +77,9 @@ if (busy) markBusy(Astro.response);
 /** With commerce unreachable the cards still render — content only, and every
  *  commercial field explicitly absent so no card can show a figure. */
 const cards =
-	view ??
-	items.map((content) => ({ ...content, purchasable: false, price: null, availability: null }));
+	(view ??
+	items.map((content) => ({ ...content, purchasable: false, price: null, availability: null })))
+	.map((product) => demoProduct(product, locale));
 
 /**
  * What a card says where its price would be.
@@ -85,7 +90,7 @@ const cards =
  * retiring the whole shop. Degraded means the page does not know the price, so
  * that is what it says — the PDP already draws the same distinction.
  */
-const priceNote = view === null ? "Price unavailable right now" : undefined;
+const priceNote = view === null ? t("Price unavailable right now") : undefined;
 
 /* §7: the footer names the currency the page actually quoted, never a
    literal — and names none at all when nothing on the page carries a price. */
@@ -96,10 +101,10 @@ const currency = view?.find((product) => product.price !== null)?.price?.currenc
    window means "at least 48", and "48 items" over a 900-product shop is a lie
    the shopper has no way to catch. */
 const count = exactCount(entries.length, PLP_PAGE_SIZE_CAP, hasMore);
-const countLabel = itemCountLabel(count);
+const countLabel = itemCountLabel(count, locale);
 ---
 
-<Base title="Shop" currency={currency}>
+<Base title={t("Shop")} currency={currency}>
 	{
 		/* The WRAPPER carries the spacing, not a class on the component: a page
 		   cannot style a component's root element (Astro scopes each
@@ -108,8 +113,8 @@ const countLabel = itemCountLabel(count);
 		   can never match. */
 		view === null && items.length > 0 && (
 			<div class="notice-slot">
-				<Notice lead={busy ? cartErrorMessage(BUSY) : "Prices and stock are unavailable right now."}>
-					The catalog below is complete — check back in a moment for live figures.
+				<Notice lead={busy ? cartErrorMessage(BUSY, locale) : t("Prices and stock are unavailable right now.")}>
+					{t("The catalog below is complete — check back in a moment for live figures.")}
 				</Notice>
 			</div>
 		)
@@ -125,23 +130,22 @@ const countLabel = itemCountLabel(count);
 			   nothing to show yet. No count — there is nothing to count. */
 			<>
 				<div class="notice-slot">
-					<Notice lead="The catalog is unavailable right now.">
-						Try again in a moment.
+					<Notice lead={t("The catalog is unavailable right now.")}>
+						{t("Try again in a moment.")}
 					</Notice>
 				</div>
 				<div class="head">
-					<h1 class="title">Shop</h1>
+					<h1 class="title">{t("Shop")}</h1>
 				</div>
 			</>
 		) : items.length === 0 ? (
 			<div class="empty">
-				<h1 class="title empty-title">No products yet.</h1>
+				<h1 class="title empty-title">{t("No products yet.")}</h1>
 				<p class="empty-copy">
-					Create a product in the admin, price it there, and it appears here with live
-					stock.
+					{t("Create a product in the admin, price it there, and it appears here with live stock.")}
 				</p>
 				<a class="u-btn u-btn-ghost" href="/_emdash/admin">
-					Open the admin
+					{t("Open the admin")}
 				</a>
 			</div>
 		) : (
@@ -150,7 +154,7 @@ const countLabel = itemCountLabel(count);
 					{/* No label when the count is not exact — the title alone, rather
 					    than a figure the page cannot stand behind. */}
 					{countLabel !== null && <p class="u-label">{countLabel}</p>}
-					<h1 class="title">Shop</h1>
+					<h1 class="title">{t("Shop")}</h1>
 				</div>
 				<div class="grid">
 					{cards.map((product, index) => (

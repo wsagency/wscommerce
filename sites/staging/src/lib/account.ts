@@ -15,6 +15,8 @@ import {
 	SESSION_COOKIE_NAME,
 	type SessionCookieDescriptor,
 } from "@otta-sh/plugin";
+import { message } from "./messages.js";
+import { SITE_LOCALE, type SiteLocale } from "./site-locale.js";
 
 /** The one notice a link request ends on, whatever the plugin knows about the
  *  address — the page must not become an account oracle (ADR-0004). */
@@ -89,15 +91,19 @@ export function verifyFailureToken(reason: "EXPIRED" | "INVALID" | "CONSUMED"): 
  * integer in a real currency renders a dash rather than a plausible wrong
  * amount.
  */
-export function orderMoney(amountCents: number, currencyCode: string): string {
+export function orderMoney(
+	amountCents: number,
+	currencyCode: string,
+	locale: SiteLocale = SITE_LOCALE,
+): string {
 	try {
-		return formatMoney(cents(amountCents), currency(currencyCode), "en-US");
+		return formatMoney(cents(amountCents), currency(currencyCode), locale);
 	} catch {
 		return "—";
 	}
 }
 
-const STATE_LABELS: Record<string, string> = {
+const STATE_LABELS = {
 	pending: "Awaiting payment",
 	paid: "Paid",
 	processing: "Processing",
@@ -108,10 +114,11 @@ const STATE_LABELS: Record<string, string> = {
 	refunded: "Refunded",
 	expired: "Expired",
 	failed: "Payment failed",
-};
+} as const;
 
 /** The order's state in words. An unknown state still reads, rather than
  *  leaking a snake_case token. */
-export function orderStateLabel(state: string): string {
-	return STATE_LABELS[state] ?? state.replaceAll("_", " ");
+export function orderStateLabel(state: string, locale: SiteLocale = SITE_LOCALE): string {
+	const label = STATE_LABELS[state as keyof typeof STATE_LABELS];
+	return label === undefined ? state.replaceAll("_", " ") : message(locale, label);
 }

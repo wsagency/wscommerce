@@ -17,6 +17,8 @@ import {
 	type CheckoutAmountView,
 	type UncalculatedReason,
 } from "@otta-sh/plugin";
+import { message } from "./messages.js";
+import { SITE_LOCALE, type SiteLocale } from "./site-locale.js";
 
 /**
  * What a not-applicable row says when the page supplies nothing better.
@@ -72,8 +74,8 @@ function saysSomething(text: string): boolean {
 
 /** The last gate before a money cell reaches the screen. Anything that does not
  *  say something becomes the honest default rather than a mark on a page. */
-function orNotApplied(text: string | undefined): string {
-	return text !== undefined && saysSomething(text) ? text : NOT_APPLIED_LABEL;
+function orNotApplied(text: string | undefined, locale: SiteLocale): string {
+	return text !== undefined && saysSomething(text) ? text : message(locale, "Not applied");
 }
 
 /**
@@ -88,10 +90,12 @@ function orNotApplied(text: string | undefined): string {
  * backstop for the case the constant cannot cover: a `fallback` that is itself
  * blank, or a plugin label that is a different dash from the one we import.
  */
-export function sumRowText(row: SumRow): string {
+export function sumRowText(row: SumRow, locale: SiteLocale = SITE_LOCALE): string {
 	if (!isUncalculated(row.amount)) return row.amount.label;
-	if (row.amount.label === NOT_APPLICABLE_LABEL) return orNotApplied(row.fallback);
-	return orNotApplied(row.fallback ?? row.amount.label);
+	if (row.amount.label === NOT_APPLICABLE_LABEL) return orNotApplied(row.fallback, locale);
+	if (row.fallback === undefined && row.amount.label === NOT_CALCULATED_LABEL)
+		return message(locale, "Not calculated");
+	return orNotApplied(row.fallback ?? row.amount.label, locale);
 }
 
 /**
@@ -109,8 +113,12 @@ export function sumRowText(row: SumRow): string {
  * Real money and real prose are printed untouched — a `fallback` never
  * overrides a cell that already has something to say.
  */
-export function moneyCellText(money: string, fallback?: string): string {
-	return saysSomething(money) ? money : orNotApplied(fallback);
+export function moneyCellText(
+	money: string,
+	fallback?: string,
+	locale: SiteLocale = SITE_LOCALE,
+): string {
+	return saysSomething(money) ? money : orNotApplied(fallback, locale);
 }
 
 /** What the pay button says when there is no amount to put on it. */
@@ -130,10 +138,13 @@ export const PAY_FALLBACK_LABEL = "Pay now";
  * would put "Pay —" on the one control in this theme that moves money, which is
  * worse than saying nothing at all.
  */
-export function payButtonLabel(formatted: string | undefined): string {
+export function payButtonLabel(
+	formatted: string | undefined,
+	locale: SiteLocale = SITE_LOCALE,
+): string {
 	return formatted !== undefined && saysSomething(formatted)
-		? `Pay ${formatted}`
-		: PAY_FALLBACK_LABEL;
+		? message(locale, "Pay {amount}", { amount: formatted })
+		: message(locale, PAY_FALLBACK_LABEL);
 }
 
 /**
@@ -173,18 +184,29 @@ function uncalculatedNames(rows: SumRow[]): string[] {
  * So that case gets a footnote that admits the gap without inventing a name
  * for it.
  */
-export function uncalculatedFootnote(rows: SumRow[], excludesUncalculated: boolean): string | null {
+export function uncalculatedFootnote(
+	rows: SumRow[],
+	excludesUncalculated: boolean,
+	locale: SiteLocale = SITE_LOCALE,
+): string | null {
 	if (!excludesUncalculated) return null;
 	const names = uncalculatedNames(rows);
 	if (names.length === 0) {
-		return "This total doesn't include everything yet — some amounts aren't calculated on this store.";
+		return message(
+			locale,
+			"This total doesn't include everything yet — some amounts aren't calculated on this store.",
+		);
 	}
 	const list =
 		names.length === 1
 			? names[0]
-			: `${names.slice(0, -1).join(", ")} or ${names[names.length - 1] ?? ""}`;
+			: `${names.slice(0, -1).join(", ")} ${message(locale, "or")} ${names[names.length - 1] ?? ""}`;
 	const it = names.length === 1 ? "it" : "them";
-	return `This total doesn't include ${list} — this store hasn't set ${it} up yet.`;
+	return message(
+		locale,
+		"This total doesn't include {names} — this store hasn't set {pronoun} up yet.",
+		{ names: list ?? "", pronoun: it },
+	);
 }
 
 /**
@@ -198,17 +220,27 @@ export function checkoutFootnote(
 	reason: UncalculatedReason | null,
 	rows: SumRow[],
 	excludesUncalculated: boolean,
+	locale: SiteLocale = SITE_LOCALE,
 ): string | null {
 	if (!excludesUncalculated) return null;
 	switch (reason) {
 		case "address_needed":
-			return "This total doesn't include shipping or tax yet — they depend on where your order is delivered.";
+			return message(
+				locale,
+				"This total doesn't include shipping or tax yet — they depend on where your order is delivered.",
+			);
 		case "method_needed":
-			return "This total doesn't include shipping yet — choose a delivery option above.";
+			return message(
+				locale,
+				"This total doesn't include shipping yet — choose a delivery option above.",
+			);
 		case "digital_only":
-			return "Nothing in this order ships, so there's no delivery charge and no location-based tax.";
+			return message(
+				locale,
+				"Nothing in this order ships, so there's no delivery charge and no location-based tax.",
+			);
 		case "no_zones":
 		case null:
-			return uncalculatedFootnote(rows, excludesUncalculated);
+			return uncalculatedFootnote(rows, excludesUncalculated, locale);
 	}
 }

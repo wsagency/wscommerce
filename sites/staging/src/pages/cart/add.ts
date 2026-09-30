@@ -39,6 +39,8 @@ import {
 	safeReturnPath,
 } from "../../lib/otta-api.js";
 
+import { siteLocale } from "../../lib/site-locale.js";
+
 export const POST: APIRoute = async (context) => {
 	// CSRF first: emdash disables Astro's checkOrigin; the shim enforces
 	// its own origin check (origin-guard.ts, ADR-0006).
@@ -139,7 +141,7 @@ export const POST: APIRoute = async (context) => {
 		);
 		// The pre-check READ was busy (already retried once): the shopper's add is
 		// fine, the store is momentarily busy — say so, not SERVICE_UNAVAILABLE.
-		if (isBusyResult(productResult)) return busyResponse(returnTo);
+		if (isBusyResult(productResult)) return busyResponse(returnTo, siteLocale(context));
 		if (productResult === null || !productResult.ok) {
 			return seeOther(context, returnTo, SERVICE_UNAVAILABLE);
 		}
@@ -155,7 +157,7 @@ export const POST: APIRoute = async (context) => {
 	if (!cart.ok) {
 		// A busy `cart/create` (key-less, so never auto-retried) is the busy 503;
 		// any other failure is the ordinary SERVICE_UNAVAILABLE turn.
-		if (cart.reason === "busy") return busyResponse(returnTo);
+		if (cart.reason === "busy") return busyResponse(returnTo, siteLocale(context));
 		return seeOther(context, returnTo, SERVICE_UNAVAILABLE);
 	}
 	const { cartId } = cart;
@@ -169,7 +171,7 @@ export const POST: APIRoute = async (context) => {
 
 	// Still busy after dispatch's one retry (same idempotency key): 503, not a
 	// generic "went wrong" — a reload re-posts the same key, which is replay-safe.
-	if (isBusyResult(result)) return busyResponse(returnTo);
+	if (isBusyResult(result)) return busyResponse(returnTo, siteLocale(context));
 	if (result === null || !result.ok) {
 		const token = failureToken(result);
 		// A stale cookie pointing at a vanished cart: drop it so the next

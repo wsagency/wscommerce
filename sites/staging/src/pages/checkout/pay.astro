@@ -8,11 +8,10 @@
  * card form would put PAN data on our servers and move every merchant running
  * this theme to SAQ-D.
  *
- * This page makes NO commerce call. Everything it needs — the order id, the
- * client secret and the order's total — is in the first-party `otta_checkout`
- * cookie the place endpoint set one redirect ago. Re-deriving the secret would
- * mean a GET that can create an order, and re-deriving the TOTAL would quote a
- * still-live cart rather than the amount the PaymentIntent was minted for.
+ * The first-party `otta_checkout` cookie supplies the private order capability,
+ * client secret and approved place-time total. One guarded read of that same
+ * order can localize its immutable total; if unavailable, the stash label stays.
+ * The page never quotes the live cart, creates an order or calls a provider.
  *
  * The script reads its inputs from `data-` attributes rather than having them
  * baked into JS source (no `define:vars`), so Astro's attribute escaping is the
@@ -32,6 +31,12 @@ import { readCheckoutStash } from "../../lib/checkout-cookie.js";
 import { cartErrorMessage } from "../../lib/error-messages.js";
 import { STRIPE_PUBLISHABLE_KEY } from "../../lib/stripe-config.js";
 import { payButtonLabel } from "../../lib/totals.js";
+import { storefrontPresentation } from "../../lib/messages.js";
+import { getPublicPluginApiRouteHandler } from "emdash/plugin-utils";
+import { localizedCheckoutTotal } from "../../lib/payment-display.js";
+
+const { locale, t } = storefrontPresentation(Astro);
+Astro.response.headers.set("Cache-Control", "private, no-store");
 
 const stash = readCheckoutStash(Astro.cookies);
 // No stash (direct hit, expired cookie, cleared browser): there is nothing to
@@ -42,29 +47,29 @@ if (stash === null) return Astro.redirect("/checkout", 303);
 const orderUrl = new URL(`/orders/${encodeURIComponent(stash.orderId)}`, Astro.url).toString();
 const orderPath = `/orders/${encodeURIComponent(stash.orderId)}`;
 
-/** "Pay $40.00" (§7) — or "Pay now" for a stash minted before the total shipped.
- *  The page never assembles this string; the amount was formatted by the plugin
- *  at place-time and the label rule lives in `totals.ts`. */
-const payLabel = payButtonLabel(stash.total?.formatted);
+/** The plugin formats the immutable order amount; the site only supplies the
+ *  localized framing. A missing read leaves the original stash label available. */
+const displayTotal = await localizedCheckoutTotal(stash, locale, getPublicPluginApiRouteHandler(Astro.locals), Astro.url);
+const payLabel = payButtonLabel(displayTotal?.formatted, locale);
 ---
 
 {/* The currency is the stash's own, and it is here BECAUSE the button now shows
     money — §7's rule is that a page naming a price names the currency it is in.
     A pre-total stash carries neither: `null`, and the footer stays bare, which
     is still the truth about what this page printed. */}
-<Base title="Payment" currency={stash.total?.currency ?? null}>
+<Base title={t("Payment")} currency={displayTotal?.currency ?? null}>
 	{/* Wrapped rather than given a class: a page's scoped selector cannot reach a
 	    component's root (src/lib/rest-props.ts), so the spacing around one lives
 	    on an element the page owns. */}
 	<div class="steps"><StepTrack current="payment" /></div>
-	<h1 class="title">Payment</h1>
+	<h1 class="title">{t("Payment")}</h1>
 
 	{
 		STRIPE_PUBLISHABLE_KEY === undefined ? (
 			/* The lead is QUOTED from error-messages.ts's STRIPE_NOT_CONFIGURED
 			   rather than restated here (§10). */
-			<Notice lead={cartErrorMessage("STRIPE_NOT_CONFIGURED")}>
-				This order can't be paid. No charge has been made. <a href={orderPath}>View your order</a>.
+			<Notice lead={cartErrorMessage("STRIPE_NOT_CONFIGURED", locale)}>
+				{t("This order can't be paid. No charge has been made.")} <a href={orderPath}>{t("View your order")}</a>.
 			</Notice>
 		) : (
 			<div class="pay">
@@ -73,8 +78,7 @@ const payLabel = payButtonLabel(stash.total?.formatted);
 				<p class="trust">
 					<span class="trust-mark" aria-hidden="true" />
 					<span>
-						Your card details are handled directly by our payment provider and never reach this
-						site.
+						{t("Your card details are handled directly by our payment provider and never reach this site.")}
 					</span>
 				</p>
 
@@ -85,6 +89,11 @@ const payLabel = payButtonLabel(stash.total?.formatted);
 							data-client-secret={stash.clientSecret}
 							data-publishable-key={STRIPE_PUBLISHABLE_KEY}
 							data-return-url={orderUrl}
+							data-locale={locale}
+							data-load-error={t("We couldn't load our payment provider. No charge has been made — please check your connection and reload.")}
+							data-reach-error={t("We couldn't reach our payment provider. Refresh to try again.")}
+							data-offline-error={t("This store's payment provider is running in offline test mode; this order cannot be paid. No charge has been made.")}
+							data-payment-failed={t("That payment could not be completed. No charge has been made.")}
 						/>
 					</div>
 					<p id="payment-error" class="pay-error" role="alert" hidden />
@@ -95,10 +104,8 @@ const payLabel = payButtonLabel(stash.total?.formatted);
 
 				<noscript>
 					<Notice>
-						Entering card details requires JavaScript, because your card number is handled
-						directly by our payment provider and never touches this site. Your order is reserved
-						for 15 minutes — enable JavaScript and reload, or{" "}
-						<a href={orderPath}>view your order</a>.
+						{t("Entering card details requires JavaScript, because your card number is handled directly by our payment provider and never touches this site. Your order is reserved for 15 minutes — enable JavaScript and reload, or")}{" "}
+						<a href={orderPath}>{t("view your order")}</a>.
 					</Notice>
 				</noscript>
 
@@ -119,7 +126,7 @@ const payLabel = payButtonLabel(stash.total?.formatted);
 
 						if (typeof Stripe !== "function") {
 							fail(
-								"We couldn't load our payment provider. No charge has been made — please check your connection and reload.",
+								mount.dataset.loadError || "We couldn't load our payment provider. No charge has been made — please check your connection and reload.",
 							);
 							return;
 						}
@@ -129,6 +136,8 @@ const payLabel = payButtonLabel(stash.total?.formatted);
 						// on reading back through the DOM.
 						var clientSecret = mount.dataset.clientSecret;
 						var returnUrl = mount.dataset.returnUrl;
+						var locale = mount.dataset.locale === "hr" ? "hr" : "en";
+						var paymentFailed = mount.dataset.paymentFailed || "That payment could not be completed. No charge has been made.";
 
 						// ── the theme, handed across the iframe boundary (§9) ─────────
 						// Read back as COMPUTED values rather than written down here:
@@ -306,7 +315,7 @@ const payLabel = payButtonLabel(stash.total?.formatted);
 						try {
 							stripe = Stripe(mount.dataset.publishableKey);
 						} catch (err) {
-							fail("We couldn't reach our payment provider. Refresh to try again.");
+							fail(mount.dataset.reachError || "We couldn't reach our payment provider. Refresh to try again.");
 							return;
 						}
 
@@ -346,7 +355,7 @@ const payLabel = payButtonLabel(stash.total?.formatted);
 						var elements = null;
 						var themed = safeAppearance();
 						try {
-							var options = { clientSecret: clientSecret };
+							var options = { clientSecret: clientSecret, locale: locale };
 							if (themed !== undefined) options.appearance = themed;
 							elements = mountElements(options);
 						} catch (err) {
@@ -360,7 +369,7 @@ const payLabel = payButtonLabel(stash.total?.formatted);
 							if (themed !== undefined) {
 								try {
 									discardMount();
-									elements = mountElements({ clientSecret: clientSecret });
+									elements = mountElements({ clientSecret: clientSecret, locale: locale });
 								} catch (retryErr) {
 									discardMount();
 									elements = null;
@@ -375,7 +384,7 @@ const payLabel = payButtonLabel(stash.total?.formatted);
 								// discard already ran on the other route.
 								discardMount();
 								fail(
-									"This store's payment provider is running in offline test mode; this order cannot be paid. No charge has been made.",
+									mount.dataset.offlineError || "This store's payment provider is running in offline test mode; this order cannot be paid. No charge has been made.",
 								);
 								return;
 							}
@@ -401,8 +410,7 @@ const payLabel = payButtonLabel(stash.total?.formatted);
 									// decides that an order is paid — the webhook does.
 									if (result && result.error) {
 										fail(
-											result.error.message ||
-												"That payment could not be completed. No charge has been made.",
+											result.error.message || paymentFailed,
 										);
 										submit.disabled = false;
 										// `retheme` stands down while the submit is disabled, so a
@@ -412,7 +420,7 @@ const payLabel = payButtonLabel(stash.total?.formatted);
 									}
 								})
 								.catch(function () {
-									fail("That payment could not be completed. No charge has been made.");
+									fail(paymentFailed);
 									submit.disabled = false;
 									retheme();
 								});
@@ -462,7 +470,7 @@ const payLabel = payButtonLabel(stash.total?.formatted);
 		)
 	}
 
-	<p class="back"><a href={orderPath}>View your order</a></p>
+	<p class="back"><a href={orderPath}>{t("View your order")}</a></p>
 </Base>
 
 <style>

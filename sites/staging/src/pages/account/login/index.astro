@@ -12,6 +12,9 @@ import Notice from "../../../components/Notice.astro";
 import Base from "../../../layouts/Base.astro";
 import { ACCOUNT_NO_STORE, LOGIN_LINK_SENT_COPY } from "../../../lib/account.js";
 import { cartErrorMessage } from "../../../lib/error-messages.js";
+import { storefrontPresentation } from "../../../lib/messages.js";
+
+const { locale, t } = storefrontPresentation(Astro);
 
 Astro.response.headers.set("Cache-Control", ACCOUNT_NO_STORE);
 
@@ -19,35 +22,34 @@ const sent = Astro.url.searchParams.get("sent") === "1";
 const error = Astro.url.searchParams.get("error");
 ---
 
-<Base title="Sign in">
-	<h1 class="title">Sign in</h1>
+<Base title={t("Sign in")}>
+	<h1 class="title">{t("Sign in")}</h1>
 	<p class="lede">
-		We'll email you a link that signs you in — no password. Orders you placed as a guest with the
-		same address appear in your account once you sign in.
+		{t("We'll email you a link that signs you in — no password. Orders you placed as a guest with the same address appear in your account once you sign in.")}
 	</p>
 
 	{
 		sent && (
 			<div class="notice-slot" role="status">
-				<Notice lead="Check your inbox.">{LOGIN_LINK_SENT_COPY}</Notice>
+				<Notice lead={t("Check your inbox.")}>{t(LOGIN_LINK_SENT_COPY)}</Notice>
 			</div>
 		)
 	}
 	{
 		error !== null && (
 			<div class="notice-slot" role="alert">
-				<Notice>{cartErrorMessage(error)}</Notice>
+				<Notice>{cartErrorMessage(error, locale)}</Notice>
 			</div>
 		)
 	}
 
 	<form method="POST" action="/account/login/request" class="form">
 		<div class="field">
-			<label class="u-label" for="email">Email</label>
+			<label class="u-label" for="email">{t("Email")}</label>
 			<input type="email" id="email" name="email" required autocomplete="email" />
 		</div>
 		<div>
-			<button type="submit" class="u-btn">Email me a sign-in link</button>
+			<button type="submit" class="u-btn">{t("Email me a sign-in link")}</button>
 		</div>
 	</form>
 </Base>

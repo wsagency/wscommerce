@@ -16,6 +16,7 @@
  */
 import type { HTMLAttributes } from "astro/types";
 import { restProps } from "../lib/rest-props.js";
+import { storefrontPresentation } from "../lib/messages.js";
 
 export const CHECKOUT_STEPS = [
 	{ id: "cart", label: "Cart" },
@@ -30,6 +31,8 @@ interface Props extends HTMLAttributes<"ol"> {
 	current: CheckoutStep;
 }
 
+const { t } = storefrontPresentation(Astro);
+
 const { current, class: className, ...rest } = Astro.props;
 const currentIndex = CHECKOUT_STEPS.findIndex((step) => step.id === current);
 ---
@@ -37,7 +40,7 @@ const currentIndex = CHECKOUT_STEPS.findIndex((step) => step.id === current);
 {/* `role="list"` is redundant markup that is not redundant in practice:
     WebKit drops list semantics from any list styled `list-style: none`, and
     this one is. Without it VoiceOver announces four loose spans. */}
-<ol class:list={["steps", className]} role="list" aria-label="Checkout progress" {...restProps(rest)}>
+<ol class:list={["steps", className]} role="list" aria-label={t("Checkout progress")} {...restProps(rest)}>
 	{
 		CHECKOUT_STEPS.map((step, index) => (
 			<li
@@ -45,8 +48,8 @@ const currentIndex = CHECKOUT_STEPS.findIndex((step) => step.id === current);
 				aria-current={index === currentIndex ? "step" : undefined}
 			>
 				<span class="dot" aria-hidden="true" />
-				<span class="u-label label">{step.label}</span>
-				{index < currentIndex && <span class="u-sr-only">, completed</span>}
+				<span class="u-label label">{t(step.label)}</span>
+				{index < currentIndex && <span class="u-sr-only">, {t("completed")}</span>}
 			</li>
 		))
 	}

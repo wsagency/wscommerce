@@ -14,6 +14,8 @@
  * file.
  */
 import type { CheckoutFailureReason } from "@otta-sh/plugin";
+import { message } from "./messages.js";
+import { SITE_LOCALE, type SiteLocale } from "./site-locale.js";
 
 const GENERIC_FALLBACK = "Something went wrong — please try again shortly.";
 
@@ -50,12 +52,12 @@ const SELECTION_MESSAGES = {
 	// For API callers: no page of this site sends a method for a cart with
 	// nothing to ship (the summary drops a stale one silently).
 	SHIPPING_METHOD_NOT_APPLICABLE: "Your order doesn't need delivery.",
-} satisfies Record<
+} as const satisfies Record<
 	Extract<CheckoutFailureReason, `COUPON_${string}` | `SHIPPING_${string}`>,
 	string
 >;
 
-const MESSAGES: Record<string, string> = {
+const MESSAGES = {
 	PAYMENT_METHOD_NOT_AVAILABLE:
 		"That payment method is not available for this order. Choose another method or contact the store.",
 	INVALID_VARIANT: "Choose an available variant of this product.",
@@ -125,10 +127,10 @@ const MESSAGES: Record<string, string> = {
 	LOGIN_LINK_USED: "That sign-in link has already been used — request a new one below.",
 	LOGIN_LINK_EXPIRED: "That sign-in link has expired — request a new one below.",
 	LOGIN_LINK_INVALID: "That sign-in link isn't valid — request a new one below.",
-};
+} as const;
 
 /** Never returns the raw token, `undefined`, or an empty string — an
  *  unrecognized token (including `""`) falls back to the generic copy. */
-export function cartErrorMessage(token: string): string {
-	return MESSAGES[token] ?? GENERIC_FALLBACK;
+export function cartErrorMessage(token: string, locale: SiteLocale = SITE_LOCALE): string {
+	return message(locale, MESSAGES[token as keyof typeof MESSAGES] ?? GENERIC_FALLBACK);
 }

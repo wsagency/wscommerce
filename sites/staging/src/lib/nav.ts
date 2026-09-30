@@ -11,6 +11,9 @@
 /** The shape the layout renders a nav entry from — the fields it reads off
  *  em-dash's own `MenuItem`, and no more, so the fallback below can satisfy it
  *  without pretending to be a CMS record. */
+import { itemCount, message } from "./messages.js";
+import { SITE_LOCALE, type SiteLocale } from "./site-locale.js";
+
 export interface NavItem {
 	label: string;
 	url: string;
@@ -53,8 +56,8 @@ export function isCartLink(url: string): boolean {
  * screen reader announces as "left paren three right paren"; this is what it
  * says instead.
  */
-export function cartCountLabel(count: number): string {
-	return count === 1 ? "1 item" : `${count} items`;
+export function cartCountLabel(count: number, locale: SiteLocale = SITE_LOCALE): string {
+	return itemCount(count, locale);
 }
 
 /**
@@ -74,6 +77,19 @@ export function isAccountLink(url: string): boolean {
 
 /** The menu plus the account entry — unless the operator's menu already links
  *  into /account, in which case theirs stands and no duplicate is added. */
-export function withAccountLink(items: readonly NavItem[]): readonly NavItem[] {
-	return items.some((item) => isAccountLink(item.url)) ? items : [...items, ACCOUNT_NAV_ITEM];
+export function withAccountLink(
+	items: readonly NavItem[],
+	locale: SiteLocale = SITE_LOCALE,
+): readonly NavItem[] {
+	return items.some((item) => isAccountLink(item.url))
+		? items
+		: [...items, { ...ACCOUNT_NAV_ITEM, label: message(locale, "Account") }];
+}
+
+export function fallbackMenuItems(locale: SiteLocale): readonly NavItem[] {
+	return [
+		{ label: message(locale, "Home"), url: "/" },
+		{ label: message(locale, "Shop"), url: "/products" },
+		{ label: message(locale, "Cart"), url: "/cart" },
+	];
 }

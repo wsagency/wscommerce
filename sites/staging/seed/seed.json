@@ -2,12 +2,12 @@
 	"$schema": "https://emdashcms.com/seed.schema.json",
 	"version": "1",
 	"meta": {
-		"name": "Otta staging store",
+		"name": "WSCommerce reference store",
 		"description": "Products collection matching CmsProductContent — content fields only; pricing, stock and the other commercial fields are edited in the admin's Pricing & inventory page. Includes sample entries for an immediately browsable catalog, none of which declare a variant.",
-		"author": "Otta"
+		"author": "Websolutions"
 	},
 	"settings": {
-		"title": "Otta",
+		"title": "WSCommerce",
 		"tagline": "Three things. That's the whole shop."
 	},
 	"collections": [
@@ -80,7 +80,7 @@
 				"slug": "otta-tee",
 				"status": "published",
 				"data": {
-					"title": "Otta Tee",
+					"title": "WSCommerce Tee",
 					"description": "Heavyweight cotton, unreasonably soft, with the coil across the chest."
 				}
 			},
@@ -89,7 +89,7 @@
 				"slug": "otta-mug",
 				"status": "published",
 				"data": {
-					"title": "Otta Mug",
+					"title": "WSCommerce Mug",
 					"description": "Holds exactly one coffee. Survives the dishwasher and the commute."
 				}
 			},
@@ -98,7 +98,7 @@
 				"slug": "otta-stickers",
 				"status": "published",
 				"data": {
-					"title": "Otta Sticker Pack",
+					"title": "WSCommerce Sticker Pack",
 					"description": "Ten die-cut vinyl stickers. Enough for the laptop, the water bottle, and one for whoever asks where you got them."
 				}
 			}

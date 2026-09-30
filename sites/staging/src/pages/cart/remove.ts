@@ -16,6 +16,8 @@ import {
 import { rejectCrossOrigin } from "../../lib/origin-guard.js";
 import { busyResponse, dispatchOttaRoute, formString, isBusyResult } from "../../lib/otta-api.js";
 
+import { siteLocale } from "../../lib/site-locale.js";
+
 export const POST: APIRoute = async (context) => {
 	// CSRF first: emdash disables Astro's checkOrigin; the shim enforces
 	// its own origin check (origin-guard.ts, ADR-0006).
@@ -41,7 +43,7 @@ export const POST: APIRoute = async (context) => {
 	);
 
 	// Still busy after dispatch's one retry: 503, not a generic "went wrong".
-	if (isBusyResult(result)) return busyResponse("/cart");
+	if (isBusyResult(result)) return busyResponse("/cart", siteLocale(context));
 	if (result === null || !result.ok) {
 		const token = failureToken(result);
 		if (token === "CART_NOT_FOUND") clearCartCookie(context);
