@@ -1,3 +1,7 @@
+import {
+	createBankBarcodeRouteHandler,
+	STOREFRONT_BANK_BARCODE_ROUTE,
+} from "./storefront/bank-barcode-route.js";
 import { ADMIN_ROUTE, createAdminRouteHandler } from "./admin/admin-route.js";
 // ── Phase 3 group E: cart routes (plan §7 step E1, shape per ADR-0003) ────
 import {
@@ -159,6 +163,7 @@ const plugin: SandboxedPlugin = {
 			handler: createCheckoutPlaceRouteHandler() as never,
 			public: true,
 		},
+		[STOREFRONT_BANK_BARCODE_ROUTE]: { handler: createBankBarcodeRouteHandler(), public: true },
 		[STOREFRONT_ORDER_ROUTE]: { handler: createOrderRouteHandler() as never, public: true },
 		// ── end Phase 4 checkout ────────────────────────────────────────────
 		// Work order 02 INC-C1b: the PUBLIC Stripe webhook SETTLE route. It

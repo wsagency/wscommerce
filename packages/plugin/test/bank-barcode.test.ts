@@ -109,3 +109,73 @@ test("the real bundled workerd renders the same synthetic SVG without Node APIs"
 		await worker.close();
 	}
 });
+
+test("registered Worker capability reads only the frozen bank snapshot and cannot mutate payment state", async () => {
+	const { storageBridge } = await import("./sandbox/storage-bridge.js");
+	const { createInProcessCommerceStores } =
+		await import("../src/commerce/in-process-commerce-stores.js");
+	const { orderId, idempotencyKey } = await import("@otta-sh/domain");
+	const bridge = await storageBridge();
+	const store = createInProcessCommerceStores({
+		storage: bridge.storage,
+	} as import("../src/types.js").PluginContext).orderStore;
+	const id = "00000000-0000-4000-8000-000000000003";
+	const plain = "00000000-0000-4000-8000-000000000004";
+	const snapshot = freezeBankTransferSnapshot(input);
+	const offline = {
+		method: "bank_transfer" as const,
+		instructions: "Test only",
+		paymentReference: snapshot.reference,
+		paymentDueAt: "2026-10-03T00:00:00.000Z",
+		status: "awaiting" as const,
+		acceptedAt: null,
+		acceptedBy: null,
+		acceptanceKey: null,
+		receivedAt: null,
+		recordedBy: null,
+		receiptRef: null,
+		confirmationKey: null,
+	};
+	for (const current of [id, plain])
+		await store.createFromCart({
+			orderId: orderId(current),
+			cartId: null,
+			currency: currency("EUR"),
+			idempotencyKey: idempotencyKey(current),
+			buyerRef: "test@example.invalid",
+			paymentMethod: "bank_transfer",
+			holdExpiresAt: offline.paymentDueAt,
+			lines: [],
+			totals: { subtotal: cents(3950), total: cents(3950), currency: currency("EUR") },
+			offlinePayment: { ...offline, ...(current === id ? { bankTransfer: snapshot } : {}) },
+		});
+	const before = await store.getById(orderId(id));
+	const worker = await loadPluginInSandbox({ allowedHosts: [], storage: true });
+	try {
+		expect(
+			await worker.invokeRoute("storefront/order/bank-barcode", {
+				orderId: id,
+				amount: 1,
+				iban: "bad",
+				redirect_status: "succeeded",
+			}),
+		).toEqual({ result: { ok: true, svg: renderHub3Svg(snapshot) } });
+		expect(await worker.invokeRoute("storefront/order/bank-barcode", { orderId: plain })).toEqual({
+			result: { ok: false, reason: "NOT_AVAILABLE" },
+		});
+		for (const fake of ["4", "../" + id, "00000000-0000-4000-8000-000000000099"])
+			expect(await worker.invokeRoute("storefront/order/bank-barcode", { orderId: fake })).toEqual({
+				result: { ok: false, reason: "NOT_FOUND" },
+			});
+		expect(await store.getById(orderId(id))).toEqual(before);
+		expect(await store.getCapturedPayments(orderId(id))).toEqual([]);
+	} finally {
+		await worker.close();
+	}
+});
+test("the immutable recipient keeps full legal details while only the HUB fields are truncated", () => {
+	const name = "Synthetic legal recipient ".repeat(3);
+	const snapshot = freezeBankTransferSnapshot({ ...input, recipient: { ...recipient, name } });
+	expect(snapshot.recipient.name).toBe(name.trim());
+	expect(buildHub3Payload(snapshot).split("\n")[6]).toHaveLength(25);
+});

@@ -45,9 +45,9 @@ export function bankText(value: string, max: number): string {
 export function validateBankTransferRecipient(input: BankTransferRecipient): BankTransferRecipient {
 	if (!input || !["HR00", "HR99"].includes(input.model))
 		throw new RangeError("Unsupported bank reference model");
-	const name = bankText(input.name, 25),
-		address = bankText(input.address, 25),
-		city = bankText(input.city, 27);
+	const name = field(input.name),
+		address = field(input.address),
+		city = field(input.city);
 	if (!name || !address || !city || !/^[A-Z]{4}$/.test(field(input.purpose)))
 		throw new RangeError("Invalid bank recipient");
 	return {
