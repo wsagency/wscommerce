@@ -88,6 +88,42 @@ describe("request-local Block Kit commerce language", () => {
 		).toBe("Settings");
 	});
 
+	test("uses the host locale header after authentication cookies have been stripped", async () => {
+		const headers = { "X-WSCommerce-Admin-Locale": "hr-HR" };
+		expect(heading(await invoke({ type: "page_load", page: "/settings" }, headers))).toBe(
+			"Postavke",
+		);
+		expect(
+			heading(await invoke({ type: "page_load", page: "/settings", locale: "en" }, headers)),
+		).toBe("Settings");
+		expect(
+			heading(
+				await invoke(
+					{ type: "page_load", page: "/settings" },
+					{ "x-wscommerce-admin-locale": "%ZZ" },
+				),
+			),
+		).toBe("Settings");
+		const priorName = await harness.ctx.kv.get<string>("settings:storeDisplayName");
+		try {
+			const saved = await invoke(
+				{
+					type: "form_submit",
+					action_id: "save-display",
+					values: { storeDisplayName: "Settings" },
+				},
+				headers,
+			);
+			expect(heading(saved)).toBe("Postavke");
+			expect(saved.toast?.message).toBe("Naziv trgovine spremljen");
+			expect(await harness.ctx.kv.get("settings:storeDisplayName")).toBe("Settings");
+			expect(harness.egressAttempts()).toBe(0);
+		} finally {
+			if (priorName === null) await harness.ctx.kv.delete("settings:storeDisplayName");
+			else await harness.ctx.kv.set("settings:storeDisplayName", priorName);
+		}
+	});
+
 	test("keeps concurrent report requests in their own language across asynchronous reads", async () => {
 		let entered!: () => void;
 		let release!: () => void;

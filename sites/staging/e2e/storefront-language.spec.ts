@@ -6,11 +6,13 @@ test("shopper language persists across pages while product and form identities s
 }, testInfo) => {
 	await skipWithoutSite(testInfo);
 	await page.goto("/products/otta-mug");
+	const nativeSku = await page.locator('form[action="/cart/add"] [name="sku"]').inputValue();
+	expect(nativeSku.trim(), "a priced demo mug with a native SKU is required").not.toBe("");
 	await page.locator('form[action="/language"] button[value="hr"]').click();
 	await expect(page.locator("html")).toHaveAttribute("lang", "hr");
 	await expect(page.getByRole("heading", { name: "WSCommerce šalica", exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Dodaj u košaricu", exact: true })).toBeVisible();
-	await expect(page.locator('form[action="/cart/add"] [name="sku"]')).toHaveValue("OTTA-MUG");
+	await expect(page.locator('form[action="/cart/add"] [name="sku"]')).toHaveValue(nativeSku);
 	expect(
 		(await context.cookies()).find((cookie) => cookie.name === "wscommerce_locale")?.value,
 	).toBe("hr");

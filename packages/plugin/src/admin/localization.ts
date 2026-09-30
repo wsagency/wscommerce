@@ -1,8 +1,9 @@
-import { ADMIN_LOCALE_COOKIE, normalizeAdminLocale } from "@otta-sh/admin-presentation";
+import { normalizeAdminLocale } from "@otta-sh/admin-presentation";
 import type { AdminLocale } from "@otta-sh/admin-presentation";
 import type { SandboxedRouteContext } from "../types.js";
 import { CROATIAN_PLUGIN_MESSAGES } from "./messages.js";
 import { CROATIAN_PLUGIN_ACTION_MESSAGES } from "./action-messages.js";
+import { ADMIN_LOCALE_HEADER, adminLocaleFromCookie } from "./locale-host.js";
 
 export type PluginInterpolation = Readonly<Record<string, string | number>>;
 export type PluginTranslate = ((message: string, values?: PluginInterpolation) => string) & {
@@ -35,29 +36,20 @@ export function pluginTranslator(locale: AdminLocale): PluginTranslate {
 
 export const englishTranslate = pluginTranslator("en");
 
-/** Resolve the request's explicit preference before its persisted cookie. Never mutate shared state. */
+/** Resolve explicit input before host-forwarded preference. Never mutate shared state. */
 export function requestTranslator(routeCtx: SandboxedRouteContext<unknown>): PluginTranslate {
 	const input = routeCtx.input;
 	if (typeof input === "object" && input !== null && Object.hasOwn(input, "locale")) {
 		return pluginTranslator(normalizeAdminLocale((input as { locale?: unknown }).locale));
 	}
+	const preference = Object.entries(routeCtx.request.headers).find(
+		([name]) => name.toLowerCase() === ADMIN_LOCALE_HEADER,
+	)?.[1];
+	if (preference !== undefined) return pluginTranslator(normalizeAdminLocale(preference));
 	const cookie = Object.entries(routeCtx.request.headers).find(
 		([name]) => name.toLowerCase() === "cookie",
 	)?.[1];
-	const preference = cookie
-		?.split(";")
-		.map((part) => part.trim())
-		.find((part) => part.startsWith(`${ADMIN_LOCALE_COOKIE}=`));
-	if (preference !== undefined) {
-		try {
-			return pluginTranslator(
-				normalizeAdminLocale(decodeURIComponent(preference.slice(ADMIN_LOCALE_COOKIE.length + 1))),
-			);
-		} catch {
-			return englishTranslate;
-		}
-	}
-	return englishTranslate;
+	return pluginTranslator(adminLocaleFromCookie(cookie ?? null));
 }
 
 export function moneyLocale(t: PluginTranslate): string {

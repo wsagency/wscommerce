@@ -180,9 +180,9 @@ describeEachDialect("EmdashInventoryStore crash seams", (ctx) => {
 		return doc;
 	};
 
-	// The budget itself is a plain arithmetic fact, so it is checked on EVERY dialect
-	// rather than only where the race can run: a budget at or above the retry loop's
-	// own ceiling asserts nothing, and that mistake must not need Postgres to catch.
+	// Pin the accepted hard ceiling on EVERY dialect independently of production.
+	// Raising only the runtime ceiling must fail here even when Postgres is absent.
+	// Crowd races below verify stable recovery as well as this bounded attempt count.
 	it("pins the hard contention ceiling independently of production configuration", () => {
 		expect(CAS_MAX_ATTEMPTS).toBe(CAS_ATTEMPT_BUDGET);
 	});
@@ -773,12 +773,12 @@ describe.skipIf(!PG_ENABLED)("inventory compare-and-set contention budget [postg
 
 	beforeAll(async () => {
 		// As close to a connection per racer as a single test server allows. The
-		// M=5/N=50 shape the budget is SET from has a connection to spare per caller,
-		// so every one of its writers really contends. The harsher M=1/N=100 shape asks
+		// M=5/N=50 shape has a connection to spare per caller, so every writer really
+		// contends. The harsher M=1/N=100 shape asks
 		// for more clients than one server hands out (the harness also holds an admin
 		// connection), so its last few callers queue for a connection rather than
-		// racing — which can only make that shape's depth an UNDER-estimate, and it is
-		// already the shallower of the two, so the budget does not rest on it.
+		// racing, so its measured depth can under-estimate full 100-writer contention.
+		// Neither measurement replaces the fixed ceiling or original-key recovery checks.
 		const db = await makePgStorage(INVENTORY_LAYOUT, 96);
 		storage = db.storage;
 		close = db.close;
