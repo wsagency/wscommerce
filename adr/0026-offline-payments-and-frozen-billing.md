@@ -27,6 +27,10 @@ physical carts. Unpaid COD fulfillment is excluded from revenue/product sales.
 Report event history preserves payment-received evidence for recomputation.
 
 The existing durable hold brackets cover COD acceptance and receipt capture.
+Before either pending transition, the native store atomically adopts reservations
+against the frozen SKU and quantity. Recovery adoption uses the same proof. A cart
+edit after an interrupted checkout cannot dispatch or capture against a different
+quantity; a mismatch stays pending for reconciliation without a capture or commit.
 Stock commits once; retries and the native sweeper complete any interrupted commit.
 Accepted COD is no longer pending, so the pending-order expiry sweep cannot release
 its dispatched stock. Before acceptance, its explicit configured deadline applies.
@@ -56,3 +60,7 @@ global reference binding, deadlines, and generic paid-transition refusal. A nati
 reporting regression verifies zero revenue before receipt, once-only captured
 revenue afterwards, and agreement after absolute recomputation. Public route and
 sandbox authorization checks accompany the checkout/admin integration.
+
+Six shared SQLite/D1 interruption cases exercise bank transfer and COD with a
+cart hold reduced, unchanged, or increased after the pending order was saved.
+Only the matching frozen quantity can settle and commit stock.

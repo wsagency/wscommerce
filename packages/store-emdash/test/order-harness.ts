@@ -456,7 +456,27 @@ export function makeOrderHarness(
 
 /** The `orderStoreContract` harness shape, over a fresh order harness. */
 export function orderStoreHarness(harness: OrderHarness): OrderStoreHarness {
-	return { store: harness.store, seedOrder: (row) => harness.seedOrder(row) };
+	return {
+		store: harness.store,
+		seedOrder: (row) => harness.seedOrder(row),
+		async seedOfflineOrder(input) {
+			const lines = await Promise.all(
+				input.lines.map(async (line, index) => {
+					if (line.fulfillmentKind !== "physical") return line;
+					await harness.inventory.seedOnHand(line.sku, 100);
+					const held = await harness.inventory.reserve(
+						line.sku,
+						line.quantity,
+						idempotencyKey(`offline-fixture:${input.orderId}:${index}`),
+					);
+					if (!held.ok) throw new Error("Offline fixture stock exhausted");
+					await harness.inventory.stampHoldDeadline(held.reservationId, input.holdExpiresAt);
+					return { ...line, reservationId: held.reservationId as typeof line.reservationId };
+				}),
+			);
+			return harness.store.createFromCart({ ...input, lines });
+		},
+	};
 }
 
 /** The `orderTransitionContract` harness shape.

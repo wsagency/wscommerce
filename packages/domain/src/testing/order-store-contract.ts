@@ -6,6 +6,10 @@ import type { SeedOrderSummaryRow } from "./in-memory-order-store.js";
 
 export interface OrderStoreHarness {
 	store: OrderStore;
+	/** Native adapters prepare real cart holds before offline transition tests. */
+	seedOfflineOrder?(
+		input: CreateOrderInput,
+	): Promise<{ order: import("../orders/model.js").Order }>;
 	/** Seed a bare order row (orders + order_totals) with an EXACT
 	 *  `createdAt`/`state`/`buyerRef`/`total` for the admin-list contract. The fake
 	 *  wraps `InMemoryOrderStore.seedSummaryOrder`; the Kysely harness inserts real
@@ -191,8 +195,9 @@ export function orderStoreContract(
 		// -- ADR-0009: immutable ship-to snapshot on the order --------------------
 
 		test("COD acceptance permits unpaid dispatch; a receipt preserves fulfillment and captures once", async () => {
-			const { store } = await makeHarness();
-			const { order } = await store.createFromCart(
+			const h = await makeHarness();
+			const { store } = h;
+			const { order } = await (h.seedOfflineOrder?.bind(h) ?? store.createFromCart.bind(store))(
 				physicalInput({
 					paymentMethod: "cod",
 					offlinePayment: offlineSnapshot("cod"),
@@ -240,8 +245,10 @@ export function orderStoreContract(
 		});
 
 		test("offline receipt must match frozen money, is globally bound, and cannot capture twice", async () => {
-			const { store } = await makeHarness();
-			const { order } = await store.createFromCart(
+			const h = await makeHarness();
+			const { store } = h;
+			const create = h.seedOfflineOrder?.bind(h) ?? store.createFromCart.bind(store);
+			const { order } = await create(
 				physicalInput({
 					paymentMethod: "bank_transfer",
 					offlinePayment: offlineSnapshot("bank_transfer"),
@@ -280,7 +287,7 @@ export function orderStoreContract(
 					})
 				).outcome,
 			).toBe("receipt_conflict");
-			const { order: other } = await store.createFromCart(
+			const { order: other } = await create(
 				physicalInput({
 					orderId: orderId("ord-2"),
 					idempotencyKey: idempotencyKey("key-2"),

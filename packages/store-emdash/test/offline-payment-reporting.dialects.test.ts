@@ -19,6 +19,10 @@ describeEachDialect("offline receipt reporting", (ctx) => {
 	test("unpaid COD fulfillment counts orders but no revenue; receipt counts once before and after recompute", async () => {
 		const reporting = makeReportingHarness(bound.storage);
 		const h = makeOrderHarness(bound.storage, { reporting: reporting.store });
+		await h.inventory.seedOnHand("SKU", 10);
+		const hold = await h.inventory.reserve("SKU", 1, idempotencyKey("reporting-offline-stock"));
+		if (!hold.ok) throw new Error("Fixture reservation failed");
+		await h.inventory.stampHoldDeadline(hold.reservationId, "2026-07-17T00:00:00.000Z");
 		await h.store.createFromCart({
 			orderId: orderId("cod"),
 			cartId: "cart",
@@ -36,7 +40,7 @@ describeEachDialect("offline receipt reporting", (ctx) => {
 					currency: currency("USD"),
 					quantity: 1,
 					fulfillmentKind: "physical",
-					reservationId: reservationId("res"),
+					reservationId: reservationId(hold.reservationId),
 				},
 			],
 			totals: { subtotal: cents(1500), total: cents(1500), currency: currency("USD") },

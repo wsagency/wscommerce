@@ -622,6 +622,12 @@ export class EmdashOrderStore implements OrderStore {
 	}
 
 	async acceptCODOrder(input: AcceptCODOrderInput): Promise<OfflineOrderStoreResult> {
+		const loaded = await this.getById(input.orderId);
+		if (loaded === null) return { outcome: "order_not_found", order: null };
+		const initial = codAcceptanceOutcome(loaded, this.#clock.now().toISOString());
+		if (initial !== "applied") return { outcome: initial, order: loaded };
+		if (!(await this.#prepareOfflineHolds(loaded)))
+			return { outcome: "not_payable", order: loaded };
 		return this.#casOrder<OfflineOrderStoreResult>("acceptCODOrder", async () => {
 			const current = await this.#orders.getVersioned(input.orderId);
 			if (current === null) return casDone({ outcome: "order_not_found", order: null });
@@ -688,6 +694,8 @@ export class EmdashOrderStore implements OrderStore {
 					return { outcome: conflict, order: await this.getById(input.orderId) };
 			}
 		}
+		if (!(await this.#prepareOfflineHolds(loaded)))
+			return { outcome: "not_payable", order: loaded };
 		return this.#casOrder<OfflineOrderStoreResult>("recordOfflinePayment", async () => {
 			const current = await this.#orders.getVersioned(input.orderId);
 			if (current === null) return casDone({ outcome: "order_not_found", order: null });
@@ -736,6 +744,26 @@ export class EmdashOrderStore implements OrderStore {
 		});
 	}
 
+	/** Freeze stock ownership/quantity before any pending offline financial transition. */
+	async #prepareOfflineHolds(order: Order): Promise<boolean> {
+		if (order.state !== "pending") return true;
+		const physical = order.lines.filter((line) => line.fulfillmentKind === "physical");
+		if (physical.some((line) => line.reservationId === null)) return false;
+		const expectedReservations = physical.map((line) => ({
+			reservationId: line.reservationId!,
+			sku: line.sku,
+			quantity: line.quantity,
+		}));
+		const adopted = await this.#inventory.adoptMany({
+			reservationIds: expectedReservations.map((entry) => entry.reservationId),
+			expectedReservations,
+			orderId: order.id,
+			holdExpiresAt: order.holdExpiresAt,
+			now: this.#clock.now().toISOString(),
+		});
+		return adopted.lost.length === 0;
+	}
+
 	// -- the hold brackets' completions ---------------------------------------
 
 	/**
@@ -768,6 +796,11 @@ export class EmdashOrderStore implements OrderStore {
 		if (doc.state === "pending" && intent.reservationIds.length > 0) {
 			const result = await this.#inventory.adoptMany({
 				reservationIds: [...intent.reservationIds],
+				expectedReservations: toOrder(doc).lines.flatMap((line) =>
+					line.reservationId === null
+						? []
+						: [{ reservationId: line.reservationId, sku: line.sku, quantity: line.quantity }],
+				),
 				orderId,
 				holdExpiresAt: intent.holdExpiresAt ?? doc.holdExpiresAt,
 				now: this.#clock.now().toISOString(),
