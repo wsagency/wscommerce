@@ -1,8 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { Kysely, SqliteDialect, sql } from "kysely";
-import Database from "better-sqlite3";
-import { PluginStorageRepository } from "emdash";
-import { runMigrations } from "emdash/db";
+import { makeSqliteStorage } from "@otta-sh/store-emdash/testing";
+import { collectionOf } from "@otta-sh/store-emdash";
 import type { StorageCollection } from "@otta-sh/store-emdash";
 import { INVOICE_JOB_COLLECTION, InvoiceJobStore, dispatchInvoiceJob } from "../src/index.js";
 import type { InvoiceJob, InvoiceProvider } from "../src/index.js";
@@ -22,28 +20,22 @@ function provider(
 }
 
 describe("durable invoice work on actual migrated storage", () => {
-	let db: Parameters<typeof runMigrations>[0];
+	let db: Awaited<ReturnType<typeof makeSqliteStorage>>;
 	let collection: StorageCollection;
 	let store: InvoiceJobStore;
 	let now = "2026-09-30T10:00:00.000Z";
 	beforeAll(async () => {
-		db = new Kysely({
-			dialect: new SqliteDialect({ database: new Database(":memory:") }),
-		}) as Parameters<typeof runMigrations>[0];
-		await runMigrations(db);
-		collection = new PluginStorageRepository(db, "emdash-commerce", INVOICE_JOB_COLLECTION, [
-			"state",
-			"provider",
-			"orderId",
-			"nextAttemptAt",
-		]);
+		db = await makeSqliteStorage({
+			[INVOICE_JOB_COLLECTION]: { indexes: ["state", "provider", "orderId", "nextAttemptAt"] },
+		});
+		collection = collectionOf(db.storage, INVOICE_JOB_COLLECTION);
 	});
 	beforeEach(async () => {
-		await sql`DELETE FROM _plugin_storage`.execute(db);
+		await db.reset();
 		store = new InvoiceJobStore(collection, { now: () => now });
 		now = "2026-09-30T10:00:00.000Z";
 	});
-	afterAll(async () => db.destroy());
+	afterAll(async () => db.close());
 
 	it("enqueues one immutable job per order and rejects changed snapshots", async () => {
 		const a = await store.enqueue(invoiceFixture(), "solo");

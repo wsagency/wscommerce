@@ -44,6 +44,7 @@ import {
 	STRIPE_API_HOST,
 } from "../../src/manifest.js";
 import { sandboxStorageSource, storageBridge } from "./storage-bridge.js";
+import { terminateChild } from "./terminate-child.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, "../..");
@@ -60,6 +61,7 @@ const PLUGIN_SRC = path.join(PLUGIN_ROOT, "src");
  */
 const WORKSPACE_PACKAGES: ReadonlyArray<{
 	readonly name: string;
+	readonly scope?: string;
 	readonly exports: Record<string, string>;
 }> = [
 	{ name: "admin-presentation", exports: { ".": "./src/index.ts" } },
@@ -75,6 +77,8 @@ const WORKSPACE_PACKAGES: ReadonlyArray<{
 	// import for exactly the same reason the Stripe one above is.
 	{ name: "payments-x402", exports: { ".": "./src/index.ts" } },
 	{ name: "store-emdash", exports: { ".": "./src/index.ts" } },
+	{ name: "invoicing", scope: "@emdash-commerce", exports: { ".": "./src/index.ts" } },
+	{ name: "compat-woocommerce", scope: "@emdash-commerce", exports: { ".": "./src/index.ts" } },
 ];
 /** `-I` search root for the capnp `/workerd/workerd.capnp` builtin import —
  *  resolves via this package's own `node_modules/workerd` (a direct
@@ -377,7 +381,8 @@ function capnpConfig(
  */
 async function materializeWorkspacePackages(workDir: string): Promise<void> {
 	for (const pkg of WORKSPACE_PACKAGES) {
-		const packageDir = path.join(workDir, "node_modules", "@otta-sh", pkg.name);
+		const scope = pkg.scope ?? "@otta-sh";
+		const packageDir = path.join(workDir, "node_modules", scope, pkg.name);
 		await cp(path.resolve(PLUGIN_ROOT, "..", pkg.name, "src"), path.join(packageDir, "src"), {
 			recursive: true,
 		});
@@ -385,7 +390,7 @@ async function materializeWorkspacePackages(workDir: string): Promise<void> {
 			path.join(packageDir, "package.json"),
 			JSON.stringify(
 				{
-					name: `@otta-sh/${pkg.name}`,
+					name: `${scope}/${pkg.name}`,
 					version: "0.0.0-sandbox",
 					type: "module",
 					exports: pkg.exports,
@@ -434,7 +439,7 @@ export async function loadPluginInSandbox(options: SandboxOptions): Promise<Sand
 		// `pnpm --filter @otta-sh/plugin exec vitest`. The pattern is the SCOPE
 		// rather than the one package, because a second shared package would
 		// otherwise reintroduce exactly this failure and only in one invocation.
-		noExternal: [/^@otta-sh\//],
+		noExternal: [/^(@otta-sh|@emdash-commerce)\//],
 	});
 
 	// tsdown emits a single entry flat into outDir under the entry's basename.
@@ -480,7 +485,7 @@ export async function loadPluginInSandbox(options: SandboxOptions): Promise<Sand
 			// attempt (e.g. a slow boot that never becomes ready) must never
 			// leave a live workerd behind holding the port; kill defensively
 			// (a no-op if the bind-race case already exited on its own).
-			bootChild.kill();
+			await terminateChild(bootChild);
 			throw err instanceof Error ? new Error(`${err.message}\nstderr:\n${stderr}`) : err;
 		}
 
@@ -509,14 +514,7 @@ export async function loadPluginInSandbox(options: SandboxOptions): Promise<Sand
 		invokeRoute: (name, input, request) => invoke("route", name, { input, request }),
 		rawFetch: (pathname, init) => fetch(`${baseUrl}${pathname}`, init),
 		async close() {
-			child.kill();
-			await new Promise<void>((resolve) => {
-				if (child.exitCode !== null || child.signalCode !== null) {
-					resolve();
-					return;
-				}
-				child.once("exit", () => resolve());
-			});
+			await terminateChild(child);
 			await rm(workDir, { recursive: true, force: true });
 		},
 	};

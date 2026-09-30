@@ -26,11 +26,7 @@
 		"@otta-sh/store-emdash": "workspace:*"
 	},
 	"devDependencies": {
-		"@types/better-sqlite3": "catalog:",
 		"@types/node": "catalog:",
-		"better-sqlite3": "catalog:",
-		"emdash": "1.0.1",
-		"kysely": "catalog:",
 		"tsdown": "catalog:",
 		"typescript": "catalog:",
 		"vitest": "catalog:"

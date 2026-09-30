@@ -67,11 +67,11 @@ minimumReleaseAgeExclude:
   - "wrangler@4.131.1"
   - "miniflare@5.20260911.0-alpha"
   - workerd@1.20260710.1 || 1.20260911.1
-  - '@cloudflare/workerd-darwin-64@1.20260710.1 || 1.20260911.1'
-  - '@cloudflare/workerd-darwin-arm64@1.20260710.1 || 1.20260911.1'
-  - '@cloudflare/workerd-linux-64@1.20260710.1 || 1.20260911.1'
-  - '@cloudflare/workerd-linux-arm64@1.20260710.1 || 1.20260911.1'
-  - '@cloudflare/workerd-windows-64@1.20260710.1 || 1.20260911.1'
+  - "@cloudflare/workerd-darwin-64@1.20260710.1 || 1.20260911.1"
+  - "@cloudflare/workerd-darwin-arm64@1.20260710.1 || 1.20260911.1"
+  - "@cloudflare/workerd-linux-64@1.20260710.1 || 1.20260911.1"
+  - "@cloudflare/workerd-linux-arm64@1.20260710.1 || 1.20260911.1"
+  - "@cloudflare/workerd-windows-64@1.20260710.1 || 1.20260911.1"
   # Nothing in this repo sets `minimumReleaseAge`, so this list only has an
   # effect under external pnpm config (a user or CI `.npmrc`) that does.
   #
@@ -87,8 +87,8 @@ minimumReleaseAgeExclude:
   - "@emdash-cms/blocks@1.0.1"
   - "@emdash-cms/cloudflare@1.0.1"
   - "@emdash-cms/gutenberg-to-portable-text@1.0.1"
-  - '@emdash-cms/plugin-types@0.3.1 || 0.5.0'
-  - '@emdash-cms/registry-client@0.6.0 || 0.7.0'
-  - '@emdash-cms/registry-lexicons@0.5.0 || 0.7.0'
+  - "@emdash-cms/plugin-types@0.3.1 || 0.5.0"
+  - "@emdash-cms/registry-client@0.6.0 || 0.7.0"
+  - "@emdash-cms/registry-lexicons@0.5.0 || 0.7.0"
   - "@emdash-cms/registry-moderation@0.2.0"
-  - '@emdash-cms/registry-verification@0.3.1 || 0.3.3'
+  - "@emdash-cms/registry-verification@0.3.1 || 0.3.3"
