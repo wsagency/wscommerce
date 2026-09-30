@@ -1,3 +1,4 @@
+import { requestTranslator, type PluginTranslate } from "./localization.js";
 import type {
 	AccordionBlock,
 	ActionsBlock,
@@ -185,57 +186,61 @@ interface RatesPageBundle {
 const REGISTRY_ACCORDION_LIMIT = 25;
 
 export function createTaxPageHandler(): RouteHandler<TaxPageInput> {
-	return createListDetailHandler<TaxRenderState>({
-		actions: TAX_ACTIONS,
-		// THE TIER IS THE FACTORY'S DECISION, not this screen's (work order 02,
-		// INC-B10c-i): `makeAdminClients` hands back either the `ctx.http` client
-		// this line used to construct or the in-process one over the plugin's own
-		// document store, and the page cannot tell which — everything below is
-		// typed against `AdminRulesSurface`, the structural surface both answer to.
-		//
-		// NO TOKENS: `X-Internal-Token` / `X-Service-Token` were transport
-		// credentials for the commerce service, and there is no service to
-		// authenticate to (ADR-0014 D3, INC-D3a).
-		async createClient(ctx) {
-			const clients = await makeAdminClients(ctx);
-			return clients.rules;
-		},
-		// Every drill-in on this screen is a BUTTON or an L-7 `combobox` carrying
-		// the FULL target path (§12.7) — never a bare id, which would be silently
-		// wrong the moment a fallback picker's option encodes a two-level path
-		// (class + rate). A button's only context channel is `value` (B-1); a
-		// combobox form submit's is `values` — read both, precedence to `value`.
-		parseOpen(input) {
-			const fromValue = asRecord(input.value)?.target;
-			const fromValues = input.values?.target;
-			const encoded =
-				typeof fromValue === "string"
-					? fromValue
-					: typeof fromValues === "string"
-						? fromValues
-						: undefined;
-			if (encoded === undefined) return undefined;
-			const path = decodePath(encoded);
-			return path === null || path.length === 0 ? undefined : { targetPath: path };
-		},
-		levels: [taxClassesLevel(), taxRatesLevel(), taxRateDetailLevel()],
-		customActions: {
-			[ACTION_CREATE_CLASS]: createClassAction(),
-			[ACTION_SAVE_CLASS]: saveClassAction(),
-			[ACTION_DELETE_CLASS]: deleteClassAction(),
-			[ACTION_SHOW_NEW_CLASS]: showNewClassAction(),
-			[ACTION_CREATE_RATE]: createRateAction(),
-			[ACTION_SAVE_RATE]: saveRateAction(),
-			[ACTION_DELETE_RATE]: deleteRateAction(),
-			[ACTION_SHOW_NEW_RATE]: showNewRateAction(),
-			[ACTION_CANCEL_NEW]: cancelNewAction(),
-		},
-	});
+	return async (routeCtx, ctx) => {
+		const t = requestTranslator(routeCtx);
+		return createListDetailHandler<TaxRenderState>({
+			actions: TAX_ACTIONS,
+			translate: t,
+			// THE TIER IS THE FACTORY'S DECISION, not this screen's (work order 02,
+			// INC-B10c-i): `makeAdminClients` hands back either the `ctx.http` client
+			// this line used to construct or the in-process one over the plugin's own
+			// document store, and the page cannot tell which — everything below is
+			// typed against `AdminRulesSurface`, the structural surface both answer to.
+			//
+			// NO TOKENS: `X-Internal-Token` / `X-Service-Token` were transport
+			// credentials for the commerce service, and there is no service to
+			// authenticate to (ADR-0014 D3, INC-D3a).
+			async createClient(clientCtx) {
+				const clients = await makeAdminClients(clientCtx);
+				return clients.rules;
+			},
+			// Every drill-in on this screen is a BUTTON or an L-7 `combobox` carrying
+			// the FULL target path (§12.7) — never a bare id, which would be silently
+			// wrong the moment a fallback picker's option encodes a two-level path
+			// (class + rate). A button's only context channel is `value` (B-1); a
+			// combobox form submit's is `values` — read both, precedence to `value`.
+			parseOpen(input) {
+				const fromValue = asRecord(input.value)?.target;
+				const fromValues = input.values?.target;
+				const encoded =
+					typeof fromValue === "string"
+						? fromValue
+						: typeof fromValues === "string"
+							? fromValues
+							: undefined;
+				if (encoded === undefined) return undefined;
+				const path = decodePath(encoded);
+				return path === null || path.length === 0 ? undefined : { targetPath: path };
+			},
+			levels: [taxClassesLevel(t), taxRatesLevel(t), taxRateDetailLevel(t)],
+			customActions: {
+				[ACTION_CREATE_CLASS]: createClassAction(t),
+				[ACTION_SAVE_CLASS]: saveClassAction(t),
+				[ACTION_DELETE_CLASS]: deleteClassAction(t),
+				[ACTION_SHOW_NEW_CLASS]: showNewClassAction(),
+				[ACTION_CREATE_RATE]: createRateAction(t),
+				[ACTION_SAVE_RATE]: saveRateAction(t),
+				[ACTION_DELETE_RATE]: deleteRateAction(t),
+				[ACTION_SHOW_NEW_RATE]: showNewRateAction(),
+				[ACTION_CANCEL_NEW]: cancelNewAction(),
+			},
+		})(routeCtx, ctx);
+	};
 }
 
 // -- level 0: the tax classes registry ----------------------------------------
 
-function taxClassesLevel() {
+function taxClassesLevel(t: PluginTranslate) {
 	return listLevel<AdminRulesSurface, Record<string, never>, TaxClassWire, TaxRenderState>({
 		// The registry has no service-side pagination (`GET /admin/tax/classes`
 		// returns the full list) — `limit` is unused by `fetchPage` (kept for the
@@ -249,9 +254,9 @@ function taxClassesLevel() {
 			return { items: classes, nextCursor: null };
 		},
 		render({ actions, items, nextToken, notice, renderState }) {
-			return classesBlocks(actions, items, nextToken, notice, renderState);
+			return classesBlocks(t, actions, items, nextToken, notice, renderState);
 		},
-		onError: () => classesFailClosed(),
+		onError: () => classesFailClosed(t),
 	});
 }
 
@@ -265,20 +270,21 @@ function taxClassesLevel() {
  * mirroring the "View rates" button drill-in one row below it (§12.7).
  */
 function classesBlocks(
+	t: PluginTranslate,
 	actions: ScreenActions,
 	classes: TaxClassWire[],
 	nextToken: string | undefined,
 	notice: Notice | undefined,
 	renderState: TaxRenderState | undefined,
 ): Block[] {
-	if (renderState?.kind === "new-class") return newClassScreen(renderState.draft, notice);
+	if (renderState?.kind === "new-class") return newClassScreen(t, renderState.draft, notice);
 	const blocks: Block[] = [
-		{ type: "header", text: "Tax classes" },
+		{ type: "header", text: t("Tax classes") },
 		{
 			type: "context",
-			text: "A tax class is a rate group; products and rates reference one by id.",
+			text: t("A tax class is a rate group; products and rates reference one by id."),
 		},
-		createActionBlock("tax:create-class-action", ACTION_SHOW_NEW_CLASS, "New tax class"),
+		createActionBlock("tax:create-class-action", ACTION_SHOW_NEW_CLASS, t("New tax class")),
 	];
 	if (notice !== undefined) blocks.push(noticeBanner(notice));
 	// No filter block: this level has no filter fields (L-2, count 0).
@@ -288,19 +294,22 @@ function classesBlocks(
 		if (classes.length === 0) {
 			blocks.push(
 				emptyState({
-					title: "No tax classes yet",
-					description:
+					title: t("No tax classes yet"),
+					description: t(
 						"A tax class groups tax rates that share the same treatment — products and rates reference one by id.",
+					),
 					// Same verb, same words as the button above: one act, named once.
-					actions: [{ type: "button", action_id: ACTION_SHOW_NEW_CLASS, label: "New tax class" }],
+					actions: [
+						{ type: "button", action_id: ACTION_SHOW_NEW_CLASS, label: t("New tax class") },
+					],
 				}),
 			);
 		} else {
-			for (const cls of classes) blocks.push(classRow(actions, cls));
+			for (const cls of classes) blocks.push(classRow(t, actions, cls));
 		}
 	} else {
-		blocks.push(classesTable(actions, classes, nextToken));
-		blocks.push(openClassForm(classes));
+		blocks.push(classesTable(t, actions, classes, nextToken));
+		blocks.push(openClassForm(t, classes));
 	}
 	return blocks;
 }
@@ -344,33 +353,37 @@ function classGroupId(classId: string): PlainBlockId {
  *  (`deleteClassNotice`), the same shape D-6 already accepts for
  *  `ShippingZoneWire`'s missing method count, rather than a per-row
  *  reference-count fetch this level's own read never returns. */
-function classRow(actions: ScreenActions, cls: TaxClassWire): AccordionBlock {
+function classRow(t: PluginTranslate, actions: ScreenActions, cls: TaxClassWire): AccordionBlock {
 	const renameForm = carriedForm({
 		namespace: "tax:class-save",
 		context: { classId: cls.id },
 		form: {
 			type: "form",
-			fields: [{ type: "text_input", action_id: "name", label: "Name", initial_value: cls.name }],
-			submit: { label: "Save name", action_id: ACTION_SAVE_CLASS },
+			fields: [
+				{ type: "text_input", action_id: "name", label: t("Name"), initial_value: cls.name },
+			],
+			submit: { label: t("Save name"), action_id: ACTION_SAVE_CLASS },
 		},
 	});
 	const viewRatesButton: ButtonElement = {
 		type: "button",
 		action_id: actions.open,
-		label: "View rates",
+		label: t("View rates"),
 		value: { target: encodePath([cls.id]) },
 	};
 	const deleteButton: ButtonElement = {
 		type: "button",
 		action_id: ACTION_DELETE_CLASS,
-		label: "Delete class",
+		label: t("Delete class"),
 		style: "danger",
 		value: { classId: cls.id },
 		confirm: {
-			title: `Delete tax class ${cls.id}?`,
-			text: "Deleting is blocked while any product or tax rate still references this class. This cannot be undone.",
-			confirm: "Yes, delete",
-			deny: "Keep it",
+			title: t("Delete tax class {id}?", { id: cls.id }),
+			text: t(
+				"Deleting is blocked while any product or tax rate still references this class. This cannot be undone.",
+			),
+			confirm: t("Yes, delete"),
+			deny: t("Keep it"),
 			style: "danger",
 		},
 	};
@@ -397,7 +410,7 @@ function classRow(actions: ScreenActions, cls: TaxClassWire): AccordionBlock {
 			renameForm,
 			{
 				type: "context",
-				text: "Deleting is blocked while any product or tax rate still references this class.",
+				text: t("Deleting is blocked while any product or tax rate still references this class."),
 			},
 			{ type: "actions", elements: [deleteButton] },
 		],
@@ -408,14 +421,18 @@ function classRow(actions: ScreenActions, cls: TaxClassWire): AccordionBlock {
  *  the form, the shape every other non-list level on this console already
  *  has. The banner sits above the form because it explains the values the
  *  form below has just put back. */
-function newClassScreen(draft: ClassDraft | undefined, notice: Notice | undefined): Block[] {
+function newClassScreen(
+	t: PluginTranslate,
+	draft: ClassDraft | undefined,
+	notice: Notice | undefined,
+): Block[] {
 	const blocks: Block[] = [
-		{ type: "header", text: "New tax class" },
+		{ type: "header", text: t("New tax class") },
 		// No path: this screen belongs to the ROOT registry.
-		backButton(ACTION_CANCEL_NEW, "← Back to tax classes"),
+		backButton(ACTION_CANCEL_NEW, t("← Back to tax classes")),
 	];
 	if (notice !== undefined) blocks.push(noticeBanner(notice));
-	blocks.push(newClassForm(draft));
+	blocks.push(newClassForm(t, draft));
 	return blocks;
 }
 
@@ -423,7 +440,7 @@ function newClassScreen(draft: ClassDraft | undefined, notice: Notice | undefine
  *  `initial_value`, so a rejected duplicate id costs one edit and not two
  *  retypes. Routed through `carriedForm` because a prefilling form must carry
  *  the B-3a digest that remounts it when the prefill changes (X-17). */
-function newClassForm(draft?: ClassDraft): FormBlock {
+function newClassForm(t: PluginTranslate, draft?: ClassDraft): FormBlock {
 	return carriedForm({
 		namespace: "tax:class-create",
 		form: {
@@ -432,19 +449,19 @@ function newClassForm(draft?: ClassDraft): FormBlock {
 				{
 					type: "text_input",
 					action_id: "id",
-					label: "Class ID",
-					placeholder: "e.g. reduced",
+					label: t("Class ID"),
+					placeholder: t("e.g. reduced"),
 					...prefill(draft?.id),
 				},
 				{
 					type: "text_input",
 					action_id: "name",
-					label: "Name",
-					placeholder: "e.g. Reduced rate",
+					label: t("Name"),
+					placeholder: t("e.g. Reduced rate"),
 					...prefill(draft?.name),
 				},
 			],
-			submit: { label: "Create tax class", action_id: ACTION_CREATE_CLASS },
+			submit: { label: t("Create tax class"), action_id: ACTION_CREATE_CLASS },
 		},
 	});
 }
@@ -461,6 +478,7 @@ function prefill(value: string | undefined): { initial_value?: string } {
  *  to opening the class (matching §12.3's own "editing moves to a rate-level
  *  list" note for this branch). */
 function classesTable(
+	t: PluginTranslate,
 	actions: ScreenActions,
 	classes: TaxClassWire[],
 	nextToken: string | undefined,
@@ -469,13 +487,13 @@ function classesTable(
 		type: "table",
 		block_id: "tax:classes" as PlainBlockId,
 		columns: [
-			{ key: "id", label: "Class ID", format: "code" },
-			{ key: "name", label: "Name" },
+			{ key: "id", label: t("Class ID"), format: "code" },
+			{ key: "name", label: t("Name") },
 		],
 		rows: classes.map((c) => ({ id: c.id, name: c.name })),
 		page_action_id: actions.page, // never fires: this registry has no service-side pagination
 		...(nextToken !== undefined ? { next_cursor: nextToken } : {}),
-		empty_text: "No tax classes yet.",
+		empty_text: t("No tax classes yet."),
 	};
 }
 
@@ -483,9 +501,9 @@ function classesTable(
  *  the option value is the opaque encoded target path. Wrapped in
  *  `carriedForm` because its `initial_value: "none"` makes it mechanically a
  *  "prefilling" form (X-17) even though nothing per-render is carried. */
-function openClassForm(classes: TaxClassWire[]): FormBlock {
+function openClassForm(t: PluginTranslate, classes: TaxClassWire[]): FormBlock {
 	const options: SelectOption[] = [
-		{ value: "none", label: "Choose a tax class…" },
+		{ value: "none", label: t("Choose a tax class…") },
 		...classes.map((c) => ({ value: encodePath([c.id]), label: c.name })),
 	];
 	return carriedForm({
@@ -496,30 +514,31 @@ function openClassForm(classes: TaxClassWire[]): FormBlock {
 				{
 					type: "combobox",
 					action_id: "target",
-					label: "Open class",
+					label: t("Open class"),
 					options,
 					initial_value: "none",
-					placeholder: "Choose a tax class…",
+					placeholder: t("Choose a tax class…"),
 				},
 			],
-			submit: { label: "Open class", action_id: TAX_ACTIONS.open },
+			submit: { label: t("Open class"), action_id: TAX_ACTIONS.open },
 		},
 	});
 }
 
-function classesFailClosed() {
+function classesFailClosed(t: PluginTranslate) {
 	return failClosedResponse({
-		header: "Tax classes",
-		title: "Tax classes are unavailable",
-		description:
+		header: t("Tax classes"),
+		title: t("Tax classes are unavailable"),
+		description: t(
 			"Tax classes could not be loaded. Retry in a moment; if it keeps failing, this is a fault in the console itself — not your data.",
-		toast: "Could not load tax classes",
+		),
+		toast: t("Could not load tax classes"),
 	});
 }
 
 // -- level 1: a class's tax rates ----------------------------------------------
 
-function taxRatesLevel() {
+function taxRatesLevel(t: PluginTranslate) {
 	return listLevel<AdminRulesSurface, RatesFilterForm, RatesPageBundle, TaxRenderState>({
 		limit: 500,
 		filterFromValues(values) {
@@ -536,9 +555,9 @@ function taxRatesLevel() {
 		render({ actions, path, filter, items, nextToken, notice, renderState }) {
 			const classId = path[0] ?? "";
 			const bundle = items[0] ?? { rows: [], zones: [] };
-			return ratesBlocks(actions, classId, filter, bundle, nextToken, notice, renderState);
+			return ratesBlocks(t, actions, classId, filter, bundle, nextToken, notice, renderState);
 		},
-		onError: () => ratesFailClosed(),
+		onError: () => ratesFailClosed(t),
 	});
 }
 
@@ -581,6 +600,7 @@ async function fetchRatesForClass(
 }
 
 function ratesBlocks(
+	t: PluginTranslate,
 	actions: ScreenActions,
 	classId: string,
 	filter: RatesFilterForm,
@@ -591,14 +611,14 @@ function ratesBlocks(
 ): Block[] {
 	const path = [classId];
 	if (renderState?.kind === "new-rate") {
-		return newRateScreen(classId, filter, bundle.zones, renderState.draft, notice);
+		return newRateScreen(t, classId, filter, bundle.zones, renderState.draft, notice);
 	}
 	const blocks: Block[] = [
-		{ type: "header", text: `Tax rates — ${classId}` },
-		backButton(actions.back, "← Back to tax classes", path),
+		{ type: "header", text: t("Tax rates — {classId}", { classId: classId }) },
+		backButton(actions.back, t("← Back to tax classes"), path),
 	];
 	if (notice !== undefined) blocks.push(noticeBanner(notice));
-	blocks.push({ type: "context", text: "Each rate applies to purchases shipping to one zone." });
+	blocks.push({ type: "context", text: t("Each rate applies to purchases shipping to one zone.") });
 	// INC-14: the create action, promoted from an accordion at the very bottom
 	// to a button under the intro line. It carries the drill path (L-6) — this
 	// level is depth 1, so without it the create screen would open at the root.
@@ -606,13 +626,15 @@ function ratesBlocks(
 		createActionBlock(
 			`tax:create-rate-action:${classId}`,
 			ACTION_SHOW_NEW_RATE,
-			"New tax rate",
+			t("New tax rate"),
 			path,
 		),
 	);
 
-	blocks.push(zoneFilterBlock(classId, filter, bundle.zones));
-	const activeParts = [filter.zoneId !== undefined && `zone: ${filter.zoneId}`];
+	blocks.push(zoneFilterBlock(t, classId, filter, bundle.zones));
+	const activeParts = [
+		filter.zoneId !== undefined && t("zone: {zoneId}", { zoneId: filter.zoneId }),
+	];
 	const summaryText = filterSummary(activeParts);
 	if (summaryText !== undefined) {
 		blocks.push({
@@ -621,7 +643,7 @@ function ratesBlocks(
 			accessory: {
 				type: "button",
 				action_id: TAX_ACTIONS.applyFilter,
-				label: "Clear filters",
+				label: t("Clear filters"),
 				value: { [PATH_FIELD]: encodePath(path) }, // depth 1, REQUIRED (L-6)
 			},
 		});
@@ -634,14 +656,14 @@ function ratesBlocks(
 				// True zero, unfiltered (E-2) — never for a filtered-to-zero list.
 				blocks.push(
 					emptyState({
-						title: "No tax rates yet",
-						description: "Add a rate to start charging tax for purchases shipping to a zone.",
+						title: t("No tax rates yet"),
+						description: t("Add a rate to start charging tax for purchases shipping to a zone."),
 						// Same verb and same words as the button above.
 						actions: [
 							{
 								type: "button",
 								action_id: ACTION_SHOW_NEW_RATE,
-								label: "New tax rate",
+								label: t("New tax rate"),
 								value: { [PATH_FIELD]: encodePath(path) },
 							},
 						],
@@ -652,15 +674,17 @@ function ratesBlocks(
 				// operator's next act is changing the filter, which is right above).
 				blocks.push({
 					type: "context",
-					text: `No tax rates for zone "${filter.zoneId}" yet — "New tax rate" above adds one.`,
+					text: t('No tax rates for zone "{zoneId}" yet — "New tax rate" above adds one.', {
+						zoneId: filter.zoneId,
+					}),
 				});
 			}
 		} else {
-			for (const row of bundle.rows) blocks.push(rateRow(classId, row));
+			for (const row of bundle.rows) blocks.push(rateRow(t, classId, row));
 		}
 	} else {
-		blocks.push(ratesTable(actions, bundle.rows, nextToken));
-		blocks.push(openRateForm(classId, bundle.rows));
+		blocks.push(ratesTable(t, actions, bundle.rows, nextToken));
+		blocks.push(openRateForm(t, classId, bundle.rows));
 	}
 	return blocks;
 }
@@ -670,12 +694,13 @@ function ratesBlocks(
  *  "Zone ID (blank = every zone)" field; a `select` is correct here (F-6) and
  *  never blank (F-6a) because `"any"` is a real sentinel, never `""`. */
 function zoneFilterBlock(
+	t: PluginTranslate,
 	classId: string,
 	filter: RatesFilterForm,
 	zones: ShippingZoneWire[],
 ): FormBlock | AccordionBlock {
 	const options: SelectOption[] = [
-		{ value: "any", label: "All zones" },
+		{ value: "any", label: t("All zones") },
 		...zones.map((z) => ({ value: z.id, label: z.name })),
 	];
 	const form = carriedForm({
@@ -687,19 +712,24 @@ function zoneFilterBlock(
 				{
 					type: "select",
 					action_id: "zoneId",
-					label: "Zone",
+					label: t("Zone"),
 					options,
 					initial_value: filter.zoneId ?? "any",
 				},
 			],
-			submit: { label: "Apply filters", action_id: TAX_ACTIONS.applyFilter },
+			submit: { label: t("Apply filters"), action_id: TAX_ACTIONS.applyFilter },
 		},
 	});
-	return filterPanel({
-		form,
-		blockId: `tax:rate-filters:${classId}` as PlainBlockId,
-		activeFilters: [filter.zoneId !== undefined && `zone: ${filter.zoneId}`],
-	});
+	return filterPanel(
+		{
+			form,
+			blockId: `tax:rate-filters:${classId}` as PlainBlockId,
+			activeFilters: [
+				filter.zoneId !== undefined && t("zone: {zoneId}", { zoneId: filter.zoneId }),
+			],
+		},
+		t,
+	);
 }
 
 function rateGroupId(rateId: string): PlainBlockId {
@@ -712,7 +742,7 @@ function rateGroupId(rateId: string): PlainBlockId {
  *  form's carrier (`carriedForm`'s change token, B-3) — a concurrent edit that
  *  changed it loses the CAS and the reload shows the fresh value with a
  *  "reload" notice, never a silent clobber. */
-function rateEditForm(classId: string, row: TaxRateRow): FormBlock {
+function rateEditForm(t: PluginTranslate, classId: string, row: TaxRateRow): FormBlock {
 	return carriedForm({
 		namespace: "tax:rate-save",
 		context: { classId, rateId: row.id, expectedRateBps: String(row.rateBps) },
@@ -722,33 +752,35 @@ function rateEditForm(classId: string, row: TaxRateRow): FormBlock {
 				{
 					type: "text_input",
 					action_id: "ratePercent",
-					label: "Rate (%)",
+					label: t("Rate (%)"),
 					initial_value: formatBpsAsPercent(row.rateBps),
 				},
 				{
 					type: "toggle",
 					action_id: "appliesToShipping",
-					label: "Applies to shipping",
+					label: t("Applies to shipping"),
 					initial_value: row.appliesToShipping, // F-6b/X-24: REQUIRED — toggle is mount-only
 				},
 			],
-			submit: { label: "Save rate", action_id: ACTION_SAVE_RATE },
+			submit: { label: t("Save rate"), action_id: ACTION_SAVE_RATE },
 		},
 	});
 }
 
-function rateDeleteActions(classId: string, row: TaxRateRow) {
+function rateDeleteActions(t: PluginTranslate, classId: string, row: TaxRateRow) {
 	const button: ButtonElement = {
 		type: "button",
 		action_id: ACTION_DELETE_RATE,
-		label: "Delete rate",
+		label: t("Delete rate"),
 		style: "danger",
 		value: { classId, rateId: row.id },
 		confirm: {
-			title: `Delete tax rate ${row.id}?`,
-			text: "In-flight carts recompute their tax without this rate. Orders already placed are unaffected — they snapshot the tax charged at purchase time.",
-			confirm: "Yes, delete",
-			deny: "Keep it",
+			title: t("Delete tax rate {id}?", { id: row.id }),
+			text: t(
+				"In-flight carts recompute their tax without this rate. Orders already placed are unaffected — they snapshot the tax charged at purchase time.",
+			),
+			confirm: t("Yes, delete"),
+			deny: t("Keep it"),
 			style: "danger",
 		},
 	};
@@ -771,15 +803,15 @@ function rateDeleteActions(classId: string, row: TaxRateRow) {
  * A percent is NOT money: it is formatted by `formatBpsAsPercent` (exact
  * integer basis points), never by `formatMoney`, and carries no currency.
  */
-function rateRow(classId: string, row: TaxRateRow): AccordionBlock {
+function rateRow(t: PluginTranslate, classId: string, row: TaxRateRow): AccordionBlock {
 	const percent = formatBpsAsPercent(row.rateBps);
-	const appliesLabel = row.appliesToShipping ? "also shipping" : "goods only";
+	const appliesLabel = t(row.appliesToShipping ? "also shipping" : "goods only");
 	return {
 		type: "accordion",
 		block_id: rateGroupId(row.id),
 		label: `${percent}% — ${row.zoneName ?? row.zoneId} · ${row.id} · ${appliesLabel}`,
 		default_open: false,
-		blocks: [rateEditForm(classId, row), rateDeleteActions(classId, row)],
+		blocks: [rateEditForm(t, classId, row), rateDeleteActions(t, classId, row)],
 	};
 }
 
@@ -788,6 +820,7 @@ function rateRow(classId: string, row: TaxRateRow): AccordionBlock {
  *  yes/mostly-no boolean is exactly the "constant-ish" case T-5 forbids), plus
  *  an L-7 drill-in to the rate-detail leaf. */
 function ratesTable(
+	t: PluginTranslate,
 	actions: ScreenActions,
 	rows: TaxRateRow[],
 	nextToken: string | undefined,
@@ -796,10 +829,10 @@ function ratesTable(
 		type: "table",
 		block_id: "tax:rates" as PlainBlockId,
 		columns: [
-			{ key: "id", label: "Rate ID", format: "code" },
-			{ key: "zone", label: "Zone" },
-			{ key: "rate", label: "Rate" },
-			{ key: "appliesToShipping", label: "Applies to shipping" },
+			{ key: "id", label: t("Rate ID"), format: "code" },
+			{ key: "zone", label: t("Zone") },
+			{ key: "rate", label: t("Rate") },
+			{ key: "appliesToShipping", label: t("Applies to shipping") },
 		],
 		rows: rows.map((r) => ({
 			id: r.id,
@@ -809,7 +842,7 @@ function ratesTable(
 		})),
 		page_action_id: actions.page, // never fires: this registry has no service-side pagination
 		...(nextToken !== undefined ? { next_cursor: nextToken } : {}),
-		empty_text: "No tax rates yet for this class.",
+		empty_text: t("No tax rates yet for this class."),
 	};
 }
 
@@ -818,9 +851,9 @@ function ratesTable(
  *  two-level target path, never a bare rate id. The option label leads with
  *  the rate for the same reason the accordion label does: in a list of options
  *  the number is what is being chosen between. */
-function openRateForm(classId: string, rows: TaxRateRow[]): FormBlock {
+function openRateForm(t: PluginTranslate, classId: string, rows: TaxRateRow[]): FormBlock {
 	const options: SelectOption[] = [
-		{ value: "none", label: "Choose a tax rate…" },
+		{ value: "none", label: t("Choose a tax rate…") },
 		...rows.map((r) => ({
 			value: encodePath([classId, r.id]),
 			label: `${formatBpsAsPercent(r.rateBps)}% · ${r.zoneName ?? r.zoneId}`,
@@ -834,13 +867,13 @@ function openRateForm(classId: string, rows: TaxRateRow[]): FormBlock {
 				{
 					type: "combobox",
 					action_id: "target",
-					label: "Open rate",
+					label: t("Open rate"),
 					options,
 					initial_value: "none",
-					placeholder: "Choose a tax rate…",
+					placeholder: t("Choose a tax rate…"),
 				},
 			],
-			submit: { label: "Open rate", action_id: TAX_ACTIONS.open },
+			submit: { label: t("Open rate"), action_id: TAX_ACTIONS.open },
 		},
 	});
 }
@@ -851,6 +884,7 @@ function openRateForm(classId: string, rows: TaxRateRow[]): FormBlock {
  *  so the screen degrades to one honest line naming the actual next step
  *  (DA-7-shaped) instead of rendering a broken control. */
 function newRateScreen(
+	t: PluginTranslate,
 	classId: string,
 	filter: RatesFilterForm,
 	zones: ShippingZoneWire[],
@@ -858,17 +892,17 @@ function newRateScreen(
 	notice: Notice | undefined,
 ): Block[] {
 	const blocks: Block[] = [
-		{ type: "header", text: `New tax rate — ${classId}` },
-		backButton(ACTION_CANCEL_NEW, "← Back to tax rates", [classId]),
+		{ type: "header", text: t("New tax rate — {classId}", { classId: classId }) },
+		backButton(ACTION_CANCEL_NEW, t("← Back to tax rates"), [classId]),
 	];
 	if (notice !== undefined) blocks.push(noticeBanner(notice));
 	blocks.push(
 		zones.length === 0
 			? {
 					type: "context",
-					text: "Create a shipping zone first — a tax rate applies to one zone.",
+					text: t("Create a shipping zone first — a tax rate applies to one zone."),
 				}
-			: newRateForm(classId, filter, zones, draft),
+			: newRateForm(t, classId, filter, zones, draft),
 	);
 	return blocks;
 }
@@ -879,6 +913,7 @@ function newRateScreen(
  *  back rather than rendering a blank trigger. The percent comes back as RAW
  *  TEXT (DA-3a-iii property 5): the refusal is usually the parse itself. */
 function newRateForm(
+	t: PluginTranslate,
 	classId: string,
 	filter: RatesFilterForm,
 	zones: ShippingZoneWire[],
@@ -896,43 +931,44 @@ function newRateForm(
 				{
 					type: "text_input",
 					action_id: "id",
-					label: "Rate ID",
-					placeholder: "e.g. std-us",
+					label: t("Rate ID"),
+					placeholder: t("e.g. std-us"),
 					...prefill(draft?.id),
 				},
 				{
 					type: "select",
 					action_id: "zoneId",
-					label: "Zone",
+					label: t("Zone"),
 					options,
 					initial_value: defaultZoneId,
 				},
 				{
 					type: "text_input",
 					action_id: "ratePercent",
-					label: "Rate (%, up to 2 decimals)",
-					placeholder: "e.g. 7.25",
+					label: t("Rate (%, up to 2 decimals)"),
+					placeholder: t("e.g. 7.25"),
 					...prefill(draft?.ratePercent),
 				},
 				{
 					type: "toggle",
 					action_id: "appliesToShipping",
-					label: "Applies to shipping",
+					label: t("Applies to shipping"),
 					initial_value: draft?.appliesToShipping ?? false,
 				},
 			],
-			submit: { label: "Add tax rate", action_id: ACTION_CREATE_RATE },
+			submit: { label: t("Add tax rate"), action_id: ACTION_CREATE_RATE },
 		},
 	});
 }
 
-function ratesFailClosed() {
+function ratesFailClosed(t: PluginTranslate) {
 	return failClosedResponse({
-		header: "Tax rates",
-		title: "Tax rates are unavailable",
-		description:
+		header: t("Tax rates"),
+		title: t("Tax rates are unavailable"),
+		description: t(
 			"Tax rates could not be loaded. Retry in a moment; if it keeps failing, this is a fault in the console itself — not your data.",
-		toast: "Could not load tax rates",
+		),
+		toast: t("Could not load tax rates"),
 	});
 }
 
@@ -946,7 +982,7 @@ function ratesFailClosed() {
  * Shares `rateEditForm`/`rateDeleteActions` with the accordion body verbatim,
  * so the two never drift.
  */
-function taxRateDetailLevel() {
+function taxRateDetailLevel(t: PluginTranslate) {
 	return leafLevel<AdminRulesSurface, TaxRateRow>({
 		async load(client, path, id) {
 			const classId = path[0];
@@ -957,59 +993,66 @@ function taxRateDetailLevel() {
 		},
 		render({ actions, path, detail, notice }) {
 			const classId = path[0] ?? "";
-			return rateDetailBlocks(actions, classId, detail, notice);
+			return rateDetailBlocks(t, actions, classId, detail, notice);
 		},
 		notFound({ actions, path }) {
 			const classId = path[0] ?? "";
 			return [
-				{ type: "header", text: "Tax rate not found" },
-				backButton(actions.back, "← Back to tax rates", path),
+				{ type: "header", text: t("Tax rate not found") },
+				backButton(actions.back, t("← Back to tax rates"), path),
 				{
 					type: "banner",
 					variant: "error",
-					title: "Tax rate not found",
-					description: `No tax rate matches that id for class "${classId}" — it may have already been deleted.`,
+					title: t("Tax rate not found"),
+					description: t(
+						'No tax rate matches that id for class "{classId}" — it may have already been deleted.',
+						{ classId: classId },
+					),
 				},
 			];
 		},
-		onError: () => rateDetailFailClosed(),
+		onError: () => rateDetailFailClosed(t),
 	});
 }
 
 function rateDetailBlocks(
+	t: PluginTranslate,
 	actions: ScreenActions,
 	classId: string,
 	row: TaxRateRow,
 	notice: Notice | undefined,
 ): Block[] {
 	const blocks: Block[] = [
-		{ type: "header", text: `Tax rate — ${row.id}` },
-		backButton(actions.back, "← Back to tax rates", [classId, row.id]),
+		{ type: "header", text: t("Tax rate — {id}", { id: row.id }) },
+		backButton(actions.back, t("← Back to tax rates"), [classId, row.id]),
 	];
 	if (notice !== undefined) blocks.push(noticeBanner(notice));
 	blocks.push({
 		type: "context",
-		text: "Deleting only affects future carts — orders already placed keep the tax they were charged at purchase time.",
+		text: t(
+			"Deleting only affects future carts — orders already placed keep the tax they were charged at purchase time.",
+		),
 	});
 	blocks.push({
 		type: "fields",
 		fields: [
-			{ label: "Zone", value: row.zoneName ?? row.zoneId },
-			{ label: "Rate", value: `${formatBpsAsPercent(row.rateBps)}%` },
+			{ label: t("Zone"), value: row.zoneName ?? row.zoneId },
+			{ label: t("Rate"), value: `${formatBpsAsPercent(row.rateBps)}%` },
 		],
 	});
-	blocks.push(rateEditForm(classId, row));
-	blocks.push(rateDeleteActions(classId, row));
+	blocks.push(rateEditForm(t, classId, row));
+	blocks.push(rateDeleteActions(t, classId, row));
 	return blocks;
 }
 
-function rateDetailFailClosed() {
+function rateDetailFailClosed(t: PluginTranslate) {
 	return failClosedResponse({
-		header: "Tax rate",
-		title: "Tax rate is unavailable",
-		description:
+		header: t("Tax rate"),
+		title: t("Tax rate is unavailable"),
+		description: t(
 			"Tax rate could not be loaded. Retry in a moment; if it keeps failing, this is a fault in the console itself — not your data.",
-		toast: "Could not load this tax rate",
+		),
+		toast: t("Could not load this tax rate"),
 	});
 }
 
@@ -1020,7 +1063,7 @@ function rateDetailFailClosed() {
 
 // -- custom action: create a tax class ----------------------------------------
 
-function createClassAction() {
+function createClassAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface, TaxRenderState>(async ({ input, client, showList }) => {
 		const values = input.values ?? {};
 		const id = (readString(values.id) ?? "").trim();
@@ -1038,14 +1081,14 @@ function createClassAction() {
 				undefined,
 				{
 					variant: "error",
-					title: "Tax class not created",
-					description: "Enter both a class ID and a name.",
+					title: t("Tax class not created"),
+					description: t("Enter both a class ID and a name."),
 				},
 				{ kind: "new-class", draft },
 			);
 		}
 		const result = await client.createTaxClass({ id, name });
-		const notice = createClassNotice(result, id, name);
+		const notice = createClassNotice(t, result, id, name);
 		// A SERVICE refusal keeps the draft too (a duplicate id is one edit away);
 		// success drops it, which is what returns the operator to the registry.
 		return result.ok
@@ -1055,6 +1098,7 @@ function createClassAction() {
 }
 
 function createClassNotice(
+	t: PluginTranslate,
 	result: RulesCreateResult<TaxClassWire>,
 	id: string,
 	name: string,
@@ -1062,14 +1106,17 @@ function createClassNotice(
 	if (result.ok) {
 		return {
 			variant: "default",
-			title: "Tax class created",
-			description: `"${name}" (${id}) was added.`,
+			title: t("Tax class created"),
+			description: t('"{name}" ({id}) was added.', { name: name, id: id }),
 		};
 	}
 	return {
 		variant: "error",
-		title: "Tax class not created",
-		description: `Could not create "${id}" — check the class ID isn't already in use, then try again.`,
+		title: t("Tax class not created"),
+		description: t(
+			'Could not create "{id}" — check the class ID isn\'t already in use, then try again.',
+			{ id: id },
+		),
 	};
 }
 
@@ -1094,7 +1141,7 @@ function cancelNewAction() {
 
 // -- custom action: rename a tax class (LWW) -----------------------------------
 
-function saveClassAction() {
+function saveClassAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface, TaxRenderState>(async ({ input, client, showList }) => {
 		const classId = readCarrier(input)?.classId;
 		if (classId === undefined) return showList();
@@ -1103,51 +1150,55 @@ function saveClassAction() {
 		if (name.length === 0) {
 			return showList(undefined, {
 				variant: "error",
-				title: "Class not saved",
-				description: "Enter a name.",
+				title: t("Class not saved"),
+				description: t("Enter a name."),
 			});
 		}
 		const result = await client.updateTaxClass(classId, { name });
-		return showList(undefined, saveClassNotice(result));
+		return showList(undefined, saveClassNotice(t, result));
 	});
 }
 
-function saveClassNotice(result: RulesUpdateResult<TaxClassWire>): Notice {
+function saveClassNotice(t: PluginTranslate, result: RulesUpdateResult<TaxClassWire>): Notice {
 	if (result.ok) {
-		return { variant: "default", title: "Class saved", description: "The tax class was renamed." };
+		return {
+			variant: "default",
+			title: t("Class saved"),
+			description: t("The tax class was renamed."),
+		};
 	}
 	if (result.reason === "not_found") {
 		return {
 			variant: "error",
-			title: "Class not found",
-			description: "This tax class no longer exists — it may have already been deleted.",
+			title: t("Class not found"),
+			description: t("This tax class no longer exists — it may have already been deleted."),
 		};
 	}
 	return {
 		variant: "error",
-		title: "Class not saved",
-		description: "The change could not be saved — retry in a moment.",
+		title: t("Class not saved"),
+		description: t("The change could not be saved — retry in a moment."),
 	};
 }
 
 // -- custom action: delete a tax class (forbid-if-in-use, honest count) -------
 
-function deleteClassAction() {
+function deleteClassAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface, TaxRenderState>(async ({ input, client, showList }) => {
 		const payload = asRecord(input.value);
 		const classId = readString(payload?.classId);
 		if (classId === undefined) return showList();
 		const result = await client.deleteTaxClass(classId);
-		return showList(undefined, deleteClassNotice(result));
+		return showList(undefined, deleteClassNotice(t, result));
 	});
 }
 
-function deleteClassNotice(result: TaxClassDeleteResult): Notice {
+function deleteClassNotice(t: PluginTranslate, result: TaxClassDeleteResult): Notice {
 	if (result.ok) {
 		return {
 			variant: "default",
-			title: "Class deleted",
-			description: "The tax class was removed.",
+			title: t("Class deleted"),
+			description: t("The tax class was removed."),
 		};
 	}
 	if (result.reason === "not_found") {
@@ -1155,34 +1206,48 @@ function deleteClassNotice(result: TaxClassDeleteResult): Notice {
 		// not a failure: surface a non-error notice rather than a scary banner.
 		return {
 			variant: "default",
-			title: "Already deleted",
-			description: "This tax class was already removed.",
+			title: t("Already deleted"),
+			description: t("This tax class was already removed."),
 		};
 	}
 	if (result.reason === "in_use_by_products") {
 		return {
 			variant: "error",
-			title: "Class not deleted",
-			description: `${result.count} product${result.count === 1 ? "" : "s"} still reference${result.count === 1 ? "s" : ""} this class — clear those references first, then retry.`,
+			title: t("Class not deleted"),
+			description: t(
+				"{count} product{value2} still reference{value3} this class — clear those references first, then retry.",
+				{
+					count: result.count,
+					value2: result.count === 1 ? "" : "s",
+					value3: result.count === 1 ? "s" : "",
+				},
+			),
 		};
 	}
 	if (result.reason === "in_use_by_rates") {
 		return {
 			variant: "error",
-			title: "Class not deleted",
-			description: `${result.count} tax rate${result.count === 1 ? "" : "s"} still reference${result.count === 1 ? "s" : ""} this class — delete those rates first, then retry.`,
+			title: t("Class not deleted"),
+			description: t(
+				"{count} tax rate{value2} still reference{value3} this class — delete those rates first, then retry.",
+				{
+					count: result.count,
+					value2: result.count === 1 ? "" : "s",
+					value3: result.count === 1 ? "s" : "",
+				},
+			),
 		};
 	}
 	return {
 		variant: "error",
-		title: "Class not deleted",
-		description: "The class could not be deleted — retry in a moment.",
+		title: t("Class not deleted"),
+		description: t("The class could not be deleted — retry in a moment."),
 	};
 }
 
 // -- custom action: create a tax rate ------------------------------------------
 
-function createRateAction() {
+function createRateAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface, TaxRenderState>(async ({ input, client, showList }) => {
 		const classId = readCarrier(input)?.classId;
 		if (classId === undefined) return showList();
@@ -1201,15 +1266,15 @@ function createRateAction() {
 		const err = (description: string) =>
 			showList(
 				[classId],
-				{ variant: "error", title: "Tax rate not created", description },
+				{ variant: "error", title: t("Tax rate not created"), description },
 				{ kind: "new-rate", draft },
 			);
 		if (id.length === 0 || zoneId.length === 0) {
-			return err("Enter both a rate ID and a zone.");
+			return err(t("Enter both a rate ID and a zone."));
 		}
 		const bps = parsePercentToBps(readString(values.ratePercent) ?? "");
 		if (bps === null) {
-			return err("Rate must be a percent like 7.25 (0 to 1000, up to two decimal places).");
+			return err(t("Rate must be a percent like 7.25 (0 to 1000, up to two decimal places)."));
 		}
 		const result = await client.createTaxRate({
 			id,
@@ -1218,25 +1283,32 @@ function createRateAction() {
 			rateBps: bps,
 			appliesToShipping,
 		});
-		const notice = createRateNotice(result, id);
+		const notice = createRateNotice(t, result, id);
 		return result.ok
 			? showList([classId], notice)
 			: showList([classId], notice, { kind: "new-rate", draft });
 	});
 }
 
-function createRateNotice(result: RulesCreateResult<TaxRateWire>, id: string): Notice {
+function createRateNotice(
+	t: PluginTranslate,
+	result: RulesCreateResult<TaxRateWire>,
+	id: string,
+): Notice {
 	if (result.ok) {
 		return {
 			variant: "default",
-			title: "Tax rate created",
-			description: `Rate "${id}" was added.`,
+			title: t("Tax rate created"),
+			description: t('Rate "{id}" was added.', { id: id }),
 		};
 	}
 	return {
 		variant: "error",
-		title: "Tax rate not created",
-		description: `Could not create "${id}" — check the rate ID isn't already in use and the zone id is correct, then try again.`,
+		title: t("Tax rate not created"),
+		description: t(
+			'Could not create "{id}" — check the rate ID isn\'t already in use and the zone id is correct, then try again.',
+			{ id: id },
+		),
 	};
 }
 
@@ -1257,7 +1329,7 @@ function showNewRateAction() {
 
 // -- custom action: edit a tax rate (CAS on rateBps) ---------------------------
 
-function saveRateAction() {
+function saveRateAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface, TaxRenderState>(async ({ input, client, showList }) => {
 		const carried = readCarrier(input);
 		const classId = carried?.classId;
@@ -1272,8 +1344,8 @@ function saveRateAction() {
 		if (bps === null) {
 			return showList([classId], {
 				variant: "error",
-				title: "Rate not saved",
-				description: "Rate must be a percent like 7.25 (0 to 1000, up to two decimal places).",
+				title: t("Rate not saved"),
+				description: t("Rate must be a percent like 7.25 (0 to 1000, up to two decimal places)."),
 			});
 		}
 		const appliesToShipping = readBoolean(values.appliesToShipping) ?? false;
@@ -1282,65 +1354,74 @@ function saveRateAction() {
 			appliesToShipping,
 			expectedRateBps,
 		});
-		return showList([classId], saveRateNotice(result));
+		return showList([classId], saveRateNotice(t, result));
 	});
 }
 
-function saveRateNotice(result: RulesCasUpdateResult<TaxRateWire>): Notice {
+function saveRateNotice(t: PluginTranslate, result: RulesCasUpdateResult<TaxRateWire>): Notice {
 	if (result.ok) {
-		return { variant: "default", title: "Rate saved", description: "The tax rate was updated." };
+		return {
+			variant: "default",
+			title: t("Rate saved"),
+			description: t("The tax rate was updated."),
+		};
 	}
 	if (result.reason === "stale") {
 		return {
 			variant: "error",
-			title: "This rate changed since you loaded it — reload",
-			description:
+			title: t("This rate changed since you loaded it — reload"),
+			description: t(
 				"Your edit was NOT applied — the latest value is shown below. Re-apply your change and save again.",
+			),
 		};
 	}
 	if (result.reason === "not_found") {
 		return {
 			variant: "error",
-			title: "Rate not found",
-			description: "This tax rate no longer exists — it may have already been deleted.",
+			title: t("Rate not found"),
+			description: t("This tax rate no longer exists — it may have already been deleted."),
 		};
 	}
 	return {
 		variant: "error",
-		title: "Rate not saved",
-		description: "The change could not be saved — retry in a moment.",
+		title: t("Rate not saved"),
+		description: t("The change could not be saved — retry in a moment."),
 	};
 }
 
 // -- custom action: delete a tax rate ------------------------------------------
 
-function deleteRateAction() {
+function deleteRateAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface, TaxRenderState>(async ({ input, client, showList }) => {
 		const payload = asRecord(input.value);
 		const classId = readString(payload?.classId);
 		const rateId = readString(payload?.rateId);
 		if (classId === undefined || rateId === undefined) return showList();
 		const result = await client.deleteTaxRate(rateId);
-		return showList([classId], deleteRateNotice(result));
+		return showList([classId], deleteRateNotice(t, result));
 	});
 }
 
-function deleteRateNotice(result: RulesDeleteResult): Notice {
+function deleteRateNotice(t: PluginTranslate, result: RulesDeleteResult): Notice {
 	if (result.ok) {
-		return { variant: "default", title: "Rate deleted", description: "The tax rate was removed." };
+		return {
+			variant: "default",
+			title: t("Rate deleted"),
+			description: t("The tax rate was removed."),
+		};
 	}
 	if (result.reason === "not_found") {
 		// Idempotent no-op (a double-submit, or someone else already deleted it) —
 		// not a failure: surface a non-error notice rather than a scary banner.
 		return {
 			variant: "default",
-			title: "Already deleted",
-			description: "This tax rate was already removed.",
+			title: t("Already deleted"),
+			description: t("This tax rate was already removed."),
 		};
 	}
 	return {
 		variant: "error",
-		title: "Rate not deleted",
-		description: "The rate could not be deleted — retry in a moment.",
+		title: t("Rate not deleted"),
+		description: t("The rate could not be deleted — retry in a moment."),
 	};
 }

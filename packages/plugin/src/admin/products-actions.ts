@@ -1,3 +1,4 @@
+import { englishTranslate, type PluginTranslate } from "./localization.js";
 /**
  * The Pricing & inventory WRITE path, as structured actions (ADR-0015 Decision 2).
  *
@@ -143,17 +144,21 @@ export type ProductsActionPayload = Readonly<Record<string, string>>;
 type ProductsAction = (
 	client: AdminProductsSurface,
 	payload: ProductsActionPayload,
+	t: PluginTranslate,
 ) => Promise<ProductsActionResult>;
 
 /** The refusal/unreadable-payload notice shared by every action on this screen
  *  whose payload fails to read (DA-3b): "nothing was changed", never a silent
  *  redirect and never a quiet success. */
-const UNREADABLE: Notice = {
-	variant: "error",
-	title: "Not changed",
-	description:
-		"That action could not be read — nothing was changed. Reload the product and try again.",
-};
+function unreadableNotice(t: PluginTranslate): Notice {
+	return {
+		variant: "error",
+		title: t("Not changed"),
+		description: t(
+			"That action could not be read — nothing was changed. Reload the product and try again.",
+		),
+	};
+}
 
 /** The one outcome constructor. A refusal is an `error`-variant notice, not a
  *  different shape — see {@link ProductsActionResult}. `field` is set only by an
@@ -220,6 +225,7 @@ type BuildEditResult = { ok: true; wire: ProductEditWire } | { ok: false; messag
  * a bad price/currency/dimension is a per-field message, never an opaque save.
  */
 function buildEditWire(
+	t: PluginTranslate,
 	values: Readonly<Record<string, unknown>>,
 	expectedUpdatedAt: string,
 ): BuildEditResult {
@@ -228,7 +234,7 @@ function buildEditWire(
 	const mode = readString(values.priceTaxMode);
 	if (mode !== undefined) {
 		if (mode !== "exclusive" && mode !== "inclusive")
-			return { ok: false, message: "Choose whether prices include tax." };
+			return { ok: false, message: t("Choose whether prices include tax.") };
 		wire.priceTaxMode = mode;
 	}
 
@@ -247,11 +253,11 @@ function buildEditWire(
 		if (minorUnits === null) {
 			return {
 				ok: false,
-				message: "Price must be a positive amount like 19.99 (up to two decimal places).",
+				message: t("Price must be a positive amount like 19.99 (up to two decimal places)."),
 			};
 		}
 		if (currency === undefined) {
-			return { ok: false, message: "Currency must be a 3-letter ISO-4217 code like USD." };
+			return { ok: false, message: t("Currency must be a 3-letter ISO-4217 code like USD.") };
 		}
 		wire.price = { amount: minorUnits, currency };
 	}
@@ -273,15 +279,18 @@ function buildEditWire(
 		if (minorUnits === null) {
 			return {
 				ok: false,
-				message: `${field === "compareAt" ? "Compare-at price" : "Unit cost"} must be a positive amount like 29.99, or blank to clear.`,
+				message: t("{value} must be a positive amount like 29.99, or blank to clear.", {
+					value: t(field === "compareAt" ? "Compare-at price" : "Unit cost"),
+				}),
 			};
 		}
 		const rowCurrency = currency ?? (wire.price !== undefined ? wire.price.currency : undefined);
 		if (rowCurrency === undefined) {
 			return {
 				ok: false,
-				message:
+				message: t(
 					"Set the product's price and currency before adding a compare-at price or unit cost.",
+				),
 			};
 		}
 		wire[key] = { amount: minorUnits, currency: rowCurrency };
@@ -304,10 +313,14 @@ function buildEditWire(
 		const raw = readString(values[field])?.trim();
 		if (raw === undefined || raw.length === 0) continue;
 		if (!/^\d+$/.test(raw)) {
-			return { ok: false, message: `${field} must be a non-negative whole number.` };
+			return {
+				ok: false,
+				message: t("{field} must be a non-negative whole number.", { field: field }),
+			};
 		}
 		const n = Number.parseInt(raw, 10);
-		if (!Number.isSafeInteger(n)) return { ok: false, message: `${field} is too large.` };
+		if (!Number.isSafeInteger(n))
+			return { ok: false, message: t("{field} is too large.", { field: field }) };
 		wire[field] = n;
 	}
 
@@ -371,7 +384,7 @@ function fnv1a(input: string, seed: number): string {
  * asymmetrically in one module is a trap even while the looser one happens to
  * fail closed downstream.
  */
-const saveAction: ProductsAction = async (client, payload) => {
+const saveAction: ProductsAction = async (client, payload, t) => {
 	const productId = readString(payload["productId"]);
 	const expectedUpdatedAt = readString(payload["expectedUpdatedAt"]);
 	if (
@@ -379,13 +392,13 @@ const saveAction: ProductsAction = async (client, payload) => {
 		expectedUpdatedAt === undefined ||
 		expectedUpdatedAt.trim().length === 0
 	) {
-		return applied(UNREADABLE);
+		return applied(unreadableNotice(t));
 	}
-	const built = buildEditWire(payload, expectedUpdatedAt);
+	const built = buildEditWire(t, payload, expectedUpdatedAt);
 	if (!built.ok) {
 		return applied({
 			variant: "error",
-			title: "Check the highlighted value",
+			title: t("Check the highlighted value"),
 			description: built.message,
 		});
 	}
@@ -394,7 +407,7 @@ const saveAction: ProductsAction = async (client, payload) => {
 	// The surface re-reads the product after every write, so a stale save leaves
 	// the operator looking at the latest row — and the OTHER two split forms
 	// remount with it, which is the sibling-discard hazard the screen warns about.
-	return editOutcome(result);
+	return editOutcome(t, result);
 };
 
 /** A sku as it appears INSIDE a sentence: quoted, so a sku with a space or a
@@ -416,56 +429,67 @@ function namedSku(value: string | null, fallback: string): string {
  * no way to tell which of the two they were reading.
  */
 function editOutcome(
+	t: PluginTranslate,
 	result: Awaited<ReturnType<AdminProductsSurface["updateProduct"]>>,
 ): ProductsActionResult {
 	if (result.ok) {
 		return applied({
 			variant: "default",
-			title: "Saved",
-			description: "The product's commerce fields were updated.",
+			title: t("Saved"),
+			description: t("The product's commerce fields were updated."),
 		});
 	}
 	switch (result.reason) {
 		case "stale":
 			return applied({
 				variant: "error",
-				title: "This product changed since you opened it",
-				description:
+				title: t("This product changed since you opened it"),
+				description: t(
 					"Your edit was NOT applied — the latest values are shown below. Re-apply your changes and save again.",
+				),
 			});
 		case "currency_mismatch":
 			return applied({
 				variant: "error",
-				title: "Currency cannot be changed here",
-				description: `This product is priced in ${result.currency ?? "its existing currency"}. A price edit keeps the same currency; re-currencying a product is not supported on this page.`,
+				title: t("Currency cannot be changed here"),
+				description: t(
+					"This product is priced in {value}. A price edit keeps the same currency; re-currencying a product is not supported on this page.",
+					{ value: result.currency ?? t("its existing currency") },
+				),
 			});
 		case "sku_taken":
 			return applied({
 				variant: "error",
-				title: "SKU already in use",
-				description: `SKU "${result.sku ?? ""}" is already used by another live product. Choose a different SKU.`,
+				title: t("SKU already in use"),
+				description: t(
+					'SKU "{value}" is already used by another live product. Choose a different SKU.',
+					{ value: result.sku ?? "" },
+				),
 			});
 		// THE TWO RENAME REFUSALS. Both name the sku(s) so the sentence can be acted
 		// on without opening a database, and both say NOTHING MOVED out loud: the
 		// rename and the stock carry are one transaction, so a refusal leaves the
 		// product on its old sku with its units where they were.
 		case "sku_stock_conflict": {
-			const from = namedSku(result.fromSku, "this product's SKU");
-			const to = namedSku(result.toSku, "the SKU you asked for");
+			const from = namedSku(result.fromSku, t("this product's SKU"));
+			const to = namedSku(result.toSku, t("the SKU you asked for"));
 			return applied(
 				{
 					variant: "error",
-					title: "That SKU already has stock of its own",
+					title: t("That SKU already has stock of its own"),
 					// The sku is never the first word of a sentence: a fallback phrase
 					// would arrive lower-case there, and a real sku would arrive with
 					// whatever case the merchant typed. Both read as a typo.
-					description: `Nothing was changed. Stock is never merged between SKUs, and ${to} already has its own inventory record — so ${from} was not renamed onto it. Rename to a SKU that has never held stock, or move the units under ${to} elsewhere first.`,
+					description: t(
+						"Nothing was changed. Stock is never merged between SKUs, and {to} already has its own inventory record — so {from} was not renamed onto it. Rename to a SKU that has never held stock, or move the units under {to2} elsewhere first.",
+						{ to: to, from: from, to2: to },
+					),
 				},
 				"sku",
 			);
 		}
 		case "sku_held_stock": {
-			const held = namedSku(result.sku, "this SKU");
+			const held = namedSku(result.sku, t("this SKU"));
 			// THE WHOLE SENTENCE AGREES WITH THE COUNT — subject, verb, and the
 			// pronoun the advice refers back with. Assembling a pluralised noun and
 			// leaving anything downstream of it fixed is how "1 live reservation still
@@ -474,16 +498,22 @@ function editOutcome(
 			const one = result.liveHolds === 1;
 			const holds =
 				result.liveHolds === null
-					? `live reservations still hold units of ${held}`
+					? t("live reservations still hold units of {held}", { held })
 					: one
-						? `1 live reservation still holds units of ${held}`
-						: `${String(result.liveHolds)} live reservations still hold units of ${held}`;
+						? t("1 live reservation still holds units of {held}", { held })
+						: t("{count} live reservations still hold units of {held}", {
+								count: result.liveHolds,
+								held,
+							});
 			const settled = one ? "it has" : "those have";
 			return applied(
 				{
 					variant: "error",
-					title: "This SKU has reservations in flight",
-					description: `Nothing was changed: ${holds}, and a reservation cannot follow a rename — its units would return to the old SKU when the cart or order finishes. Try the rename again once ${settled} been paid, cancelled or expired, usually a few minutes.`,
+					title: t("This SKU has reservations in flight"),
+					description: t(
+						"Nothing was changed: {holds}, and a reservation cannot follow a rename — its units would return to the old SKU when the cart or order finishes. Try the rename again once {settled} been paid, cancelled or expired, usually a few minutes.",
+						{ holds: holds, settled: settled },
+					),
 				},
 				"sku",
 			);
@@ -491,20 +521,23 @@ function editOutcome(
 		case "invalid":
 			return applied({
 				variant: "error",
-				title: "Invalid value",
-				description: `The field "${result.field ?? "input"}" is out of range — price must be greater than zero and measurements must be non-negative whole numbers.`,
+				title: t("Invalid value"),
+				description: t(
+					'The field "{value}" is out of range — price must be greater than zero and measurements must be non-negative whole numbers.',
+					{ value: result.field ?? t("input") },
+				),
 			});
 		case "not_found":
 			return applied({
 				variant: "error",
-				title: PRODUCT_NOT_FOUND_TITLE,
-				description: PRODUCT_DELETED_SINCE_LOADED,
+				title: t(PRODUCT_NOT_FOUND_TITLE),
+				description: t(PRODUCT_DELETED_SINCE_LOADED),
 			});
 		default:
 			return applied({
 				variant: "error",
-				title: "Save failed",
-				description: "The change could not be saved — retry in a moment.",
+				title: t("Save failed"),
+				description: t("The change could not be saved — retry in a moment."),
 			});
 	}
 }
@@ -533,19 +566,23 @@ function stockMovementKey(
  * not the destructive act on this screen). Reads `productId`/`onHand` off the
  * payload, validates the qty, then POSTs under the derived key.
  */
-const restockAction: ProductsAction = async (client, payload) => {
+const restockAction: ProductsAction = async (client, payload, t) => {
 	const productId = readString(payload["productId"]);
 	const commandId = stockCommandId(payload);
-	if (productId === undefined || commandId === null) return applied(UNREADABLE);
+	if (productId === undefined || commandId === null) return applied(unreadableNotice(t));
 	const onHand = parseOnHand(payload["onHand"]);
-	if (onHand === null) return applied(UNREADABLE);
+	if (onHand === null) return applied(unreadableNotice(t));
 	const qty = parseStockQty(readString(payload["qty"]));
 	if (qty === null) {
-		return applied({ variant: "error", ...ADD_STOCK_INVALID_QTY });
+		return applied({
+			variant: "error",
+			title: t(ADD_STOCK_INVALID_QTY.title),
+			description: t(ADD_STOCK_INVALID_QTY.description),
+		});
 	}
 	const key = await stockMovementKey(productId, null, commandId);
 	const result = await client.restock(productId, qty, key);
-	return applied(restockNotice(result, qty));
+	return applied(restockNotice(t, result, qty));
 };
 
 /** A refusal on the stock-changed-since-render path (DA-3a).
@@ -554,20 +591,24 @@ const restockAction: ProductsAction = async (client, payload) => {
  *  inventory record for the sku (INC-23 — the wire says that now instead of
  *  calling it zero), and "0 units are on hand now" would be a count nobody
  *  took. */
-function stockChangedNotice(liveOnHand: number | null): Notice {
+function stockChangedNotice(t: PluginTranslate, liveOnHand: number | null): Notice {
 	if (liveOnHand === null) {
 		return {
 			variant: "error",
-			title: "Stock changed — nothing was removed",
-			description:
+			title: t("Stock changed — nothing was removed"),
+			description: t(
 				"This SKU no longer has an inventory record, so there is no count to remove from. Reload the product to see it as it stands now.",
+			),
 		};
 	}
 	const unit = liveOnHand === 1 ? "unit is" : "units are";
 	return {
 		variant: "error",
-		title: "Stock changed — nothing was removed",
-		description: `Stock on hand changed since you started — ${liveOnHand} ${unit} on hand now. Re-enter the amount below to try again.`,
+		title: t("Stock changed — nothing was removed"),
+		description: t(
+			"Stock on hand changed since you started — {liveOnHand} {unit} on hand now. Re-enter the amount below to try again.",
+			{ liveOnHand: liveOnHand, unit: unit, count: liveOnHand },
+		),
 	};
 }
 
@@ -588,10 +629,10 @@ function stockChangedNotice(liveOnHand: number | null): Notice {
  * here catches the common case before the write; that is the backstop, and it is
  * what the retired review step's client-side bound check has left behind.
  */
-const removeStockAction: ProductsAction = async (client, payload) => {
+const removeStockAction: ProductsAction = async (client, payload, t) => {
 	const productId = readString(payload["productId"]);
 	const commandId = stockCommandId(payload);
-	if (productId === undefined || commandId === null) return applied(UNREADABLE);
+	if (productId === undefined || commandId === null) return applied(unreadableNotice(t));
 	const qty = parseStockQty(readString(payload["qty"]));
 	const observedOnHand = parseOnHand(payload["onHand"]);
 	// Both are re-checked for PRESENCE as well as for shape, and an absent
@@ -601,63 +642,78 @@ const removeStockAction: ProductsAction = async (client, payload) => {
 	// step's form, and the surface parses the quantity with the same shared
 	// `parseStockQty` before it opens its confirm, so an unparseable one arriving
 	// here means the payload was hand-made rather than that someone mistyped.
-	if (qty === null || observedOnHand === null) return applied(UNREADABLE);
+	if (qty === null || observedOnHand === null) return applied(unreadableNotice(t));
 	const key = await stockMovementKey(productId, null, commandId);
 	const result = await client.removeStock(productId, qty, key, observedOnHand);
-	return applied(removeStockNotice(result, qty));
+	return applied(removeStockNotice(t, result, qty));
 };
 
 /** Map a restock outcome to the notice shown above the reloaded detail. */
-function restockNotice(result: RestockResult, qty: number): Notice {
+function restockNotice(t: PluginTranslate, result: RestockResult, qty: number): Notice {
 	if (result.ok) {
 		return {
 			variant: "default",
-			title: "Stock added",
-			description: `Added ${qty} ${unitWord(qty)}. This movement recorded available stock of ${result.onHand}; the refreshed product shows the current count.`,
+			title: t("Stock added"),
+			description: t(
+				"Added {qty} {value}. This movement recorded available stock of {onHand}; the refreshed product shows the current count.",
+				{ qty: qty, value: unitWord(qty), onHand: result.onHand, count: qty },
+			),
 		};
 	}
-	return stockFailureNotice(result.reason);
+	return stockFailureNotice(t, result.reason);
 }
 
 /** Map a stock-removal outcome to the notice. */
-function removeStockNotice(result: StockRemovalResult, qty: number): Notice {
+function removeStockNotice(t: PluginTranslate, result: StockRemovalResult, qty: number): Notice {
 	if (result.ok) {
 		return {
 			variant: "default",
-			title: "Stock removed",
-			description: `Removed ${qty} ${unitWord(qty)}. This movement recorded available stock of ${result.onHand}; the refreshed product shows the current count.`,
+			title: t("Stock removed"),
+			description: t(
+				"Removed {qty} {value}. This movement recorded available stock of {onHand}; the refreshed product shows the current count.",
+				{ qty: qty, value: unitWord(qty), onHand: result.onHand, count: qty },
+			),
 		};
 	}
 	if (result.reason === "insufficient_stock") {
 		return {
 			variant: "error",
-			title: "Not enough stock to remove",
-			description: `Only ${result.onHand} ${unitWord(result.onHand)} on hand — you cannot remove ${qty}.`,
+			title: t("Not enough stock to remove"),
+			description: t("Only {onHand} {value} on hand — you cannot remove {qty}.", {
+				onHand: result.onHand,
+				value: unitWord(result.onHand),
+				qty: qty,
+				count: result.onHand,
+			}),
 		};
 	}
-	if (result.reason === "stock_changed") return stockChangedNotice(result.onHand);
+	if (result.reason === "stock_changed") return stockChangedNotice(t, result.onHand);
 	if (result.reason === "not_found")
 		return {
 			variant: "error",
-			title: "Nothing was removed",
-			description: "Stock could not be re-checked, so nothing was applied. Reload and try again.",
+			title: t("Nothing was removed"),
+			description: t(
+				"Stock could not be re-checked, so nothing was applied. Reload and try again.",
+			),
 		};
-	return stockFailureNotice(result.reason);
+	return stockFailureNotice(t, result.reason);
 }
 
 /** Shared mapping for the non-success stock-movement reasons common to both
  *  restock and removal (no_sku / no_inventory_row / invalid / not_found /
  *  error). */
 function stockFailureNotice(
+	t: PluginTranslate,
 	reason: "not_found" | "no_sku" | "no_inventory_row" | "invalid" | "error",
 ): Notice {
 	switch (reason) {
 		case "no_sku":
 			return {
 				variant: "error",
-				title: "No SKU set",
-				description:
+				title: t("No SKU set"),
+				description: t(
 					"This product has no SKU yet, so it has no stock to manage. Set a SKU on Identity above first.",
+				),
 			};
 		case "no_inventory_row":
 			// SHOULD NEVER HAPPEN since PR 1a: a stock record is created the moment
@@ -668,27 +724,28 @@ function stockFailureNotice(
 			// write that bypasses the use-case. Re-saving the SKU here fixes both.
 			return {
 				variant: "error",
-				title: "No stock record yet",
-				description:
+				title: t("No stock record yet"),
+				description: t(
 					"This product has a SKU but no stock record, so there is nothing to add to or remove from. Re-save the SKU on Identity above to create one.",
+				),
 			};
 		case "invalid":
 			return {
 				variant: "error",
-				title: "Invalid quantity",
-				description: "The quantity must be a positive whole number.",
+				title: t("Invalid quantity"),
+				description: t("The quantity must be a positive whole number."),
 			};
 		case "not_found":
 			return {
 				variant: "error",
-				title: PRODUCT_NOT_FOUND_TITLE,
-				description: PRODUCT_DELETED_SINCE_LOADED,
+				title: t(PRODUCT_NOT_FOUND_TITLE),
+				description: t(PRODUCT_DELETED_SINCE_LOADED),
 			};
 		default:
 			return {
 				variant: "error",
-				title: "Stock change failed",
-				description: "The change could not be saved — retry in a moment.",
+				title: t("Stock change failed"),
+				description: t("The change could not be saved — retry in a moment."),
 			};
 	}
 }
@@ -704,12 +761,12 @@ async function variantCommandKey(command: readonly unknown[]): Promise<string> {
 	return `admin-variant:${Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-const saveVariantAction: ProductsAction = async (client, payload) => {
+const saveVariantAction: ProductsAction = async (client, payload, t) => {
 	const productId = readString(payload["productId"]);
 	const variantKey = readString(payload["variantKey"]);
 	const expectedUpdatedAt = readString(payload["expectedUpdatedAt"]);
 	if (!productId || !variantKey || !expectedUpdatedAt || client.updateVariant === undefined)
-		return applied(UNREADABLE);
+		return applied(unreadableNotice(t));
 	const sku = readString(payload["sku"])?.trim();
 	const rawPrice = readString(payload["priceCents"])?.trim();
 	const currency = readString(payload["currency"])?.trim().toUpperCase();
@@ -720,9 +777,10 @@ const saveVariantAction: ProductsAction = async (client, payload) => {
 	)
 		return applied({
 			variant: "error",
-			title: "Variant not saved",
-			description:
+			title: t("Variant not saved"),
+			description: t(
 				"Enter a SKU or a positive whole price in minor units with its 3-letter currency. Leave an unset price blank.",
+			),
 		});
 	const body: AdminVariantEditWire = {
 		expectedUpdatedAt,
@@ -735,16 +793,17 @@ const saveVariantAction: ProductsAction = async (client, payload) => {
 		body,
 		await variantCommandKey(["edit", productId, variantKey, body]),
 	);
-	return applied(variantEditNotice(result));
+	return applied(variantEditNotice(t, result));
 };
 
-function variantEditNotice(result: AdminVariantEditResult): Notice {
+function variantEditNotice(t: PluginTranslate, result: AdminVariantEditResult): Notice {
 	if (result.ok)
 		return {
 			variant: "default",
-			title: "Variant saved",
-			description:
+			title: t("Variant saved"),
+			description: t(
 				"The declared variant's SKU and price were saved. Its CMS key and name are unchanged.",
+			),
 		};
 	const messages: Record<Extract<AdminVariantEditResult, { ok: false }>["reason"], string> = {
 		VARIANT_NOT_FOUND:
@@ -760,11 +819,15 @@ function variantEditNotice(result: AdminVariantEditResult): Notice {
 		SKU_HELD_STOCK:
 			"This SKU has held stock in live carts or orders. Wait for those holds to finish before renaming it.",
 	};
-	return { variant: "error", title: "Variant not saved", description: messages[result.reason] };
+	return {
+		variant: "error",
+		title: t("Variant not saved"),
+		description: t(messages[result.reason]),
+	};
 }
 
 function variantStockAction(direction: "restock" | "removal"): ProductsAction {
-	return async (client, payload) => {
+	return async (client, payload, t) => {
 		const productId = readString(payload["productId"]);
 		const variantKey = readString(payload["variantKey"]);
 		const expectedUpdatedAt = readString(payload["expectedUpdatedAt"]);
@@ -780,7 +843,7 @@ function variantStockAction(direction: "restock" | "removal"): ProductsAction {
 			onHand === null ||
 			client.moveVariantStock === undefined
 		)
-			return applied(UNREADABLE);
+			return applied(unreadableNotice(t));
 		const body = { direction, qty, onHand, expectedUpdatedAt };
 		const result = await client.moveVariantStock(
 			productId,
@@ -791,20 +854,31 @@ function variantStockAction(direction: "restock" | "removal"): ProductsAction {
 		if (result.ok)
 			return applied({
 				variant: "default",
-				title: direction === "restock" ? "Variant stock added" : "Variant stock removed",
-				description: `This movement recorded available stock of ${result.onHand}. The refreshed variant shows the current count. Existing held units are preserved.`,
+				title: direction === "restock" ? t("Variant stock added") : t("Variant stock removed"),
+				description: t(
+					"This movement recorded available stock of {onHand}. The refreshed variant shows the current count. Existing held units are preserved.",
+					{ onHand: result.onHand },
+				),
 			});
 		return applied({
 			variant: "error",
-			title: "Variant stock not changed",
+			title: t("Variant stock not changed"),
 			description:
 				result.reason === "stale" || result.reason === "stock_changed"
-					? "The variant or available count changed. Reload and review before submitting another movement."
+					? t(
+							"The variant or available count changed. Reload and review before submitting another movement.",
+						)
 					: result.reason === "command_reused"
-						? "That command identity already belongs to another SKU, quantity or stock operation. Retry the original command unchanged or start a new confirmed movement."
+						? t(
+								"That command identity already belongs to another SKU, quantity or stock operation. Retry the original command unchanged or start a new confirmed movement.",
+							)
 						: result.reason === "insufficient_stock"
-							? "Only available units can be removed. The requested quantity exceeds available stock; held units are protected."
-							: "A live declared variant with a SKU and stock record is required. Missing, orphaned and deleted variants cannot be changed here.",
+							? t(
+									"Only available units can be removed. The requested quantity exceeds available stock; held units are protected.",
+								)
+							: t(
+									"A live declared variant with a SKU and stock record is required. Missing, orphaned and deleted variants cannot be changed here.",
+								),
 		});
 	};
 }
@@ -854,8 +928,9 @@ export async function dispatchProductsAction(
 	actionId: string,
 	payload: ProductsActionPayload,
 	client: AdminProductsSurface,
+	t: PluginTranslate = englishTranslate,
 ): Promise<ProductsActionResult | undefined> {
 	const action = PRODUCTS_ACTIONS_BY_ID[actionId];
 	if (action === undefined) return undefined;
-	return await action(client, payload);
+	return await action(client, payload, t);
 }

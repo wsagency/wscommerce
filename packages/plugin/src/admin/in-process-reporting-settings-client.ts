@@ -74,6 +74,7 @@ import {
 	getTopProductsReport,
 	idempotencyKey as toIdempotencyKey,
 	InvalidSettingsError,
+	MAX_HOLD_TTL_MINUTES,
 	updateSettings as updateSettingsUseCase,
 	type OperationalSettings,
 	type ReportInterval,
@@ -87,6 +88,7 @@ import {
 	type InProcessCommerceStoresOptions,
 } from "../commerce/in-process-commerce-stores.js";
 import type { PluginContext } from "../types.js";
+import { englishTranslate, type PluginTranslate } from "./localization.js";
 import type {
 	DateRangeInput,
 	LowStockWire,
@@ -210,6 +212,7 @@ export class InProcessReportingSettingsClient implements ReportingSettingsSurfac
 	async updateSettings(
 		patch: Partial<OperationalSettingsWire>,
 		opts: { idempotencyKey: string; adminToken?: string },
+		t: PluginTranslate = englishTranslate,
 	): Promise<UpdateSettingsResult> {
 		// INPUT SHAPE REJECTS. A missing key is not a refused settings value, it is
 		// a caller that did not supply one, and there is no inline field to render
@@ -228,7 +231,7 @@ export class InProcessReportingSettingsClient implements ReportingSettingsSurfac
 			return {
 				ok: false,
 				reason: "validation",
-				message: `lowStockThreshold must be <= ${String(MAX_LOW_STOCK_THRESHOLD)}`,
+				message: t("lowStockThreshold must be <= {maximum}", { maximum: MAX_LOW_STOCK_THRESHOLD }),
 			};
 		}
 
@@ -250,7 +253,21 @@ export class InProcessReportingSettingsClient implements ReportingSettingsSurfac
 			if (err instanceof InvalidSettingsError) {
 				// THE MESSAGE IS THE POINT of this arm: it names the field and the
 				// bound, and the form renders it inline beside the input.
-				return { ok: false, reason: "validation", message: err.message };
+				return {
+					ok: false,
+					reason: "validation",
+					message:
+						t.locale === "en"
+							? err.message
+							: err.field === "holdTtlMinutes"
+								? t("Cart hold TTL must be a whole number from 1 to {maximum}; entered: {value}.", {
+										maximum: MAX_HOLD_TTL_MINUTES,
+										value: String(patch.holdTtlMinutes),
+									})
+								: t("Low-stock threshold must be a non-negative whole number; entered: {value}.", {
+										value: String(patch.lowStockThreshold),
+									}),
+				};
 			}
 			if (isSettingsMutationSupersededError(err)) {
 				// NO `status`. A fabricated 409 would be indistinguishable from a real
@@ -258,8 +275,9 @@ export class InProcessReportingSettingsClient implements ReportingSettingsSurfac
 				return {
 					ok: false,
 					reason: "superseded",
-					message:
+					message: t(
 						"settings were changed by someone else while this save was in flight — reload and try again",
+					),
 				};
 			}
 			// The store could not answer. Nothing is known about whether the patch
@@ -267,7 +285,7 @@ export class InProcessReportingSettingsClient implements ReportingSettingsSurfac
 			return {
 				ok: false,
 				reason: "unavailable",
-				message: "settings update failed — reload to see the current values",
+				message: t("settings update failed — reload to see the current values"),
 			};
 		}
 	}
