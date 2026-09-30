@@ -14,7 +14,7 @@ import type {
 	InvoiceProvider,
 	InvoiceSnapshot,
 	SoloOptions,
-} from "@emdash-commerce/invoicing";
+} from "@emdash-commerce/invoicing/types";
 import { orderId } from "@otta-sh/domain";
 import type { Order } from "@otta-sh/domain";
 import { ORDERS_COLLECTION } from "@otta-sh/store-emdash";

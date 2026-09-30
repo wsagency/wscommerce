@@ -43,18 +43,11 @@ import {
 } from "@emdash-commerce/compat-woocommerce";
 import { createInProcessCommerceStores } from "../commerce/in-process-commerce-stores.js";
 import type { PluginContext, StorageWhereClause } from "../types.js";
-
-/** Explicit read-only CMS projection, resolved by the host or a synchronized cache. */
-export interface NativeWooProductContent {
-	slug: string;
-	permalink: string;
-	description: string;
-	shortDescription: string;
-	images: Array<{ src: string; name: string; alt: string }>;
-}
-export interface NativeWooProductContentPort {
-	getMany(nativeIds: readonly string[]): Promise<Readonly<Record<string, NativeWooProductContent>>>;
-}
+import type { NativeWooProductContentPort } from "./woocommerce-content.js";
+export type {
+	NativeWooProductContent,
+	NativeWooProductContentPort,
+} from "./woocommerce-content.js";
 export const NATIVE_WOO_SCAN_LIMIT = 10_000;
 function failure(message: string, status = 409, code = "woocommerce_rest_native_conflict"): never {
 	throw new WooMutationError(code, message, status);

@@ -82,3 +82,27 @@ export interface InvoiceJob {
 
 /** Inject ctx.http.fetch in an EmDash plugin; global fetch is for the host adapter only. */
 export type InvoiceTransport = (url: string, init: RequestInit) => Promise<Response>;
+
+/** Host-free provider configuration, also exported through the pure ./types entrypoint. */
+export interface SoloOptions {
+	token: string;
+	serviceType: number;
+	invoiceType: number;
+	buyerType: number;
+	/** Explicit accounting choice: COD may be remitted by bank or collected as cash. */
+	codPaymentType: 1 | 2 | 5;
+	transport: InvoiceTransport;
+}
+
+export interface ERacuniOptions {
+	/** Copy the exact URL from this organization's developer console. */
+	endpoint: string;
+	username: string;
+	secretKey: string;
+	token: string;
+	transport: InvoiceTransport;
+	businessUnit?: string;
+	costPosition?: string;
+	/** Account-specific decoder after sandbox acceptance; default accepts complete typed documents only. */
+	readDocument?: (payload: unknown) => InvoiceDocument | null;
+}

@@ -13,17 +13,18 @@ import {
 } from "@emdash-commerce/compat-woocommerce";
 import type {
 	WooHttpRequest,
-	WooScope,
 	WooWebhookJob,
 	WooIdRegistryDocument,
 	WooMetadataDocument,
 	WooWebhookEnqueue,
 } from "@emdash-commerce/compat-woocommerce";
+import type { WooScope } from "@emdash-commerce/compat-woocommerce/types";
 import type { StorageCollection } from "@otta-sh/store-emdash";
 import { ORDERS_COLLECTION } from "@otta-sh/store-emdash";
 import { SWEEP_TASK_NAME } from "../cron/index.js";
 import type { PluginContext, RouteEntry, SandboxedPlugin } from "../types.js";
-import { createNativeWooBackend, type NativeWooProductContentPort } from "./woocommerce-backend.js";
+import { createNativeWooBackend } from "./woocommerce-backend.js";
+import type { NativeWooProductContentPort } from "./woocommerce-content.js";
 
 export interface WooIntegrationConfiguration {
 	origin: string;

@@ -2,25 +2,8 @@ import { currency } from "@otta-sh/domain";
 import { formatDecimal, parseDecimal } from "./money.js";
 import { providerLines, secureEndpoint } from "./provider-lines.js";
 import { validateInvoiceSnapshot } from "./snapshot.js";
-import type {
-	InvoiceDocument,
-	InvoiceOutcome,
-	InvoiceProvider,
-	InvoiceTransport,
-} from "./types.js";
-
-export interface ERacuniOptions {
-	/** Copy the exact URL from this organization's developer console. */
-	endpoint: string;
-	username: string;
-	secretKey: string;
-	token: string;
-	transport: InvoiceTransport;
-	businessUnit?: string;
-	costPosition?: string;
-	/** Account-specific decoder after sandbox acceptance; default accepts complete typed documents only. */
-	readDocument?: (payload: unknown) => InvoiceDocument | null;
-}
+import type { InvoiceDocument, InvoiceOutcome, InvoiceProvider, ERacuniOptions } from "./types.js";
+export type { ERacuniOptions } from "./types.js";
 
 /** No inference from a success message, an HTTP code, or a bare document number. */
 export function readERacuniDocument(payload: unknown): InvoiceDocument | null {

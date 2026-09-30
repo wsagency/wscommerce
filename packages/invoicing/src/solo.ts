@@ -2,17 +2,8 @@ import { currency } from "@otta-sh/domain";
 import { formatDecimal, parseDecimal } from "./money.js";
 import { providerLines } from "./provider-lines.js";
 import { validateInvoiceSnapshot } from "./snapshot.js";
-import type { InvoiceOutcome, InvoiceProvider, InvoiceTransport } from "./types.js";
-
-export interface SoloOptions {
-	token: string;
-	serviceType: number;
-	invoiceType: number;
-	buyerType: number;
-	/** Explicit accounting choice: COD may be remitted by bank or collected as cash. */
-	codPaymentType: 1 | 2 | 5;
-	transport: InvoiceTransport;
-}
+import type { InvoiceOutcome, InvoiceProvider, SoloOptions } from "./types.js";
+export type { SoloOptions } from "./types.js";
 
 function localizedDecimal(value: unknown): string {
 	if (
