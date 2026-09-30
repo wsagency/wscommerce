@@ -11,9 +11,12 @@ vi.mock("emdash/plugin-utils", async (importOriginal) => {
 });
 const { OrdersScreen } = await import("../src/orders/orders-screen.js");
 const { ProductsScreen } = await import("../src/products/products-screen.js");
+const { LeaveConfirm } = await import("../src/products/product-detail.js");
+const { AdminLanguageChoice, AdminLocaleProvider } = await import("../src/locale.js");
 type DetailPayload = import("../src/console-api.js").DetailPayload;
 type ListPayload = import("../src/console-api.js").ListPayload;
 type ProductDetailPayload = import("../src/console-api.js").ProductDetailPayload;
+type ProductsListPayload = import("../src/console-api.js").ProductsListPayload;
 
 const vocabulary = {
 	statuses: ["paid"],
@@ -116,6 +119,14 @@ const productDetail: ProductDetailPayload = {
 		pageLimit: 25,
 	},
 };
+const productList: ProductsListPayload = {
+	ok: true,
+	products: [productDetail.product],
+	nextCursor: null,
+	total: 1,
+	stock: { threshold: 3, unreadable: false, filterUnavailable: false },
+	vocabulary: productDetail.vocabulary,
+};
 let view: Mounted | undefined;
 const requests: Record<string, unknown>[] = [];
 let actionNotice: { title: string; description: string; variant: string } | null = null;
@@ -141,7 +152,9 @@ beforeEach(() => {
 						? detail
 						: body.resource === "products.detail"
 							? productDetail
-							: list,
+							: body.resource === "products.list"
+								? productList
+								: list,
 		});
 	});
 });
@@ -370,4 +383,187 @@ test("HTTP failures translate the client recovery instruction and preserve serve
 	expect(view.container.textContent).toContain(
 		"Order shipped Your account is signed in but is not allowed to manage plugins.",
 	);
+});
+
+test("the unsaved-variant discard dialog switches every authored section label", async () => {
+	const onStay = vi.fn();
+	const onLeave = vi.fn();
+	view = await mount(
+		<AdminLocaleProvider initialLocale="hr">
+			<AdminLanguageChoice />
+			<LeaveConfirm
+				open
+				dirty={{ identity: false, price: false, shipping: false }}
+				variantsDirty
+				onStay={onStay}
+				onLeave={onLeave}
+			/>
+		</AdminLocaleProvider>,
+	);
+	const dialog = view.container.querySelector("dialog[open]");
+	expect(dialog?.textContent).toContain("Odjeljak Varijante ima nespremljene izmjene.");
+	expect(dialog?.textContent).not.toContain("Variants");
+	await choose("en");
+	expect(dialog?.textContent).toContain("The Variants section has unsaved changes.");
+	expect(onStay).not.toHaveBeenCalled();
+	expect(onLeave).not.toHaveBeenCalled();
+});
+
+test.each([
+	{ screen: "orders", failure: "http" },
+	{ screen: "orders", failure: "network" },
+	{ screen: "products", failure: "http" },
+	{ screen: "products", failure: "network" },
+])(
+	"$screen Refresh keeps $failure diagnostics literal while switching recovery instructions",
+	async ({ screen, failure }) => {
+		window.history.replaceState(null, "", "?search=Orders&cursor=private-cursor");
+		apiFetch.mockImplementation(async (_input, init) => {
+			const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+			requests.push(body);
+			if (requests.length === 1)
+				return Response.json({ data: screen === "orders" ? list : productList });
+			if (failure === "network") throw new Error("Orders {id}");
+			return Response.json(
+				{ success: false, error: { code: "DENIED", message: "Order shipped" } },
+				{ status: 403 },
+			);
+		});
+		view = await mount(screen === "orders" ? <OrdersScreen /> : <ProductsScreen />);
+		await choose("hr");
+		const table = view.container.querySelector(`[data-testid="${screen}-table"]`);
+		const rows = [...(table?.querySelectorAll("[data-row-id]") ?? [])].map((loadedRow) =>
+			loadedRow.getAttribute("data-row-id"),
+		);
+		expect(rows).toHaveLength(1);
+		const refresh = view.container.querySelector<HTMLButtonElement>(
+			`[data-testid="${screen}-refresh"]`,
+		);
+		if (!refresh) throw new Error("refresh control missing");
+		await fire(refresh, "click");
+		const notice = view.container.querySelector(`[data-testid="${screen}-load-more-failure"]`);
+		expect(notice?.textContent).toContain("Popis nije moguće osvježiti");
+		expect(notice?.textContent).toContain(
+			failure === "http"
+				? "Order shipped Prijavljeni ste, ali nemate ovlast za upravljanje dodacima."
+				: "Zahtjev nije dovršen — Orders {id}. Provjerite internetsku vezu pa ponovno učitajte stranicu.",
+		);
+		expect(notice?.textContent).toContain("Prikaz je nepromijenjen");
+		expect(notice?.textContent).not.toContain("Narudžba poslana");
+		await choose("en");
+		expect(notice?.textContent).toContain(
+			failure === "http"
+				? "Order shipped Your account is signed in but is not allowed to manage plugins."
+				: "The request never completed — Orders {id}. Check that you are online, then reload.",
+		);
+		expect(notice?.textContent).toContain("Nothing on screen has changed");
+		expect(view.container.querySelector(`[data-testid="${screen}-table"]`)).toBe(table);
+		expect(
+			[...(table?.querySelectorAll("[data-row-id]") ?? [])].map((loadedRow) =>
+				loadedRow.getAttribute("data-row-id"),
+			),
+		).toEqual(rows);
+		expect(window.location.search).toBe("?search=Orders&cursor=private-cursor");
+		expect(requests).toHaveLength(2);
+		expect(requests[1]).toEqual(requests[0]);
+		expect(requests.every((request) => request.type === "otta_console_read")).toBe(true);
+	},
+);
+
+async function enter(input: HTMLInputElement, value: string): Promise<void> {
+	const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+	if (!setter) throw new Error("input setter missing");
+	await React.act(async () => {
+		setter.call(input, value);
+		input.dispatchEvent(new Event("input", { bubbles: true }));
+	});
+}
+
+test("a saved-price receipt reformats its retained before and after when language changes", async () => {
+	document.cookie = "wscommerce_admin_locale=hr; Path=/";
+	window.history.replaceState(null, "", "?product=prod-1");
+	let saved = false;
+	apiFetch.mockImplementation(async (_input, init) => {
+		const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+		requests.push(body);
+		if (body.type === "otta_console_act") {
+			saved = true;
+			return Response.json({ data: { ok: true, notice: null } });
+		}
+		return Response.json({
+			data: saved
+				? {
+						...productDetail,
+						product: {
+							...productDetail.product,
+							priceCents: 1999,
+							updatedAt: "2026-01-03T00:00:00.000Z",
+						},
+					}
+				: productDetail,
+		});
+	});
+	view = await mount(<ProductsScreen />);
+	const price = view.container.querySelector<HTMLInputElement>('input[data-testid="edit-price"]');
+	if (!price) throw new Error("price input missing");
+	await enter(price, "19.99");
+	const save = view.container.querySelector<HTMLButtonElement>('[data-testid="save-price"]');
+	if (!save) throw new Error("save price control missing");
+	await fire(save, "click");
+	const receipt = view.container.querySelector('[data-testid="price-receipt"]');
+	expect(receipt?.textContent).toContain("123,45 € → 19,99 €");
+	const writes = requests.filter((request) => request.type === "otta_console_act");
+	expect(writes).toEqual([
+		{
+			type: "otta_console_act",
+			action_id: "products:save-price",
+			value: {
+				productId: "prod-1",
+				expectedUpdatedAt: "2026-01-02T00:00:00.000Z",
+				price: "19.99",
+				priceTaxMode: "exclusive",
+				currency: "EUR",
+				compareAt: "",
+				unitCost: "",
+			},
+		},
+	]);
+	await choose("en");
+	expect(receipt?.textContent).toContain("Price updated — live on the storefront");
+	expect(receipt?.textContent).toContain("€123.45 → €19.99");
+	expect(receipt?.textContent).toContain("orders already placed keep the price they were charged");
+	await choose("hr");
+	expect(receipt?.textContent).toContain("123,45 € → 19,99 €");
+	expect(view.container.querySelector("h1")?.textContent).toBe("Orders");
+	expect(requests.filter((request) => request.type === "otta_console_act")).toEqual(writes);
+});
+
+test("a local stock-storage refusal switches back to English without sending a mutation", async () => {
+	document.cookie = "wscommerce_admin_locale=hr; Path=/";
+	window.history.replaceState(null, "", "?product=prod-1&tab=stock");
+	vi.spyOn(globalThis.sessionStorage, "setItem").mockImplementation(() => {
+		throw new Error("storage restricted");
+	});
+	view = await mount(<ProductsScreen />);
+	const quantity = view.container.querySelector<HTMLInputElement>('[data-testid="restock-qty"]');
+	if (!quantity) throw new Error("stock quantity missing");
+	await enter(quantity, "2");
+	const add = view.container.querySelector<HTMLButtonElement>('[data-testid="restock-submit"]');
+	if (!add) throw new Error("stock action missing");
+	await fire(add, "click");
+	const confirm = view.container.querySelector<HTMLButtonElement>(
+		'dialog[open] [data-testid="otta-confirm-yes"]',
+	);
+	if (!confirm) throw new Error("stock confirmation missing");
+	await fire(confirm, "click");
+	expect(view.container.textContent).toContain("Nalog za zalihu nije poslan");
+	await choose("en");
+	expect(view.container.textContent).toContain("Stock command not sent");
+	expect(view.container.textContent).toContain(
+		"Your browser could not retain this stock command for safe retry.",
+	);
+	await choose("hr");
+	expect(view.container.textContent).toContain("Nalog za zalihu nije poslan");
+	expect(requests).toHaveLength(1);
+	expect(requests[0]?.type).toBe("otta_console_read");
 });

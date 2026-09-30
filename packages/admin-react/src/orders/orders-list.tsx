@@ -276,7 +276,7 @@ export function nextPage(
  */
 export interface OrdersFailure {
 	readonly source?: Failure;
-	readonly descriptionParts?: readonly string[];
+	readonly descriptionParts?: readonly (string | Failure)[];
 	readonly title: string;
 	readonly description: string;
 	readonly paging: boolean;
@@ -700,6 +700,9 @@ export function OrdersList({
 		const walk = paging ? cursor?.refresh : undefined;
 		setBusy(true);
 		if (walk !== undefined) {
+			// Keep the client failure identity so a later language change can
+			// render its authored recovery instruction around the literal diagnostic.
+			let refreshFailure: Failure | undefined;
 			void walkWindow({
 				walk,
 				// ONE REQUEST, READ INTO THE THREE THINGS A WALK CAN BE TOLD. This is the
@@ -708,7 +711,10 @@ export function OrdersList({
 				// per screen is how one defect in it has to be found twice.
 				fetch: async (at) => {
 					const result = await fetchOrders(applied, at);
-					if (isFailure(result)) return { kind: "failure", description: result.description };
+					if (isFailure(result)) {
+						refreshFailure = result;
+						return { kind: "failure", description: result.description };
+					}
 					if (result.cursorRejected === true) return { kind: "refused" };
 					return {
 						kind: "answer",
@@ -740,7 +746,10 @@ export function OrdersList({
 					setFailure({
 						title: REFRESH_FAILED_TITLE,
 						description: `${outcome.stopped?.description ?? ""} ${REFRESH_UNCHANGED_NOTE}`.trim(),
-						descriptionParts: [outcome.stopped?.description ?? "", REFRESH_UNCHANGED_NOTE],
+						descriptionParts: [
+							refreshFailure ?? outcome.stopped?.description ?? "",
+							REFRESH_UNCHANGED_NOTE,
+						],
 						paging: true,
 						refresh: true,
 					});
@@ -1148,7 +1157,16 @@ export function OrdersList({
 						...failurePresentation(failure.source ?? failure, locale),
 						...(failure.descriptionParts === undefined
 							? {}
-							: { description: failure.descriptionParts.map(a).filter(Boolean).join(" ") }),
+							: {
+									description: failure.descriptionParts
+										.map((part) =>
+											typeof part === "string"
+												? a(part)
+												: failurePresentation(part, locale).description,
+										)
+										.filter(Boolean)
+										.join(" "),
+								}),
 					},
 		everLoaded: page !== null,
 		retrying,

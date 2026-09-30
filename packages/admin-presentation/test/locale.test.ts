@@ -13,6 +13,8 @@ import {
 	removeStockConfirm,
 	reconciliationAlertSentence,
 	pagePositionLine,
+	listOutcome,
+	type ListOutcomeOptions,
 } from "../src/index.js";
 
 test("Croatian order status and money describe unchanged native values", () => {
@@ -80,4 +82,26 @@ test("Croatian stock quantities group large counts and keep English defaults", (
 	expect(addStockConfirm(1001, "Orders", 1000, "hr").text).toBe(
 		"Dodati 1.001 komad za Orders? Zaliha se mijenja s 1.000 na 2.001 i trgovina ih može odmah prodavati.",
 	);
+});
+
+test("the public list outcome options accept a locale with stable English fallback", () => {
+	const options: ListOutcomeOptions = {
+		locale: "hr-HR",
+		count: 1000,
+		filtered: false,
+		firstPage: true,
+		hasNext: true,
+		countScope: "service-filtered",
+		noun: { one: "Order shipped", other: "Orders {id}" },
+		empty: { title: "No orders yet", description: "Orders {id}" },
+		noMatch: { title: "No orders yet", description: "Orders {id}", emptyText: "No orders yet" },
+	};
+	expect(listOutcome(options)).toMatchObject({
+		kind: "rows",
+		countLine: "1.000 Orders {id} na ovoj stranici",
+		emptyText: "No orders yet",
+	});
+	const english = listOutcome({ ...options, locale: undefined });
+	expect(english.countLine).toBe("1,000 Orders {id} on this page");
+	expect(listOutcome({ ...options, locale: { language: "hr" } })).toEqual(english);
 });

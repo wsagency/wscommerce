@@ -431,6 +431,8 @@ export type ListOutcome =
 	  } & StatedTotal);
 
 export interface ListOutcomeOptions {
+	/** Presentation preference; absent or unsupported values use English. */
+	readonly locale?: unknown;
 	/** Rows on the page about to be rendered. */
 	readonly count: number;
 	/** Whether any filter is on — the same boolean the active-filter summary is

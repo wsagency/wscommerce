@@ -38,6 +38,9 @@ import { useAdminLocale, useAdminPresentation } from "../locale.js";
  * than going negative.
  */
 import {
+	adminMessage,
+	priceChangeSummary,
+	priceSavedNotice,
 	NO_TAX_CLASS,
 	PRODUCT_TAB_LABELS,
 	addStockConfirm,
@@ -139,6 +142,11 @@ type ReceiptSlot = "price" | "stock-add" | "stock-remove";
 interface Receipt {
 	readonly title: string;
 	readonly description: string;
+	/** Local receipts retain numeric before/after arguments, never parsed display text. */
+	readonly presentationForLocale?: (locale: unknown) => {
+		readonly title: string;
+		readonly description: string;
+	};
 }
 
 /**
@@ -606,8 +614,9 @@ export function ProductDetail({
 				setPending(null);
 				setNotice({
 					variant: "error",
-					title: t("Stock command not sent"),
-					description: t(
+					title: adminMessage("en", "Stock command not sent"),
+					description: adminMessage(
+						"en",
 						"Your browser could not retain this stock command for safe retry. Enable session storage, then confirm the movement again.",
 					),
 					field: null,
@@ -1067,11 +1076,12 @@ export function LeaveConfirm({
 	onLeave: () => void;
 }): React.ReactElement {
 	const copy = useAdminPresentation();
+	const { t } = useAdminLocale();
 
 	const confirm = open
 		? copy.leaveWithoutSavingConfirm([
 				...copy.dirtySectionLabels(dirty),
-				...(variantsDirty ? ["Variants"] : []),
+				...(variantsDirty ? [t("Variants")] : []),
 			])
 		: null;
 	return (
@@ -1305,16 +1315,28 @@ function ProductPanel({
 						saving={savingPrice}
 						receipt={priceReceipt}
 						onDirtyChange={onDirtyChange}
-						onSubmit={(values, change) =>
+						onSubmit={(values, change) => {
+							// Retain the numeric snapshot at submit: the following read replaces
+							// the product's previous amount, while language changes only its display.
+							const before = p.priceCents;
+							const after = parseMinorUnitsInput(values["price"] ?? "", { allowZero: false });
+							const currency = p.currency;
 							onSubmit(
 								"products:save-price",
 								{ ...carrier, ...values },
-								// COMPOSED AT SUBMIT TIME, on purpose: the save is followed by a
-								// re-read that replaces the BEFORE amount, so a receipt composed
-								// on arrival could only ever state the after.
-								{ slot: "price", receipt: copy.priceSavedNotice(change) },
-							)
-						}
+								{
+									slot: "price",
+									receipt: {
+										...copy.priceSavedNotice(change),
+										presentationForLocale: (nextLocale) =>
+											priceSavedNotice(
+												priceChangeSummary(before, after, currency, nextLocale),
+												nextLocale,
+											),
+									},
+								},
+							);
+						}}
 					/>
 
 					<ShippingGroup
@@ -1570,7 +1592,8 @@ export function PriceGroup({
 	onSubmit: (values: Record<string, string>, change: string | null) => void;
 }): React.ReactElement {
 	const copy = useAdminPresentation();
-	const { t, a } = useAdminLocale();
+	const { t, a, locale } = useAdminLocale();
+	const displayedReceipt = receipt?.presentationForLocale?.(locale) ?? receipt;
 
 	const priced = p.priceCents !== null && p.currency !== null;
 	// The last-committed values, re-derived from the product on every render. A
@@ -1720,11 +1743,11 @@ export function PriceGroup({
 				</div>
 
 				{/* UNDER THE BUTTON, and it stays there. */}
-				{receipt !== null && (
+				{displayedReceipt !== null && (
 					<Notice
 						variant="default"
-						title={a(receipt.title)}
-						description={a(receipt.description)}
+						title={a(displayedReceipt.title)}
+						description={a(displayedReceipt.description)}
 						testId="price-receipt"
 					/>
 				)}

@@ -302,8 +302,10 @@ export function couponWindowSummary(
 ): string {
 	const from = startsAt === null ? null : formatDate(startsAt, t.locale);
 	const until = expiresAt === null ? null : formatDate(expiresAt, t.locale);
-	if (from === null && until === null) return t("always");
-	if (from === null) return t("until {until}", { until: until });
+	if (from === null) {
+		if (until === null) return t("always");
+		return t("until {until}", { until: until });
+	}
 	if (until === null) return t("from {from}", { from: from });
 	return `${from} – ${until}`;
 }

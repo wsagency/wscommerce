@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest"
 import { cents, currency, idempotencyKey, orderId } from "@otta-sh/domain";
 import { SHIPPING_ZONES_COLLECTION } from "@otta-sh/store-emdash";
 import { createAdminRouteHandler } from "../src/admin/admin-route.js";
-import { encodePath } from "../src/admin/scaffold/index.js";
+import { asRecord, encodePath } from "../src/admin/scaffold/index.js";
 import { withInvoiceIntegrations } from "../src/integrations/invoices.js";
 import type { BlockResponse, PluginContext, RouteHandler } from "../src/types.js";
 import { assertBlockContract } from "./helpers/block-contract.js";
@@ -12,7 +12,12 @@ import {
 	type InProcessCommerceHarness,
 } from "./helpers/in-process-commerce.js";
 
-const admin = createAdminRouteHandler() as RouteHandler<Record<string, unknown>>;
+const adminHandler = createAdminRouteHandler();
+const admin: RouteHandler = async (routeCtx, ctx) => {
+	const input = asRecord(routeCtx.input);
+	if (input === undefined) return { blocks: [] };
+	return adminHandler({ ...routeCtx, input }, ctx);
+};
 let harness: InProcessCommerceHarness;
 
 async function invoke(
