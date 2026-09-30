@@ -108,4 +108,154 @@ export function offlineHoldSafetyCases(makeHarness: () => OrderHarness): void {
 			});
 		}
 	}
+	for (const action of ["bank_transfer", "cod", "recovery"] as const) {
+		const method = action === "bank_transfer" ? "bank_transfer" : "cod";
+		for (const partialFailure of [false, true]) {
+			test(`${action} releases late adoption when cancellation won (${partialFailure ? "partial failure" : "success"})`, async () => {
+				const h = makeHarness();
+				const stockSku = sku(`LATE-${method}-${partialFailure}`);
+				await h.inventory.seedOnHand(stockSku, 10);
+				const hold = await h.inventory.reserve(
+					stockSku,
+					2,
+					idempotencyKey(`late-reserve-${method}-${partialFailure}`),
+				);
+				if (!hold.ok) throw new Error("Fixture reservation failed");
+				await h.inventory.stampHoldDeadline(hold.reservationId, "2026-07-10T00:15:00.000Z");
+				const id = orderId(`late-${method}-${partialFailure}`);
+				const secondSku = sku(`${stockSku}-SECOND`);
+				await h.inventory.seedOnHand(secondSku, 10);
+				const second = await h.inventory.reserve(
+					secondSku,
+					1,
+					idempotencyKey(`late-second-${method}-${partialFailure}`),
+				);
+				if (!second.ok) throw new Error("Second fixture reservation failed");
+				await h.inventory.stampHoldDeadline(second.reservationId, "2026-07-10T00:15:00.000Z");
+				await h.store.createFromCart({
+					orderId: id,
+					cartId: "cart",
+					currency: currency("USD"),
+					idempotencyKey: idempotencyKey(`late-checkout-${method}-${partialFailure}`),
+					holdExpiresAt: "2026-07-11T00:00:00.000Z",
+					buyerRef: "buyer@example.test",
+					paymentMethod: method,
+					offlinePayment: {
+						method,
+						instructions: "LOCAL TEST ONLY",
+						paymentReference: id,
+						paymentDueAt: "2026-07-11T00:00:00.000Z",
+						status: "awaiting",
+						acceptedAt: null,
+						acceptedBy: null,
+						acceptanceKey: null,
+						receivedAt: null,
+						recordedBy: null,
+						receiptRef: null,
+						confirmationKey: null,
+					},
+					lines: [
+						{
+							productId: productId("p"),
+							sku: stockSku,
+							title: "Frozen widget",
+							unitPrice: cents(1000),
+							currency: currency("USD"),
+							quantity: 2,
+							fulfillmentKind: "physical",
+							reservationId: reservationId(hold.reservationId),
+						},
+						{
+							productId: productId("p2"),
+							sku: secondSku,
+							title: "Second widget",
+							unitPrice: cents(1000),
+							currency: currency("USD"),
+							quantity: 1,
+							fulfillmentKind: "physical",
+							reservationId: reservationId(second.reservationId),
+						},
+					],
+					totals: { subtotal: cents(3000), total: cents(3000), currency: currency("USD") },
+				});
+				let arrived!: () => void;
+				let resume!: () => void;
+				const entered = new Promise<void>((resolve) => {
+					arrived = resolve;
+				});
+				const released = new Promise<void>((resolve) => {
+					resume = resolve;
+				});
+				const original = h.inventory.adoptMany.bind(h.inventory);
+				h.inventory.adoptMany = async (input) => {
+					arrived();
+					await released;
+					const result = await original(
+						partialFailure
+							? {
+									...input,
+									reservationIds: [hold.reservationId],
+									expectedReservations: input.expectedReservations?.filter(
+										(entry) => entry.reservationId === hold.reservationId,
+									),
+								}
+							: input,
+					);
+					if (partialFailure) throw new Error("INJECTED_PARTIAL_ADOPTION");
+					return result;
+				};
+				const command =
+					action === "recovery"
+						? h.store.completeHoldAdoption(id)
+						: method === "cod"
+							? h.store.acceptCODOrder({
+									orderId: id,
+									acceptedBy: "staff",
+									idempotencyKey: idempotencyKey("late-accept"),
+								})
+							: h.store.recordOfflinePayment({
+									orderId: id,
+									recordedBy: "staff",
+									amount: cents(3000),
+									currency: currency("USD"),
+									receiptRef: "late-receipt",
+									idempotencyKey: idempotencyKey("late-receive"),
+								});
+				const settled = command.then(
+					(result) => ({ result, error: null }),
+					(error: unknown) => ({ result: null, error }),
+				);
+				await entered;
+				try {
+					await h.store.cancelOrder({
+						orderId: id,
+						fromState: "pending",
+						reason: "out_of_stock",
+						detail: null,
+						cancelledBy: "staff",
+						idempotencyKey: idempotencyKey("late-cancel"),
+						enqueueEmail: false,
+					});
+					await h.store.completeHoldRelease(id);
+				} finally {
+					resume();
+				}
+				const outcome = await settled;
+				if (partialFailure)
+					expect(outcome.error).toMatchObject({ message: "INJECTED_PARTIAL_ADOPTION" });
+				else
+					expect(outcome.result).toMatchObject(
+						action === "recovery"
+							? { completed: true, lost: [] }
+							: { outcome: "not_payable", order: { state: "cancelled" } },
+					);
+				expect((await h.store.getById(id))?.state).toBe("cancelled");
+				expect(await h.inventory.getOnHand(stockSku)).toBe(10);
+				// The untouched second cart hold belongs to the cart until its deadline;
+				// cleanup must release only reservations adopted by this cancelled order.
+				expect(await h.inventory.getOnHand(secondSku)).toBe(partialFailure ? 9 : 10);
+				expect(await h.store.getCapturedPayments(id)).toEqual([]);
+			});
+		}
+	}
 }

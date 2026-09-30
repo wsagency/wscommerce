@@ -627,7 +627,7 @@ export class EmdashOrderStore implements OrderStore {
 		const initial = codAcceptanceOutcome(loaded, this.#clock.now().toISOString());
 		if (initial !== "applied") return { outcome: initial, order: loaded };
 		if (!(await this.#prepareOfflineHolds(loaded)))
-			return { outcome: "not_payable", order: loaded };
+			return { outcome: "not_payable", order: await this.getById(input.orderId) };
 		return this.#casOrder<OfflineOrderStoreResult>("acceptCODOrder", async () => {
 			const current = await this.#orders.getVersioned(input.orderId);
 			if (current === null) return casDone({ outcome: "order_not_found", order: null });
@@ -695,7 +695,7 @@ export class EmdashOrderStore implements OrderStore {
 			}
 		}
 		if (!(await this.#prepareOfflineHolds(loaded)))
-			return { outcome: "not_payable", order: loaded };
+			return { outcome: "not_payable", order: await this.getById(input.orderId) };
 		return this.#casOrder<OfflineOrderStoreResult>("recordOfflinePayment", async () => {
 			const current = await this.#orders.getVersioned(input.orderId);
 			if (current === null) return casDone({ outcome: "order_not_found", order: null });
@@ -754,14 +754,47 @@ export class EmdashOrderStore implements OrderStore {
 			sku: line.sku,
 			quantity: line.quantity,
 		}));
-		const adopted = await this.#inventory.adoptMany({
-			reservationIds: expectedReservations.map((entry) => entry.reservationId),
-			expectedReservations,
-			orderId: order.id,
-			holdExpiresAt: order.holdExpiresAt,
-			now: this.#clock.now().toISOString(),
-		});
-		return adopted.lost.length === 0;
+		let lost: string[] = [];
+		let terminal = false;
+		let failure: { error: unknown } | null = null;
+		try {
+			lost = (
+				await this.#inventory.adoptMany({
+					reservationIds: expectedReservations.map((entry) => entry.reservationId),
+					expectedReservations,
+					orderId: order.id,
+					holdExpiresAt: order.holdExpiresAt,
+					now: this.#clock.now().toISOString(),
+				})
+			).lost;
+		} catch (error) {
+			failure = { error };
+		}
+		try {
+			terminal = await this.#releaseLateTerminalAdoption(
+				order.id,
+				expectedReservations.map((entry) => entry.reservationId),
+			);
+		} catch (cleanupError) {
+			// Preserve the original partial-write failure; its persisted adoption
+			// intent remains available for recovery rather than claiming success.
+			if (failure === null) throw cleanupError;
+		}
+		if (failure !== null) throw failure.error;
+		return !terminal && lost.length === 0;
+	}
+
+	/** Cancellation/expiry can release before a delayed or partial adoption writes. */
+	async #releaseLateTerminalAdoption(
+		orderId: OrderId,
+		reservationIds: readonly string[],
+	): Promise<boolean> {
+		const current = await this.getById(orderId);
+		if (current !== null && !["cancelled", "expired", "failed"].includes(current.state))
+			return false;
+		for (const reservationId of reservationIds)
+			await this.#inventory.releaseAdopted(reservationId, orderId);
+		return true;
 	}
 
 	// -- the hold brackets' completions ---------------------------------------
@@ -778,9 +811,11 @@ export class EmdashOrderStore implements OrderStore {
 	 * no-op the inventory store reports as `lost` (a terminal reservation is not
 	 * adoptable) or — worse, if a later reserve reused the id — an adoption of
 	 * somebody else's units. On any other state the intent is therefore CLOSED
-	 * stamp-only, with no `adoptMany` call and nothing reported lost: the work it
+	 * with no `adoptMany` call and nothing reported lost: the work it
 	 * named is no longer owed, and a `lost` list here would be read as a stock
-	 * anomaly that has not happened.
+	 * anomaly that has not happened. A terminal-order scoped release also heals
+	 * a delayed adoption that wrote after cancellation/expiry released the cart
+	 * hold as a no-op. Paid or accepted orders retain their commit intent.
 	 *
 	 * Callable by any replayer, and a no-op once the intent is complete or was
 	 * never recorded. `lost` carries every id whose hold could not be adopted —
@@ -794,18 +829,33 @@ export class EmdashOrderStore implements OrderStore {
 		}
 		let lost: string[] = [];
 		if (doc.state === "pending" && intent.reservationIds.length > 0) {
-			const result = await this.#inventory.adoptMany({
-				reservationIds: [...intent.reservationIds],
-				expectedReservations: toOrder(doc).lines.flatMap((line) =>
-					line.reservationId === null
-						? []
-						: [{ reservationId: line.reservationId, sku: line.sku, quantity: line.quantity }],
-				),
-				orderId,
-				holdExpiresAt: intent.holdExpiresAt ?? doc.holdExpiresAt,
-				now: this.#clock.now().toISOString(),
-			});
-			lost = result.lost;
+			let failure: { error: unknown } | null = null;
+			try {
+				const result = await this.#inventory.adoptMany({
+					reservationIds: [...intent.reservationIds],
+					expectedReservations: toOrder(doc).lines.flatMap((line) =>
+						line.reservationId === null
+							? []
+							: [{ reservationId: line.reservationId, sku: line.sku, quantity: line.quantity }],
+					),
+					orderId,
+					holdExpiresAt: intent.holdExpiresAt ?? doc.holdExpiresAt,
+					now: this.#clock.now().toISOString(),
+				});
+				lost = result.lost;
+			} catch (error) {
+				failure = { error };
+			}
+			try {
+				await this.#releaseLateTerminalAdoption(orderId, intent.reservationIds);
+			} catch (cleanupError) {
+				if (failure === null) throw cleanupError;
+			}
+			if (failure !== null) throw failure.error;
+		} else {
+			// Heal a previous late partial adoption even when the release bracket
+			// completed before that write reached the inventory document.
+			await this.#releaseLateTerminalAdoption(orderId, intent.reservationIds);
 		}
 		await this.#stampIntent(orderId, "holdsAdopted");
 		return { completed: true, lost };

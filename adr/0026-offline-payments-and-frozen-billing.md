@@ -64,3 +64,10 @@ sandbox authorization checks accompany the checkout/admin integration.
 Six shared SQLite/D1 interruption cases exercise bank transfer and COD with a
 cart hold reduced, unchanged, or increased after the pending order was saved.
 Only the matching frozen quantity can settle and commit stock.
+
+An order can be cancelled while a delayed or partially failing adoption is in
+flight. Offline transitions and recovery re-read state after adoption (also on a
+partial failure) and release only holds adopted by the now-terminal order. This
+closes the case where cancellation completed its release before adoption wrote;
+the original partial-write error is preserved for retry/recovery. Six barrier
+cases cover bank/COD/recovery and successful/partial adoption across two SKUs.
