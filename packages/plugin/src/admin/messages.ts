@@ -386,6 +386,7 @@ export const CROATIAN_PLUGIN_MESSAGES: Readonly<Record<string, PluginMessage>> =
 		"Aktivne košarice preračunavaju porez bez ove stope. Postojeće narudžbe zadržavaju porez obračunat pri kupnji.",
 	"also shipping": "i dostava",
 	"goods only": "samo roba",
+	yes: "da",
 	"Rate ID": "ID stope",
 	Rate: "Stopa",
 	"No tax rates yet for this class.": "Još nema poreznih stopa za ovu klasu.",

@@ -838,7 +838,7 @@ function ratesTable(
 			id: r.id,
 			zone: r.zoneName ?? r.zoneId,
 			rate: `${formatBpsAsPercent(r.rateBps)}%`,
-			appliesToShipping: r.appliesToShipping ? "yes" : "—",
+			appliesToShipping: r.appliesToShipping ? t("yes") : "—",
 		})),
 		page_action_id: actions.page, // never fires: this registry has no service-side pagination
 		...(nextToken !== undefined ? { next_cursor: nextToken } : {}),

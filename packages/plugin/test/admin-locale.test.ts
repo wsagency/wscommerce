@@ -353,6 +353,71 @@ describe("request-local Block Kit commerce language", () => {
 		expect(JSON.stringify(response)).toContain("Settings");
 	});
 
+	test.each([
+		["hr", "da", "Primjenjuje se na dostavu"],
+		["en", "yes", "Applies to shipping"],
+	] as const)(
+		"localizes %s tax fallback-table booleans while retaining rate records and form values",
+		async (locale, affirmative, label) => {
+			await harness.stores.shippingRules.createZone({
+				id: "fallback-zone",
+				name: "yes",
+				regions: ["HR"],
+			});
+			await harness.stores.taxRules.createClass({ id: "fallback-class", name: "Settings" });
+			for (let index = 0; index < 26; index++) {
+				await harness.stores.taxRules.createRate({
+					id: `fallback-rate-${index}`,
+					taxClassId: "fallback-class",
+					zoneId: "fallback-zone",
+					rateBps: 725,
+					appliesToShipping: index === 0,
+				});
+			}
+			const storedRates = await harness.stores.taxRules.listRatesForZone("fallback-zone");
+			const response = await invoke({
+				type: "block_action",
+				action_id: "tax:open",
+				locale,
+				value: { target: encodePath(["fallback-class"]) },
+			});
+			const table = findBlocks(blocks(response), "table").find(
+				(block) => block.block_id === "tax:rates",
+			);
+			expect(table?.columns).toContainEqual({ key: "appliesToShipping", label });
+			expect(table?.rows).toHaveLength(26);
+			expect(table?.rows).toContainEqual({
+				id: "fallback-rate-0",
+				zone: "yes",
+				rate: "7.25%",
+				appliesToShipping: affirmative,
+			});
+			expect(table?.rows).toContainEqual({
+				id: "fallback-rate-1",
+				zone: "yes",
+				rate: "7.25%",
+				appliesToShipping: "—",
+			});
+			assertBlockContract(blocks(response), { screen: "tax", level: "list", locale });
+			for (const [rateId, appliesToShipping] of [
+				["fallback-rate-0", true],
+				["fallback-rate-1", false],
+			] as const) {
+				const detail = await invoke({
+					type: "block_action",
+					action_id: "tax:open",
+					locale,
+					value: { target: encodePath(["fallback-class", rateId]) },
+				});
+				expect(
+					field(formFor(blocks(detail), "tax:save-rate"), "appliesToShipping")?.initial_value,
+				).toBe(appliesToShipping);
+			}
+			expect(await harness.stores.taxRules.listRatesForZone("fallback-zone")).toEqual(storedRates);
+			expect(harness.egressAttempts()).toBe(0);
+		},
+	);
+
 	test("localizes shipping rate scope, minimum and legacy-code hints while retaining merchant names", async () => {
 		await harness.stores.shippingRules.createZone({
 			id: "shipping-rate-zone",
