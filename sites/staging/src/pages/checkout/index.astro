@@ -205,9 +205,9 @@ const sumRows = [
 {/* The footer's currency comes from the totals this page already holds —
     the layout never invents one (§7). */}
 <Base title="Checkout" currency={totals.total.money?.currency ?? null}>
-	{/* The coupon code is in this page's URL; no subresource or outbound link
-	    may carry it off in a Referer. */}
-	<meta name="referrer" content="no-referrer" slot="head" />
+	{/* Keep the coupon-bearing URL out of cross-origin Referers while allowing
+	    the browser to send its real Origin on this page's own checkout POST. */}
+	<meta name="referrer" content="same-origin" slot="head" />
 	{/* The components are wrapped rather than handed a class: a page's scoped
 	    selector deliberately cannot reach a component's root (see
 	    src/lib/rest-props.ts), so spacing AROUND one belongs to an element the

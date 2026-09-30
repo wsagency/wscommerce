@@ -9,8 +9,8 @@
  *
  * Two costs, stated plainly:
  *  - the code sits in history and access logs. It is not personal data, but a
- *    single-use private code is exposed; the page sends `no-referrer` so it at
- *    least never leaves in a Referer;
+ *    single-use private code is exposed; the page sends `same-origin` so it
+ *    never leaves for another origin in a Referer;
  *  - applying a coupon is a navigation, so fields typed into the place form are
  *    lost — the same no-personal-data-in-URLs trade-off `place.ts` documents.
  *    The coupon field sits FIRST on the page for that reason.

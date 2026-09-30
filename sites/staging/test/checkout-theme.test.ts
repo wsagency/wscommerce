@@ -268,8 +268,12 @@ describe("/checkout — the coupon", () => {
 		);
 	});
 
-	test("the coupon in the URL never leaks through a Referer", () => {
-		expect(REVIEW).toContain('<meta name="referrer" content="no-referrer" slot="head" />');
+	test("the coupon stays within this origin while the browser can POST the checkout form", () => {
+		// no-referrer turns the browser's own form POST into Origin: null,
+		// which the unchanged origin guard correctly rejects. A real browser
+		// reproduced this 403; same-origin still hides the URL from outsiders.
+		expect(REVIEW).toContain('<meta name="referrer" content="same-origin" slot="head" />');
+		expect(REVIEW).not.toContain('content="no-referrer"');
 	});
 });
 
