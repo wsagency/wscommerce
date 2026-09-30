@@ -49,3 +49,20 @@ still discard witnesses, so mixed-version inventory writers are unsupported.
 The regression contracts run against migrated SQLite and local workerd/D1.
 Postgres remains the tier for simultaneous writers; local interleaving tests do
 not establish production concurrency or external payment acceptance.
+
+## Absolute stock synchronization (2026-09-30)
+
+`setOnHandAbsolute(Sku, quantity, idempotencyKey)` sets the **available** count,
+matching `getOnHand`. It records `direction: "absolute"` in the existing stock
+ledger and preserves the current holds in the same inventory CAS. Target zero
+is valid with active holds: those reserved units remain backed; release returns
+them and commit consumes them. A physical count feed must subtract its reserved
+units before supplying this available target.
+
+The operation uses the same claim and eviction ordering as stock deltas. A replay
+returns its original target and cannot reset newer stock. Key reuse across stock
+operations, SKU or target is rejected; invalid targets write nothing and an
+unknown SKU does not consume the key. No collection or migration is added. Drain
+and upgrade all inventory writers before using absolute operations: older
+writers do not understand the new direction. Shared port tests and native CAS,
+crash and ring-eviction regressions run on migrated SQLite and local D1.

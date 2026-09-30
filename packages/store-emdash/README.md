@@ -200,7 +200,18 @@ each idempotent by reservation id, so a partially applied set is safe for any
 replayer to re-run. The order-side intent record and the completing sweeper belong
 to later increments. Duplicate ids in a batch are collapsed before classification.
 
-**The aggregate history is bounded; replay protection is durable.** `adjust`, `restock` and `removeStock` keep their
+**Absolute stock means available stock.** `setOnHandAbsolute(sku, quantity, key)`
+sets the available sellable count, matching `getOnHand`, in one inventory CAS.
+Live holds remain intact in that same document: target 0 with a three-unit hold
+leaves those three units reserved; release returns 3, while commit returns none.
+A physical count feed must account for reserved units before choosing this
+available target. A non-negative safe integer is required, and an unknown SKU
+does not create stock or consume the key. Replays return the original `onHand`
+answer and never reset stock changed by subsequent operations. Absolute targets,
+restocks and removals share the stock key scope, so reusing a key with a changed
+operation, SKU or quantity raises `StockMovementMismatchError`.
+
+**The aggregate history is bounded; replay protection is durable.** `adjust`, `restock`, `removeStock` and `setOnHandAbsolute` keep their
 once-only record in `inventory_movements` — ONE document per key, carrying the full
 intent and then `applied` with the recorded result. Nothing on the hot aggregate
 grows without limit: it keeps only `appliedMovements`, a ring of the last
@@ -1551,12 +1562,12 @@ assertion that would fail if the write order were reversed.
   parked the hold must still be live and the units still off the shelf; the prune
   follows only after the release. This is the only test of the ordering rule, and
   a store that pruned first would pass every replay case above and fail here.
-- **(f) the movement landed, its claim was never marked applied** — restock,
-  removeStock and adjust each replay to the aggregate's own witness, moving
-  nothing twice. Past ring eviction the suite asserts the **documented, accepted
-  residual** rather than papering over it: a stock movement re-applies, and an
-  adjust whose hold is also gone throws `ReservationNotHeldError`. Both cases name
-  the sweeper contract above, so nobody "fixes" the test instead of the sweeper.
+- **(f) the movement landed, its claim was never marked applied** — stock deltas,
+  absolute targets and adjusts each replay to the aggregate's own witness,
+  moving nothing twice. Eviction promotes that original answer onto the durable
+  claim first, so replay after 256 actual later movements still changes nothing
+  (ADR-0024). An unfinished legacy claim whose only witness was already lost
+  requires reconciliation, never a guessed second movement.
 - **(g) a partial `commitMany` / `adoptMany` across 3 SKUs** — the first SKU
   lands, the rest stay held, and a replay of the same batch completes the
   unreached ones with the already-done ones idempotent. Note what the suite pins

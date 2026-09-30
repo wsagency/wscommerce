@@ -60,7 +60,7 @@
  * exhaustion failure is `StorageContentionError` — typed, retryable, and
  * deliberately NOT `OUT_OF_STOCK`. See `cas-retry.ts`.
  */
-import type { Clock, IdGen, IdempotencyKey } from "@otta-sh/domain";
+import type { Clock, IdGen, IdempotencyKey, Sku } from "@otta-sh/domain";
 import {
 	AdjustReservationMismatchError,
 	ReservationCommitLostError,
@@ -902,6 +902,17 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 		return result.ok ? result : { ok: false, reason: "UNKNOWN_SKU" };
 	}
 
+	/** Absolute AVAILABLE target; holds and the replay witness survive the same CAS. */
+	async setOnHandAbsolute(sku: Sku, quantity: number, key: IdempotencyKey): Promise<RestockResult> {
+		if (!Number.isSafeInteger(quantity) || quantity < 0) {
+			throw new RangeError(
+				`setOnHandAbsolute() requires a non-negative integer quantity, got ${String(quantity)}`,
+			);
+		}
+		const result = await this.#moveStock(sku, quantity, key, "absolute");
+		return result.ok ? result : { ok: false, reason: "UNKNOWN_SKU" };
+	}
+
 	/**
 	 * Merchant stock removal: the oversell-critical guarded decrement, the same
 	 * `onHand >= qty` guard `reserve` uses and competing for the same units. It can
@@ -913,7 +924,7 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 	}
 
 	/**
-	 * The shared `restock`/`removeStock` body. Exactly-once by per-key claim
+	 * The shared stock delta/absolute target body. Exactly-once by per-key claim
 	 * document: `inventory_movements/stock:{key}` carries the intent (sku,
 	 * direction, qty) — which is what makes a key reused for a DIFFERENT movement a
 	 * typed rejection rather than an `ok` echoing the wrong one — and is updated to
@@ -989,7 +1000,11 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 		claim: StockMovementClaim,
 	): Promise<StockRemovalResult> {
 		const result = await this.#cas<StockRemovalResult>(
-			claim.direction === "restock" ? "restock" : "removeStock",
+			claim.direction === "restock"
+				? "restock"
+				: claim.direction === "absolute"
+					? "setOnHandAbsolute"
+					: "removeStock",
 			async () => {
 				const current = await this.#inventory.getVersioned(claim.sku);
 				if (current === null) {
@@ -1012,6 +1027,9 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 				let onHand = doc.onHand;
 				if (claim.direction === "restock") {
 					onHand = doc.onHand + claim.qty;
+					moved = { ok: true, onHand };
+				} else if (claim.direction === "absolute") {
+					onHand = claim.qty;
 					moved = { ok: true, onHand };
 				} else if (doc.onHand < claim.qty) {
 					moved = { ok: false, reason: "INSUFFICIENT_STOCK", onHand: doc.onHand };

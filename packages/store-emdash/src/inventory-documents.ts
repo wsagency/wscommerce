@@ -111,8 +111,8 @@ export interface HoldEntry {
 	lastMovementKey?: string;
 }
 
-/** `restock` adds, `removeStock` removes. Mirrors the port's ledger wording. */
-export type StockDirection = "restock" | "removal";
+/** Stock operation in the shared ledger; absolute quantities are available targets. */
+export type StockDirection = "restock" | "removal" | "absolute";
 
 /**
  * One entry in the aggregate's bounded applied-movement ring: the key whose
@@ -179,7 +179,7 @@ export interface TransferOut {
  */
 export interface InventoryDoc {
 	sku: string;
-	/** Integer units. Never a float; never driven below 0 by any guarded write. */
+	/** AVAILABLE units, excluding live holds. Physical units are onHand + live held quantities. */
 	onHand: number;
 	/** Live holds by reserve idempotency key. Pruned only after the outcome copy. */
 	holds: Record<string, HoldEntry>;
@@ -252,11 +252,12 @@ export type ReservationKeyDoc =
 			recordedAt: string;
 	  };
 
-/** The per-key intent of a `restock`/`removeStock`, and its recorded answer. */
+/** The per-key intent of a stock delta or absolute available target, and its recorded answer. */
 export interface StockMovementClaim {
 	kind: "stock";
 	sku: string;
 	direction: StockDirection;
+	/** Positive delta for restock/removal; non-negative available target for absolute. */
 	qty: number;
 	createdAt: string;
 	/** Version 1 writers persist results before evicting witnesses. Absent on legacy claims. */

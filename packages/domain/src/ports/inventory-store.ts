@@ -1,4 +1,4 @@
-import type { IdempotencyKey } from "../money/ids.js";
+import type { IdempotencyKey, Sku } from "../money/ids.js";
 
 export interface InventoryStore {
 	// Atomic: decrement iff on_hand >= qty. Never oversell.
@@ -158,6 +158,20 @@ export interface InventoryStore {
 	// calls and 6x faster at page size 25), so per-row calls into this method
 	// from a list path remain the anti-pattern they always were.
 	getOnHand(sku: string): Promise<number>;
+
+	/**
+	 * Atomically set the AVAILABLE sellable count, matching getOnHand semantics.
+	 * Live reservations remain intact; the physical count is target + live holds.
+	 * Zero is valid even when units are held. A release adds its held units to
+	 * this target, while a commit consumes only the held units.
+	 *
+	 * Ledger-first, once-only in the shared stock movement key scope. Replay
+	 * returns the original resulting count and never resets newer stock changes.
+	 * Reusing a key for another SKU, target or stock operation throws
+	 * StockMovementMismatchError. Unknown SKU does not consume the key.
+	 * Negative, fractional or unsafe targets throw RangeError before any write.
+	 */
+	setOnHandAbsolute(sku: Sku, quantity: number, key: IdempotencyKey): Promise<RestockResult>;
 
 	// Additive (INC-23, admin product detail): the SAME single-row read as
 	// `getOnHand` with the one distinction that method's return type cannot

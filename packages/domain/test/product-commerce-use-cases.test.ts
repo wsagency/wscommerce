@@ -965,6 +965,7 @@ function recordingInventory(inner: InMemoryInventoryStore): RecordingInventory {
 		getOnHand: (s) => inner.getOnHand(s),
 		findOnHand: (s) => inner.findOnHand(s),
 		restock: (s, q, k) => inner.restock(s, q, k),
+		setOnHandAbsolute: (s, q, k) => inner.setOnHandAbsolute(s, q, k),
 		removeStock: (s, q, k) => inner.removeStock(s, q, k),
 		seedOnHand: async (s, q) => {
 			seeds.push({ sku: s, qty: q });

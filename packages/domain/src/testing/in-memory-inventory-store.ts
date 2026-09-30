@@ -1,4 +1,4 @@
-import type { IdempotencyKey } from "../money/ids.js";
+import type { IdempotencyKey, Sku } from "../money/ids.js";
 import type { Clock } from "../ports/clock.js";
 import type { IdGen } from "../ports/id-gen.js";
 import {
@@ -70,7 +70,12 @@ export class InMemoryInventoryStore implements InventoryStore {
 	 *  UNKNOWN_SKU rejection leaves the key unconsumed, mirroring `reserve`. */
 	#stockMovements = new Map<
 		string,
-		{ sku: string; direction: "restock" | "removal"; qty: number; result: StockRemovalResult }
+		{
+			sku: string;
+			direction: "restock" | "removal" | "absolute";
+			qty: number;
+			result: StockRemovalResult;
+		}
 	>();
 
 	constructor(options: InMemoryInventoryStoreOptions) {
@@ -354,6 +359,22 @@ export class InMemoryInventoryStore implements InventoryStore {
 		return { ...result };
 	}
 
+	/** Absolute available target; reservations stay backed by their existing held units. */
+	async setOnHandAbsolute(sku: Sku, quantity: number, key: IdempotencyKey): Promise<RestockResult> {
+		if (!Number.isSafeInteger(quantity) || quantity < 0) {
+			throw new RangeError(
+				`setOnHandAbsolute() requires a non-negative integer quantity, got ${String(quantity)}`,
+			);
+		}
+		const replay = this.#replayStockMovement(key, sku, "absolute", quantity);
+		if (replay !== undefined) return replay as RestockResult;
+		if (!this.#onHand.has(sku)) return { ok: false, reason: "UNKNOWN_SKU" };
+		this.#onHand.set(sku, quantity);
+		const result: RestockResult = { ok: true, onHand: quantity };
+		this.#stockMovements.set(key, { sku, direction: "absolute", qty: quantity, result });
+		return { ...result };
+	}
+
 	/**
 	 * Merchant stock removal (admin-UX Increment 2): REMOVE `qty` from an existing
 	 * sku's on-hand. The oversell-critical counterpart of `restock` — a GUARDED
@@ -394,7 +415,7 @@ export class InMemoryInventoryStore implements InventoryStore {
 	#replayStockMovement(
 		key: string,
 		sku: string,
-		direction: "restock" | "removal",
+		direction: "restock" | "removal" | "absolute",
 		qty: number,
 	): StockRemovalResult | undefined {
 		const recorded = this.#stockMovements.get(key);
