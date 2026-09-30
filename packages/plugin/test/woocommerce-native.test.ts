@@ -113,6 +113,86 @@ async function orderDoc(id = "native-order") {
 	return collectionOf<OrderDoc>(db.storage, "orders").get(id);
 }
 describe("native Woo backend over migrated SQLite", () => {
+	it("requires exact succeeded capture before date_paid even when a paid state event exists", async () => {
+		await order();
+		await stores.orderStore.recordPayment({
+			orderId: orderId("native-order"),
+			gateway: "stripe",
+			providerRef: "partial",
+			amount: cents(100),
+			currency: EUR,
+			status: "succeeded",
+		});
+		await stores.orderStore.markPaid(orderId("native-order"));
+		expect((await backend.getOrder("native-order"))!.paidAt).toBeNull();
+		const collection = collectionOf<OrderDoc>(db.storage, "orders"),
+			doc = (await collection.get("native-order"))!;
+		await collection.put("native-order", { ...doc, payments: [] });
+		expect((await backend.getOrder("native-order"))!.paidAt).toBeNull();
+	});
+	it("returns unavailable customer modification dates honestly and refuses modified filters", async () => {
+		const customer = await stores.customerStore.create({ email: email("dated@example.test") });
+		expect((await backend.getCustomer(customer.id))!.updatedAt).toBeNull();
+		await expect(backend.listCustomers({ ...query, modifiedAfter: NOW })).rejects.toMatchObject({
+			status: 400,
+		});
+	});
+	it("preserves CMS description, images and permalink through one read-only batch per page", async () => {
+		await stores.productCommerce.upsert(
+			{ productId: productId("content"), title: "Cached title" },
+			idempotencyKey("content"),
+		);
+		const captured: string[][] = [];
+		const cms = {
+			slug: "content-slug",
+			permalink: "https://shop.test/products/content-slug",
+			description: "<p>CMS details</p>",
+			shortDescription: "CMS summary",
+			images: [{ src: "https://shop.test/images/item.webp", name: "Item", alt: "Blue item" }],
+		};
+		const withContent = createNativeWooBackend(ctx, ids, metadata, "https://shop.test", {
+			getMany: async (nativeIds) => {
+				captured.push([...nativeIds]);
+				return { content: cms };
+			},
+		});
+		expect((await withContent.listProducts(query)).items[0]).toMatchObject({
+			...cms,
+			name: "Cached title",
+		});
+		expect(captured).toEqual([["content"]]);
+		expect(await withContent.getProduct("content")).toMatchObject(cms);
+	});
+	it("applies common search filters to immutable child resources before total and pagination", async () => {
+		await paid();
+		await backend.appendNote("native-order", "Invoice attached", command);
+		expect((await backend.listNotes("native-order", { ...query, search: "missing" })).total).toBe(
+			0,
+		);
+		await stores.orderStore.recordRefund({
+			orderId: orderId("native-order"),
+			amount: cents(200),
+			currency: EUR,
+			kind: "manual",
+			gateway: "stripe",
+			refundRef: null,
+			reason: "Return",
+			refundedBy: "merchant",
+			idempotencyKey: idempotencyKey("returned"),
+		});
+		expect((await backend.listRefunds("native-order", { ...query, search: "missing" })).total).toBe(
+			0,
+		);
+		await stores.productCommerce.upsert(
+			{ productId: productId("parent") },
+			idempotencyKey("parent"),
+		);
+		await stores.productCommerce.upsertVariant(
+			{ productId: productId("parent"), variantKey: "blue", title: "Blue" },
+			idempotencyKey("blue"),
+		);
+		expect((await backend.listVariations("parent", { ...query, search: "missing" })).total).toBe(0);
+	});
 	it("reads real pending orders and frozen lines without guessing payment evidence", async () => {
 		await order();
 		await stores.productCommerce.upsert(

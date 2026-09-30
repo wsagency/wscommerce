@@ -190,6 +190,11 @@ export function createNativeWooBackend(
 					payment.amount > 0,
 			);
 			const events = doc.events ?? [];
+			const capturedExactly =
+				succeeded.length > 0 &&
+				succeeded.every((payment) => Number.isSafeInteger(payment.amount) && payment.amount >= 0) &&
+				succeeded.reduce((total, payment) => total + BigInt(payment.amount), 0n) ===
+					BigInt(native.totals.total);
 			const refunds: WooRefundSnapshot[] = (doc.refunds ?? [])
 				.filter(
 					(refund) =>
@@ -210,8 +215,11 @@ export function createNativeWooBackend(
 					metadata: [],
 				}));
 			return nativeOrderSnapshot(native, {
-				paidAt:
-					events.find((event) => event.toState === "paid")?.at ?? succeeded[0]?.recordedAt ?? null,
+				paidAt: capturedExactly
+					? (events.find((event) => event.toState === "paid")?.at ??
+						succeeded[0]?.recordedAt ??
+						null)
+					: null,
 				completedAt: events.find((event) => event.toState === "completed")?.at ?? null,
 				transactionId: succeeded[0]?.providerRef ?? "",
 				metadata: await metadata.get(`order:${nativeId}`),
@@ -322,8 +330,14 @@ export function createNativeWooBackend(
 			failure("Native Woo variation capacity exceeded.", 503, "woocommerce_rest_scan_capacity");
 		const items: WooProductSnapshot[] = [];
 		for (const variant of Object.values(doc.variants))
-			if (variant.orphanedAt === null)
-				items.push(await productSnapshot(native, doc, variant.variantKey));
+			if (variant.orphanedAt === null) {
+				const item = await productSnapshot(native, doc, variant.variantKey);
+				if (
+					query.search === undefined ||
+					`${item.name} ${item.sku}`.toLocaleLowerCase().includes(query.search.toLocaleLowerCase())
+				)
+					items.push(item);
+			}
 		const result = await paginate(items, "variation", query, (item) => item.updatedAt);
 		return { ...result, items: await enrich(result.items) };
 	}
@@ -343,7 +357,7 @@ export function createNativeWooBackend(
 			lastName: names.join(" "),
 			username: "",
 			createdAt: native.createdAt,
-			updatedAt: native.createdAt,
+			updatedAt: null,
 			billing: customerAddress(address("billing")),
 			shipping: customerAddress(address("shipping")),
 			metadata: await metadata.get(`customer:${native.id}`),
@@ -356,15 +370,23 @@ export function createNativeWooBackend(
 		if (!(await stores.orderStore.getById(orderId(parentId)))) missing();
 		const rows = await scan(notes, { orderId: parentId });
 		return paginate(
-			rows.map(({ data }) =>
-				privateNote({
-					id: data.noteId,
-					orderId: orderId(data.orderId),
-					author: data.author,
-					body: data.body,
-					createdAt: data.createdAt,
-				}),
-			),
+			rows
+				.filter(
+					({ data }) =>
+						query.search === undefined ||
+						`${data.body} ${data.author}`
+							.toLocaleLowerCase()
+							.includes(query.search.toLocaleLowerCase()),
+				)
+				.map(({ data }) =>
+					privateNote({
+						id: data.noteId,
+						orderId: orderId(data.orderId),
+						author: data.author,
+						body: data.body,
+						createdAt: data.createdAt,
+					}),
+				),
 			"note",
 			query,
 			(item) => item.createdAt,
@@ -376,7 +398,18 @@ export function createNativeWooBackend(
 	): Promise<ListResult<WooRefundSnapshot>> {
 		const order = await getOrder(parentId);
 		if (!order) missing();
-		return paginate(order.refunds, "refund", query, (item) => item.createdAt);
+		return paginate(
+			order.refunds.filter(
+				(item) =>
+					query.search === undefined ||
+					`${item.reason} ${item.nativeId}`
+						.toLocaleLowerCase()
+						.includes(query.search.toLocaleLowerCase()),
+			),
+			"refund",
+			query,
+			(item) => item.createdAt,
+		);
 	}
 	return {
 		getOrder,

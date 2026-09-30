@@ -158,7 +158,7 @@ export interface WooCustomerSnapshot {
 	lastName: string;
 	username: string;
 	createdAt: string;
-	updatedAt: string;
+	updatedAt: string | null;
 	billing: WooAddress | null;
 	shipping: WooAddress | null;
 	metadata: WooMetadata[];

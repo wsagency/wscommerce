@@ -57,6 +57,7 @@ export function nativeOrderSnapshot(
 	order: NativeOrder,
 	options: NativeSnapshotOptions = {},
 ): WooOrderSnapshot {
+	if (order.totals.currency !== order.currency) projectionError();
 	const breakdown = object(order.totals.taxBreakdown),
 		frozenLines = Array.isArray(breakdown?.lines) ? breakdown.lines : [];
 	const mode = breakdown?.priceTaxMode === undefined ? "exclusive" : breakdown.priceTaxMode;
@@ -65,6 +66,8 @@ export function nativeOrderSnapshot(
 	if (taxed && (frozenLines.length !== order.lines.length || breakdown?.priceTaxMode === undefined))
 		projectionError();
 	const taxes = new Map<string, WooTaxSnapshot>();
+	let nativeSubtotal = 0n;
+	let nativeDiscount = 0n;
 	const lines: WooLineSnapshot[] = order.lines.map((line, index) => {
 		if (
 			line.currency !== order.currency ||
@@ -103,15 +106,27 @@ export function nativeOrderSnapshot(
 		const rate = proof?.rateBps === undefined ? 0 : Number(proof.rateBps);
 		const lineMode = proof?.priceTaxMode ?? mode;
 		if (lineMode !== "exclusive" && lineMode !== "inclusive") projectionError();
+		if (mode !== "mixed" && mode !== lineMode) projectionError();
 		const subtotalTax =
 			lineMode === "inclusive"
 				? integer(BigInt(rawSubtotal) - BigInt(subtotal))
 				: integer((BigInt(subtotal) * BigInt(rate) + 5000n) / 10000n);
 		if (
 			total > subtotal ||
+			(lineMode === "exclusive" && subtotal !== rawSubtotal) ||
+			(taxed && (proof?.grossCents === undefined || proof.discountedCents === undefined)) ||
 			(proof?.grossCents !== undefined && minor(proof.grossCents) !== total + totalTax)
 		)
 			projectionError();
+		const discountedNative =
+			lineMode === "inclusive" ? integer(BigInt(total) + BigInt(totalTax)) : total;
+		if (
+			discountedNative > rawSubtotal ||
+			(proof?.discountedCents !== undefined && minor(proof.discountedCents) !== discountedNative)
+		)
+			projectionError();
+		nativeSubtotal += BigInt(rawSubtotal);
+		nativeDiscount += BigInt(rawSubtotal) - BigInt(discountedNative);
 		const taxId = proof?.taxClassId === undefined ? "zero" : String(proof.taxClassId);
 		if (totalTax > 0) {
 			const current = taxes.get(taxId);
@@ -165,6 +180,9 @@ export function nativeOrderSnapshot(
 		lines.reduce((total, line) => total + BigInt(line.subtotalTax) - BigInt(line.totalTax), 0n),
 	);
 	if (
+		integer(nativeSubtotal) !== order.totals.subtotal ||
+		integer(nativeDiscount) !== order.totals.discount ||
+		shippingTotal !== order.totals.shipping ||
 		cartTax + shippingTax !== order.totals.tax ||
 		integer(
 			lines.reduce((total, line) => total + BigInt(line.total), 0n) +

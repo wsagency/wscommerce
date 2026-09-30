@@ -39,6 +39,73 @@ function native(breakdown: unknown, subtotal = 2000, total = 2500): Order {
 	} as unknown as Order;
 }
 describe("exact frozen native accounting projection", () => {
+	it("projects frozen discounts as net discount plus discount tax for both captured modes", () => {
+		for (const mode of ["exclusive", "inclusive"] as const) {
+			const order = native(
+				{
+					priceTaxMode: mode,
+					lines: [
+						{
+							taxClassId: "vat25",
+							rateBps: 2500,
+							netCents: 1800,
+							grossCents: 2250,
+							subtotalNetCents: 2000,
+							taxCents: 450,
+							discountedCents: mode === "inclusive" ? 2250 : 1800,
+						},
+					],
+					shippingNetCents: 0,
+					shippingTaxCents: 0,
+					shippingRateBps: 0,
+				},
+				mode === "inclusive" ? 2500 : 2000,
+				2250,
+			);
+			order.totals = {
+				...order.totals,
+				discount: cents(mode === "inclusive" ? 250 : 200),
+				tax: cents(450),
+			};
+			expect(nativeOrderSnapshot(order)).toMatchObject({
+				discountTotal: 200,
+				discountTax: 50,
+				total: 2250,
+				lines: [{ subtotal: 2000, subtotalTax: 500, total: 1800, totalTax: 450 }],
+			});
+		}
+	});
+	it("rejects raw native aggregates that disagree with frozen line allocation", () => {
+		const proof = {
+			priceTaxMode: "exclusive",
+			lines: [
+				{
+					taxClassId: "vat25",
+					rateBps: 2500,
+					netCents: 2000,
+					grossCents: 2500,
+					subtotalNetCents: 2000,
+					taxCents: 500,
+					discountedCents: 2000,
+				},
+			],
+			shippingNetCents: 0,
+			shippingTaxCents: 0,
+			shippingRateBps: 0,
+		};
+		const wrongSubtotal = native(proof);
+		wrongSubtotal.totals = { ...wrongSubtotal.totals, subtotal: cents(1999) };
+		const wrongDiscount = native(proof);
+		wrongDiscount.totals = { ...wrongDiscount.totals, discount: cents(1) };
+		const wrongLineDiscount = native({
+			...proof,
+			lines: [{ ...proof.lines[0]!, discountedCents: 1999 }],
+		});
+		const wrongCurrency = native(proof);
+		wrongCurrency.totals = { ...wrongCurrency.totals, currency: currency("USD") };
+		for (const order of [wrongSubtotal, wrongDiscount, wrongLineDiscount, wrongCurrency])
+			expect(() => nativeOrderSnapshot(order)).toThrow(/frozen/i);
+	});
 	it("exports exclusive frozen line net amounts and captured rate proof", () => {
 		const snapshot = nativeOrderSnapshot(
 			native({

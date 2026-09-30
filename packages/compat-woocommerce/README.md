@@ -1,6 +1,6 @@
 # WooCommerce accounting profile
 
-Status: protocol, native frozen-order projection, credentials, persistence and durable webhook delivery are implemented and tested locally. The package requires a real `WooBackendPort` and registered storage collections supplied by the host. Reference-site/plugin mounting and native mutation policy are composed by the distribution. Live e-racuni acceptance is **unverified**.
+Status: protocol, native frozen-order projection, credentials, persistence and durable webhook delivery are implemented and tested locally. The reference plugin implements `WooBackendPort` with `createNativeWooBackend` over real native commerce stores. Site mounting, authentication configuration and webhook scheduling are composed by the distribution. Live e-racuni acceptance is **unverified**.
 
 This is an explicit subset of WooCommerce's WP REST API v3 at `/wp-json/wc/v3`. The native commerce domain owns orders, payments and stock. WordPress/PHP plugins using `add_action`, `apply_filters`, `WC_Order`, other WC classes, `$wpdb`, or WordPress administration screens **cannot execute in EmDash/Workers**. No WordPress runtime or legacy API is advertised. No WooCommerce or vendor PHP implementation is copied into this MIT package.
 
@@ -46,6 +46,12 @@ const response = await handler(request);
 ```
 
 Register `WOO_STORAGE_LAYOUT` on the plugin descriptor: `woo_ids`, `woo_metadata`, `woo_webhooks` (the last indexes `availableAt`, `state`). The EmDash adapters operate on injected `StorageCollection` CAS primitives. Tests use real migrated SQLite via `@otta-sh/store-emdash/testing`, never a mock database.
+
+The reference native backend reads pending orders as valid orders, maps pending bank transfer/COD to Woo `on-hold`, and exposes `date_paid` only when succeeded captures in the order currency sum exactly to the frozen total. A state-change event alone is insufficient. Only finalized refunds are exported; reserved/unverified provider outcomes never become refunded money. It supports metadata-only CAS writes, guarded native status commands and idempotent private notes. Combined metadata/status patches are rejected before any write. Its stock port currently returns explicit `501` until an atomic native absolute-stock setter is composed.
+
+Lists use bounded native document scans of 100 rows per page, with a ceiling of 10,000 documents (or child variants/notes). Overflow returns `503`; results are never silently truncated. Pagination totals, filters and ordering are applied to the complete bounded set. This reference adapter is intended for small shops; larger shops require an indexed backend that implements the same port. Native customers have no captured modification timestamp, so customer `date_modified` is `null` and modified-date filters/order are rejected with `400`.
+
+CMS-owned images, descriptions, slug and permalink arrive through the optional read-only `NativeWooProductContentPort.getMany(nativeIds)` fifth constructor argument. The backend reads one CMS batch for a result page and preserves the returned fields; it does not invent product links or descriptions when that source is absent. The native commerce title cache remains the product-name source.
 
 Numeric IDs use a monotonic CAS counter, immutable per-native-entity assignment and per-numeric-ID reverse documents. A losing allocator may leave a gap. A crash between assignment and reverse completion is repaired by retrying `getOrAssign`; no externally returned identity changes. IDs are never hash-derived, recycled or bounded to a truncating history. Back up all three kinds of document together.
 
