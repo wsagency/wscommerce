@@ -1,16 +1,20 @@
 {
 	"name": "@otta-sh/plugin",
 	"version": "0.0.1",
-	"description": "Otta EmDash plugin — sandbox-clean (workerd, Block Kit, ctx.http + allowedHosts only). Runs commerce in-process on the host-injected ctx.storage; no React, no DB driver.",
-	"homepage": "https://github.com/UrumiAI/otta.sh#readme",
+	"description": "WSCommerce EmDash plugin — sandbox-clean (workerd, Block Kit, ctx.http + allowedHosts only). Runs commerce in-process on the host-injected ctx.storage; no React, no DB driver.",
+	"homepage": "https://github.com/wsagency/wscommerce#readme",
 	"bugs": {
-		"url": "https://github.com/UrumiAI/otta.sh/issues"
+		"url": "https://github.com/wsagency/wscommerce/issues"
 	},
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/UrumiAI/otta.sh.git",
+		"url": "git+https://github.com/wsagency/wscommerce.git",
 		"directory": "packages/plugin"
+	},
+	"funding": {
+		"type": "ko-fi",
+		"url": "https://ko-fi.com/klukacin"
 	},
 	"files": [
 		"dist",

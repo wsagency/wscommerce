@@ -1,6 +1,6 @@
 # @otta-sh/site-staging
 
-The EmDash Commerce **reference storefront and admin**: an EmDash site on Cloudflare Workers backed by
+The WSCommerce **reference storefront and admin**: an EmDash site on Cloudflare Workers backed by
 a D1 content database and an R2 media bucket, with the Otta plugin registered **trusted
 in-process**. See [ADR-0006](../../adr/0006-trusted-in-process-deployment.md) for why that is
 allowed and what stays forbidden.

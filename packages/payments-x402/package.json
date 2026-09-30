@@ -1,16 +1,20 @@
 {
 	"name": "@otta-sh/payments-x402",
 	"version": "0.0.1",
-	"description": "x402 PaymentGateway adapter for Otta — synchronous page-gate proof, facilitator-verified server-side (never trusting the plugin).",
-	"homepage": "https://github.com/UrumiAI/otta.sh#readme",
+	"description": "x402 PaymentGateway adapter for WSCommerce — synchronous page-gate proof, facilitator-verified server-side (never trusting the plugin).",
+	"homepage": "https://github.com/wsagency/wscommerce#readme",
 	"bugs": {
-		"url": "https://github.com/UrumiAI/otta.sh/issues"
+		"url": "https://github.com/wsagency/wscommerce/issues"
 	},
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/UrumiAI/otta.sh.git",
+		"url": "git+https://github.com/wsagency/wscommerce.git",
 		"directory": "packages/payments-x402"
+	},
+	"funding": {
+		"type": "ko-fi",
+		"url": "https://ko-fi.com/klukacin"
 	},
 	"files": [
 		"dist"

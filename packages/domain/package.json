@@ -1,16 +1,20 @@
 {
 	"name": "@otta-sh/domain",
 	"version": "0.0.1",
-	"description": "Otta commerce domain — pure ports, use-cases, and branded types. No IO.",
-	"homepage": "https://github.com/UrumiAI/otta.sh#readme",
+	"description": "WSCommerce commerce domain — pure ports, use-cases, and branded types. No IO.",
+	"homepage": "https://github.com/wsagency/wscommerce#readme",
 	"bugs": {
-		"url": "https://github.com/UrumiAI/otta.sh/issues"
+		"url": "https://github.com/wsagency/wscommerce/issues"
 	},
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/UrumiAI/otta.sh.git",
+		"url": "git+https://github.com/wsagency/wscommerce.git",
 		"directory": "packages/domain"
+	},
+	"funding": {
+		"type": "ko-fi",
+		"url": "https://ko-fi.com/klukacin"
 	},
 	"files": [
 		"dist",

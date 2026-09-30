@@ -7,8 +7,8 @@ Build a reusable, locally runnable EmDash commerce distribution for multiple cli
 ## Source and ownership
 
 - Base: Otta main `7c63e6c`, with selected PR 322 (EmDash 1.0.1), PR 326 (sellable variants), and PR 299 (dependency boundaries), integrated at `15ebd751`.
-- Workspace: `/Users/klukacin/projects/emdash-commerce`; independent from acshop. Root branch: `codex/emdash-commerce-foundation`.
-- Preserve MIT copyright and the original Otta package names initially to minimize interface churn. Publishable distribution branding and new integration packages use EmDash Commerce.
+- Workspace: the independent WSCommerce repository at `wsagency/wscommerce`. The foundation was integrated on `codex/emdash-commerce-foundation`.
+- Preserve MIT copyright and the original Otta package names initially to minimize interface churn. Public repository branding is Websolutions Commerce (WSCommerce); inherited runtime/package identifiers remain stable.
 - DashCommerce provides MIT reusable pure helpers where appropriate; any borrowed implementation must carry its attribution. WooCommerce provides protocol specifications and behavioral requirements, not copied GPL implementations.
 - Every deployed shop has its own Worker, D1/R2 data, API credentials and settings. Shared versioned packages do not share customer records.
 

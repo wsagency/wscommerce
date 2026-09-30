@@ -1,11 +1,11 @@
-# CLAUDE.md — Otta
+# CLAUDE.md — WSCommerce
 
 Operational guide for Claude working in this repo. The **why** lives in
 [`DEVELOPMENT.md`](./DEVELOPMENT.md) (development practices) and [`README.md`](./README.md)
 (architecture); read those first. This file is the quick, agent-facing contract: commands,
 conventions, and the guardrails that must not be crossed.
 
-> **Status: shipped, pre-1.0.** Phases 0–7 are merged and the full toolchain below is wired —
+> **Status: locally validated, pre-1.0 foundation.** Upstream phases 0–7 and the WSCommerce integration are present; production/provider acceptance is separate (see `docs/validation.md`). The toolchain below is wired —
 > `@otta-sh/domain`, the EmDash plugin (which now runs commerce in-process on `ctx.storage`),
 > `@otta-sh/store-emdash`, the payment adapters and the React admin all exist under
 > `packages/`. Treat the commands below as live, not aspirational; if one genuinely doesn't

@@ -1,0 +1,25 @@
+name: Bug report
+description: Report a reproducible WSCommerce defect.
+labels: [bug]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Expected and actual behavior
+      description: Explain the affected workflow. Omit credentials and customer data.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include minimal configuration and sanitized errors or event identifiers.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Commit and environment
+      description: Include the commit, Node/pnpm versions, host version and local or deployed environment.
+    validations:
+      required: true

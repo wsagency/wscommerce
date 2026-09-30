@@ -15,6 +15,9 @@ on:
 
 # Cancel a PR's superseded runs when new commits land; never cancel an
 # in-flight main-branch validation (each merge should finish its own check).
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -45,7 +48,8 @@ jobs:
       - run: pnpm -r build
       # SQLite + fake contract suites; pg-required specs self-skip
       # because PG_CONNECTION_STRING is unset.
-      - run: pnpm test
+      # Bound concurrent sandbox/native workers; run the complete workspace suite.
+      - run: pnpm exec vitest run --maxWorkers=3
 
   integration:
     needs: unit
@@ -116,4 +120,5 @@ jobs:
           node-version: "22"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm test:d1
+      # Keep workerd instances bounded on the runner without skipping test files.
+      - run: pnpm -C packages/store-emdash exec vitest run --config vitest.d1.config.ts --fileParallelism=false

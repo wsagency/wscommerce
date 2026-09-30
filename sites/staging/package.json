@@ -2,7 +2,20 @@
 	"name": "@otta-sh/site-staging",
 	"version": "0.0.0",
 	"private": true,
-	"description": "Otta staging storefront + admin — EmDash on Cloudflare Workers, Otta plugin registered trusted in-process (ADR-0004).",
+	"description": "WSCommerce staging storefront + admin — EmDash on Cloudflare Workers, WSCommerce plugin registered trusted in-process (ADR-0004).",
+	"homepage": "https://github.com/wsagency/wscommerce#readme",
+	"bugs": {
+		"url": "https://github.com/wsagency/wscommerce/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/wsagency/wscommerce.git",
+		"directory": "sites/staging"
+	},
+	"funding": {
+		"type": "ko-fi",
+		"url": "https://ko-fi.com/klukacin"
+	},
 	"type": "module",
 	"scripts": {
 		"dev": "astro dev",

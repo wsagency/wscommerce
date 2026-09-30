@@ -1,16 +1,20 @@
 {
 	"name": "@otta-sh/admin-react",
 	"version": "0.0.1",
-	"description": "Otta React admin console — the `otta-console` native-format EmDash descriptor (ADR-0014). Zero capabilities, zero allowedHosts; reaches commerce only through the existing authenticated `otta` admin routes.",
-	"homepage": "https://github.com/UrumiAI/otta.sh#readme",
+	"description": "WSCommerce React admin console — the `otta-console` native-format EmDash descriptor (ADR-0014). Zero capabilities, zero allowedHosts; reaches commerce only through the existing authenticated `otta` admin routes.",
+	"homepage": "https://github.com/wsagency/wscommerce#readme",
 	"bugs": {
-		"url": "https://github.com/UrumiAI/otta.sh/issues"
+		"url": "https://github.com/wsagency/wscommerce/issues"
 	},
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/UrumiAI/otta.sh.git",
+		"url": "git+https://github.com/wsagency/wscommerce.git",
 		"directory": "packages/admin-react"
+	},
+	"funding": {
+		"type": "ko-fi",
+		"url": "https://ko-fi.com/klukacin"
 	},
 	"files": [
 		"dist"

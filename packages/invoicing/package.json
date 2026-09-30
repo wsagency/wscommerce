@@ -2,7 +2,20 @@
 	"name": "@emdash-commerce/invoicing",
 	"version": "0.1.0",
 	"description": "Immutable commerce invoice snapshots, durable jobs, Solo and e-racuni adapters",
+	"homepage": "https://github.com/wsagency/wscommerce#readme",
+	"bugs": {
+		"url": "https://github.com/wsagency/wscommerce/issues"
+	},
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/wsagency/wscommerce.git",
+		"directory": "packages/invoicing"
+	},
+	"funding": {
+		"type": "ko-fi",
+		"url": "https://ko-fi.com/klukacin"
+	},
 	"files": [
 		"dist"
 	],

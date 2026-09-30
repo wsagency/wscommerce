@@ -17,7 +17,7 @@
 - Preserve upstream MIT attribution; do not copy WooCommerce or vendor PHP code into this MIT distribution.
 - Native order/store data is authoritative; external protocol compatibility is explicit and partial.
 - No real credentials in source, tests, logs or Git; no live external mutations.
-- Keep acshop unchanged. Implement in the independent local repository.
+- Keep client shop repositories unchanged. Implement in the independent commerce repository.
 
 ## Review focus
 

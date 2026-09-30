@@ -60,7 +60,7 @@ representative at an online or offline event.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement at
-vedanshu@urumi.ai, or via GitHub's
+[hello@ws.agency](mailto:hello@ws.agency), or via GitHub's
 [Report abuse](https://github.com/contact/report-abuse) form.
 All complaints will be reviewed and investigated promptly and fairly.
 

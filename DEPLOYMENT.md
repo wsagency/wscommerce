@@ -1,6 +1,6 @@
-# Deploying EmDash Commerce
+# Deploying WSCommerce
 
-How to stand up the EmDash Commerce reference shop from a fresh clone. Architecture background lives in
+How to stand up the Websolutions Commerce reference shop from a fresh clone. Architecture background lives in
 [`README.md`](./README.md); design decisions in [`adr/`](./adr/). This guide is
 self-contained — section references like "§2" point inside this file.
 
@@ -8,7 +8,7 @@ self-contained — section references like "§2" point inside this file.
 
 ## 0. What you are deploying
 
-Otta is **one deployable and one database**: the storefront site (`sites/staging`) — an
+WSCommerce is **one deployable and one database**: the storefront site (`sites/staging`) — an
 EmDash CMS site with the Otta plugin registered trusted, running commerce **in-process**
 inside the same Worker. There is no separate commerce service and no second database:
 commerce truth lives in the host's per-plugin document store on the site's own D1 database,

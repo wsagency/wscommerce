@@ -1,16 +1,20 @@
 {
 	"name": "@otta-sh/payments-stripe",
 	"version": "0.0.1",
-	"description": "Stripe PaymentGateway adapter for Otta — async-webhook confirmation with raw-body HMAC verification. Secrets are service-env only.",
-	"homepage": "https://github.com/UrumiAI/otta.sh#readme",
+	"description": "Stripe PaymentGateway adapter for WSCommerce — async-webhook confirmation with raw-body HMAC verification. Secrets are service-env only.",
+	"homepage": "https://github.com/wsagency/wscommerce#readme",
 	"bugs": {
-		"url": "https://github.com/UrumiAI/otta.sh/issues"
+		"url": "https://github.com/wsagency/wscommerce/issues"
 	},
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/UrumiAI/otta.sh.git",
+		"url": "git+https://github.com/wsagency/wscommerce.git",
 		"directory": "packages/payments-stripe"
+	},
+	"funding": {
+		"type": "ko-fi",
+		"url": "https://ko-fi.com/klukacin"
 	},
 	"files": [
 		"dist"

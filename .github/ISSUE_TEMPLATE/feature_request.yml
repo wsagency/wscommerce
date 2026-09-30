@@ -1,0 +1,17 @@
+name: Feature request
+description: Propose a commerce capability or integration.
+body:
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: Describe the merchant or buyer workflow and the problem it should solve.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Proposed behavior and acceptance
+      description: Include the expected result, relevant integration contracts and how it can be verified.
+    validations:
+      required: true

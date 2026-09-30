@@ -2,36 +2,19 @@ packages:
   - "packages/*"
   - "sites/*"
 
-# There are no `emdash` overrides any more. The host used to be a locally built
-# merge of upstream `main` and its then-open conditional-write PR, vendored as
-# `file:` tarballs and held in place by four overrides. `emdash@0.38.0` ships
-# that PR, so the manifests name the release directly and the store resolves a
-# single copy on its own: the released `@emdash-cms/cloudflare@0.38.0` pins
-# `emdash` EXACTLY at `0.38.0`, which is the same version the manifests ask for,
-# and `@emdash-cms/admin@0.38.0` / `@emdash-cms/registry-client@0.6.0` now export
-# the subpaths (`./portable-text-table`, `./listing-policy`) whose absence forced
-# them to be vendored alongside the core.
-#
-# The one-copy outcome is a coincidence of agreement, not an invariant — a future release of
-# `@emdash-cms/cloudflare` that pins a DIFFERENT exact `emdash` would put a second
-# copy in the store, binding the Worker bridge to a host without the
-# conditional-write primitives: no install error, no type error.
-# `sites/staging/test/host-pin.test.ts` is what makes that loud, and an override
-# pinning `emdash` to the version the manifests name would be the fix.
-#
-# If pins are ever reintroduced they must never float — no `^`, no `~`: a stray
-# `emdash@1.0.0` exists on npm and is NOT the latest release of this host. And
-# they have to live here: pnpm 11 ignores `pnpm.overrides` in package.json
-# without warning.
+# EmDash and its Cloudflare host are pinned to 1.0.1. There are no host
+# overrides or local vendor tarballs. The one-copy host contract is checked by
+# sites/staging/test/host-pin.test.ts; any upgrade must keep the host and bridge
+# on the same tested dependency train.
+# pnpm 11 workspace overrides, if needed, belong here rather than package.json.
 
 allowBuilds:
   better-sqlite3: true
   # esbuild's postinstall only validates the preinstalled platform binary —
   # wrangler and the Astro toolchain (sites/staging) bundle through it.
   esbuild: true
-  # sharp: originally skipped for the service Worker (wrangler's optional
-  # image codec, nothing fed it images) — sites/staging's Astro/EmDash chain
-  # installs it as a real dependency, so the native build is allowed now.
+  # Keep sharp install scripts disabled; the reference build uses the locked
+  # platform packages. Qualify changes to this build policy with the host build.
   sharp: false
   workerd: true
 
@@ -79,7 +62,7 @@ minimumReleaseAgeExclude:
   # `@emdash-cms/admin`, `@emdash-cms/cloudflare` and `@emdash-cms/registry-client`
   # because they came from `vendor/` as `file:` tarballs, which bypass the
   # release-age check entirely; they resolve from the registry again, so they
-  # need the exclusion like every sibling. The 0.38.x train is younger than a
+  # need the exclusion like every sibling. New pinned host releases may be younger than a
   # typical threshold.
   - "emdash@1.0.1"
   - "@emdash-cms/admin@1.0.1"

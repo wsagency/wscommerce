@@ -1,8 +1,8 @@
-# Otta — Development Practices
+# WSCommerce — Development Practices
 
-_How we build Otta. Read this before writing code._
+_How we build Websolutions Commerce. Read this before writing code._
 
-Otta is a standalone repo (its own git history, its own pnpm workspace) that
+WSCommerce is an independent Otta fork and standalone repo (its own git history, its own pnpm workspace) that
 **mirrors [EmDash]'s conventions** without inheriting its config. Where EmDash has a
 practice that fits a commerce plugin, we copy it. Where commerce needs more (money,
 concurrency, idempotency), we add rules EmDash doesn't have.

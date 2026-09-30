@@ -1,16 +1,20 @@
 {
 	"name": "@otta-sh/admin-presentation",
 	"version": "0.0.1",
-	"description": "Otta admin presentation primitives — money rendering, the console date dialect, git-style short ids and the order-status vocabulary. Pure functions: no IO, no React, no EmDash. Shared by the Block Kit plugin and the React console so neither surface can drift from the other.",
-	"homepage": "https://github.com/UrumiAI/otta.sh#readme",
+	"description": "WSCommerce admin presentation primitives — money rendering, the console date dialect, git-style short ids and the order-status vocabulary. Pure functions: no IO, no React, no EmDash. Shared by the Block Kit plugin and the React console so neither surface can drift from the other.",
+	"homepage": "https://github.com/wsagency/wscommerce#readme",
 	"bugs": {
-		"url": "https://github.com/UrumiAI/otta.sh/issues"
+		"url": "https://github.com/wsagency/wscommerce/issues"
 	},
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/UrumiAI/otta.sh.git",
+		"url": "git+https://github.com/wsagency/wscommerce.git",
 		"directory": "packages/admin-presentation"
+	},
+	"funding": {
+		"type": "ko-fi",
+		"url": "https://ko-fi.com/klukacin"
 	},
 	"files": [
 		"dist"

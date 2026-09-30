@@ -1,6 +1,20 @@
 {
-	"name": "otta",
+	"name": "wscommerce",
 	"private": true,
+	"description": "Websolutions Commerce — native EmDash commerce on Cloudflare Workers",
+	"homepage": "https://github.com/wsagency/wscommerce#readme",
+	"bugs": {
+		"url": "https://github.com/wsagency/wscommerce/issues"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/wsagency/wscommerce.git"
+	},
+	"funding": {
+		"type": "ko-fi",
+		"url": "https://ko-fi.com/klukacin"
+	},
 	"type": "module",
 	"scripts": {
 		"lint": "oxlint && depcruise --config .dependency-cruiser.cjs packages",

@@ -1,28 +1,17 @@
-# Security Policy
+# Security policy
 
 ## Supported versions
 
-Otta is pre-1.0. Only `main` / the latest published version is supported; there are no LTS
-branches yet.
+WSCommerce is an initial, pre-1.0 foundation. Security fixes target `main`; there are no WSCommerce npm releases or LTS branches yet. Deploy from a reviewed commit and track the repository's updates.
 
 ## Reporting a vulnerability
 
-Please report suspected security vulnerabilities **privately** — do not open a public
-GitHub issue. Email **vedanshu@urumi.ai** with details and, if possible, steps to
-reproduce. You can also use GitHub's private vulnerability reporting on this repository:
-[**Report a vulnerability**](https://github.com/UrumiAI/otta.sh/security/advisories/new).
+Report suspected security vulnerabilities privately to **[hello@ws.agency](mailto:hello@ws.agency)**. Include the affected commit, configuration, expected/actual behavior and reproduction steps. Do not include live credentials or customer data in the report. Do not open a public issue for an unpatched vulnerability.
 
-This is a solo-maintainer project, so response times are best-effort, not SLA'd:
-acknowledgement within a few business days is a reasonable expectation, not a commitment.
+Reports are reviewed on a best-effort basis. Commercial integration/support inquiries use the same Websolutions contact.
 
 ## Scope
 
-Because Otta is a commerce/money system, correctness bugs that break its core invariants
-are in scope even if they don't look like a classic vulnerability — for example, a race that
-lets a buyer oversell stock, double-charge, or otherwise defeat idempotency. See
-[`DEVELOPMENT.md` §4](./DEVELOPMENT.md#4-commerce-invariants-rules-emdash-doesnt-need) for
-the full list of invariants. If you find a way to break one of them, please report it
-through the same private channel above.
+WSCommerce handles commerce and money. Correctness bugs that break stock conservation, payment/refund confirmation, idempotency, billing privacy or permission boundaries are in scope, including races that enable overselling or duplicate financial actions. See [the commerce invariants](DEVELOPMENT.md#4-commerce-invariants-rules-emdash-doesnt-need) and [operational recovery](docs/operations.md).
 
-We don't currently run a bug-bounty program or offer safe-harbor legal terms — this is a
-pre-1.0 open-source project without a legal review budget behind it.
+For a deployment-specific incident, preserve relevant event IDs and the affected commit so the operator can reconcile provider and native state. Rotate an exposed credential with its provider; never attach it to a public issue.

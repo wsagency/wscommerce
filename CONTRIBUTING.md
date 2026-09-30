@@ -1,101 +1,60 @@
-# Contributing to Otta
+# Contributing to WSCommerce
 
-Thanks for your interest in contributing. This is a quick, practical guide to getting set
-up and sending a change. The **why** behind these rules lives in
-[`DEVELOPMENT.md`](./DEVELOPMENT.md) and [`CLAUDE.md`](./CLAUDE.md) — read those for the
-full depth; this file only summarizes what you need to open a PR.
+Thanks for helping improve Websolutions Commerce. Start with the [developer guide](docs/development/README.md). Read [DEVELOPMENT.md](DEVELOPMENT.md) for the engineering rules, [README.md](README.md) for scope and [NOTICE.md](NOTICE.md) for source provenance. Existing `@otta-sh/*` and `@emdash-commerce/*` names remain compatibility identifiers.
 
-## Prereqs
+## Set up
 
-- Node 22.16 or newer (the EmDash host declares `engines.node >= 22.16`)
-- pnpm — the workspace pins `packageManager: pnpm@11.10.0` in the root `package.json`; use
-  that version (via Corepack) rather than whatever `pnpm` you have globally.
+Use Node.js 22.16 or newer and the pinned pnpm 11.10.0. Install pnpm with `npm install --global pnpm@11.10.0`, or use your version manager to select the pinned version.
 
-## Setup
-
-```bash
-pnpm install
+```sh
+git clone https://github.com/wsagency/wscommerce.git
+cd wscommerce
+pnpm install --frozen-lockfile
 ```
 
-## The edit loop
+The reference shop starts with `pnpm -C sites/staging dev`; complete the first-run wizard and follow [DEPLOYMENT.md](DEPLOYMENT.md) for sample pricing/stock and local configuration. Do not commit credentials or local database/configuration files.
 
-Run these after every edit, and again before opening a PR:
+## Make a change
 
-```bash
-pnpm lint         # oxlint + the domain-purity dependency check
+Keep each PR focused. Use a descriptive branch such as `fix/receipt-replay` or `codex/receipt-replay`. A systemic architectural decision belongs in an [ADR](adr/README.md).
+
+For feature/bug behavior, start with a failing behavioral test, implement the change and rerun the affected contract. Documentation and metadata changes do not need tests that merely mirror the edit.
+
+- Money stays in branded integer minor units with an explicit currency.
+- The domain imports no IO; dependency-cruiser enforces that boundary.
+- Store contracts run on actual migrated databases. Do not replace persistence with a DB mock.
+- Replay and crash recovery are part of the contract. Test interruption, retries and financial/stock conservation where affected.
+- Provider acceptance is distinct from deterministic local adapter tests. A successful HTTP refund request is not a completed refund.
+- Preserve original license notices for imported code/data, record source paths and commits in `NOTICE.md`, and keep dependency licenses intact. WooCommerce is a protocol/functional reference, not PHP source to paste into this MIT implementation.
+
+## Validate
+
+```sh
+pnpm lint
+pnpm format:check
 pnpm typecheck
-pnpm test         # vitest
-pnpm format       # oxfmt, tabs
+pnpm exec vitest run --maxWorkers=3
+pnpm build
 ```
 
-Two heavier tiers need a backing store and stay out of that loop:
+Use `pnpm format` to apply formatting. Run typecheck and build sequentially because the bundler cleans shared generated declarations. If switching Node versions, install a matching native SQLite build before running tests.
 
-```bash
-PG_CONNECTION_STRING=<local pg> pnpm test:pg   # the race tier (no-oversell and friends)
-pnpm test:d1                                   # real D1 inside workerd, via the workers pool
+Additional tiers:
+
+```sh
+PG_CONNECTION_STRING=<disposable-postgres-url> pnpm test:pg
+pnpm test:d1
+pnpm test:e2e
 ```
 
-`pnpm test:d1` runs a separate vitest project (`packages/store-emdash/vitest.d1.config.ts`), so the
-root `pnpm test` does not include it. It is entirely local — the D1 is miniflare's simulator, and
-no Cloudflare account, API token or remote database is involved — but it boots workerd and
-re-migrates a fresh database per test file, so expect minutes rather than seconds. In CI it is the
-`d1` job: nightly, on demand, and as the release gate on pull requests into `main`.
+The PostgreSQL tier exercises concurrent database writers. D1 runs locally inside workerd using a separate Vitest configuration; it needs no Cloudflare credentials. Browser acceptance needs a running, configured reference shop; a green server-free harness does not certify live checkout. See [docs/validation.md](docs/validation.md) for configuration and evidence boundaries.
 
-## TDD, contract-first
+CI runs workspace checks/build/tests, PostgreSQL integration and the D1 release gate on `main`. D1 also runs on pull requests targeting `main`, nightly and on demand. Release checks must not run real billing, payment or carrier operations without an explicitly configured acceptance environment.
 
-The order is always: **failing test → code → green → refactor.** For anything in
-`@otta-sh/domain`, write the behavioral test against the **port interface** before writing any
-adapter — the headline contract is *no oversell under concurrency*. See
-[`DEVELOPMENT.md` §1](./DEVELOPMENT.md#1-tdd-is-contract-first) for the full rule.
+## Submit
 
-## Real databases, never mocks
+Explain the concrete problem, resulting behavior and validation. Include an ADR or provenance update when relevant. Keep package names and persisted plugin IDs stable unless an explicit migration plan accompanies the change. Package versions are inherited and are not independently published as WSCommerce; do not publish to upstream npm scopes.
 
-No DB mocks. SQLite (`better-sqlite3`) is the fast local default for the contract suite;
-Postgres is required for the concurrency/no-oversell test (`pnpm test:pg`) since SQLite
-can't exercise a real race. See
-[`DEVELOPMENT.md` §2](./DEVELOPMENT.md#2-real-databases-never-mocks).
+Optional commit/PR area tags are `[Domain]`, `[Adapters]`, `[Plugin]`, `[Site]`, `[Test]`, `[CI]` and `[Docs]`. Add a changeset when a releaseable package's public behavior changes.
 
-## Money is integer minor units
-
-Amounts are branded integer types (e.g. `Cents`) carrying an explicit currency — a `number`
-reaching a money field is a type error. See
-[`DEVELOPMENT.md` §4](./DEVELOPMENT.md#4-commerce-invariants-rules-emdash-doesnt-need) for
-the full set of commerce invariants.
-
-## Branch naming
-
-`<type>/<slug>`, where `type` is one of `feat`, `fix`, `chore`, `docs`, `refactor`, `test`.
-
-## Commit / PR title tags
-
-Pick the tag for the area your change touches:
-
-| Area changed | Tag |
-|---|---|
-| `@otta-sh/domain` (ports, use-cases, invariants) | `[Domain]` |
-| Store/client/payment **adapters** (store-emdash, stripe, x402) | `[Adapters]` |
-| The EmDash **plugin** (storefront, Block Kit panel, sync hooks) and its admin packages (`admin-react`, `admin-presentation`) | `[Plugin]` |
-| `sites/*` (the reference storefront site/theme) | `[Site]` |
-| Shared test/contract packages | `[Test]` |
-| CI / tooling / build | `[CI]` |
-| `adr/`, `*.md`, docs | `[Docs]` |
-
-## Scope discipline
-
-One PR = one thing. No drive-by refactors. A systemic change — or anything that's really a
-decision rather than a mechanical change — gets its own PR and, if it's a decision, an
-**ADR under `adr/`** (see [`adr/README.md`](./adr/README.md)).
-
-## Before opening a PR
-
-- Tests pass, lint is clean, code is formatted.
-- A changeset is added if a published package changed — run `pnpm changeset` to generate
-  one.
-
-## Reporting issues
-
-- **Security vulnerabilities:** do not open a public issue — see
-  [`SECURITY.md`](./SECURITY.md) for private disclosure instructions.
-- Everything else: open a GitHub issue, or a PR directly if you already have a fix.
-
-Please also read our [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
+Use [GitHub issues](https://github.com/wsagency/wscommerce/issues) for bugs and proposals. Follow [SECURITY.md](SECURITY.md) for private security reports and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community participation. For integration or commercial support, contact [hello@ws.agency](mailto:hello@ws.agency).
