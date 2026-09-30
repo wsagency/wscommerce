@@ -62,6 +62,10 @@ than rewriting history.
 
 - [0024. Frozen adoption and durable movement replay witnesses](./0024-inventory-replay-witnesses-are-durable.md) — accepted, supersedes ADR-0019's movement eviction residual and periodic-healer assumption; checkout guards the persisted SKU/quantity in its adoption CAS, and every movement persists evicted results before dropping their inventory witnesses. Legacy unknown outcomes require reconciliation.
 
+- [0025. Provider refund status controls financial completion](./0025-provider-refund-status-controls-completion.md) — accepted; pending, failed, canceled and unknown provider outcomes preserve truthful native refund capacity, and authenticated outcomes carry stable provider/native identities into reconciliation.
+
+- [0026. Offline receipts, COD dispatch, and frozen billing](./0026-offline-payments-and-frozen-billing.md) — accepted; bank transfer and COD carry frozen instructions, due dates and separate billing. Private exact receipts supply payment evidence, while COD acceptance may advance fulfillment unpaid.
+
 - [0027. Retail prices and tax proof are frozen at checkout](./0027-retail-prices-and-frozen-tax-proof.md) — accepted, amends ADR-0021's shipping-only tax jurisdiction and digital tax exemption; product-level inclusive pricing remains integer based, billing selects tax independently of delivery, and new orders freeze line/shipping proof and the immutable variant key. Historical proof stays unknown.
 
 - [0030. Refund reporting replays a durable financial prefix](./0030-refund-reporting-replays-a-durable-financial-prefix.md) — accepted; explicit native refund identity/revision, bounded recoverable day witness, guarded rebuild checkpoints and immediate old-day drift recovery.

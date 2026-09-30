@@ -1,12 +1,12 @@
 /**
  * Otta staging storefront + admin — EmDash on Cloudflare Workers.
  *
- * Modeled on em-dash's `templates/starter-cloudflare/astro.config.mjs`
- * (no Access / Images / Stream / sandbox), plus the trusted Otta plugin
+ * Modeled on em-dash's `templates/starter-cloudflare/astro.config.mjs`,
+ * with adapter-generated resource bindings and the trusted Otta plugin
  * descriptor (ADR-0006). Commerce runs IN-PROCESS in this Worker: there is no
- * separate service to point at, and the only build-time URLs left are the two
- * optional egress endpoints below (email provider, x402 facilitator), which are
- * baked into the bundle AND fed to the descriptor's allowlist from one const.
+ * separate commerce service to point at. Optional email/x402 endpoints are
+ * baked into the bundle and descriptor allowlist. Invoice/Woo public endpoints
+ * grant scoped egress at build time; their credentials enter at server runtime.
  */
 import { existsSync, readFileSync } from "node:fs";
 import cloudflare from "@astrojs/cloudflare";
@@ -68,8 +68,8 @@ const commerceEgressUrls = [
 /**
  * The Stripe publishable key (ADR-0012 decision 4), resolved the same way.
  * Absent ⇒ `undefined` ⇒ the define below bakes `""` ⇒ `/checkout` renders
- * review + totals but says "Card payment isn't set up on this store yet." and
- * creates NO order. PRESENT but malformed ⇒ `resolveStripePublishableKey`
+ * review + totals with card payment unavailable. Enabled offline methods may
+ * still place pending orders. PRESENT but malformed ⇒ `resolveStripePublishableKey`
  * THROWS here and fails the build, because a typo'd key is otherwise
  * indistinguishable at runtime from having no key at all.
  */
@@ -92,8 +92,8 @@ const localWranglerConfig = existsSync(new URL("wrangler.local.jsonc", import.me
 
 export default defineConfig({
 	output: "server",
-	// NOT `cloudflare({ imageService: "cloudflare" })` — that's the paid
-	// image resizing product; Astro's built-in service is fine for staging.
+	// Keep the adapter's default image service. Inspect its generated bindings
+	// and the account's service configuration before deploying this reference site.
 	adapter: cloudflare(localWranglerConfig !== undefined ? { configPath: localWranglerConfig } : {}),
 	image: {
 		layout: "constrained",

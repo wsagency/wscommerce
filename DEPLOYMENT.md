@@ -1,6 +1,6 @@
-# Deploying Otta
+# Deploying EmDash Commerce
 
-How to stand up a working Otta store from a fresh clone. Architecture background lives in
+How to stand up the EmDash Commerce reference shop from a fresh clone. Architecture background lives in
 [`README.md`](./README.md); design decisions in [`adr/`](./adr/). This guide is
 self-contained — section references like "§2" point inside this file.
 
@@ -19,22 +19,22 @@ alongside CMS content ([ADR-0018](./adr/0018-plugin-owns-commerce-truth-in-proce
 `sites/staging` is the reference site: copy it for your own store rather than treating it as
 staging-only.
 
-> **In active development — pre-1.0.** The core buy flow — catalog, cart and card checkout —
-> works today, but APIs, storage document shapes, settings and admin screens may still change
-> between releases. This guide is the self-deploy path; a one-click / hosted Cloudflare
-> Workers deployment is coming soon.
+The inherited package names and plugin ID remain `@otta-sh/*` and `otta`. Each
+shop deploys its own Worker, database, media bucket and credentials. EmDash is
+pinned to 1.0.1; see [validation](./docs/validation.md) for current local evidence.
 
-> **Status honesty.** The commerce layer is feature-complete: catalog, inventory, cart,
-> checkout, orders, customers with magic-link auth, Stripe + x402 payments, tax, shipping,
-> discounts, entitlements, reporting, and settings (the magic-link email needs the email API
-> and a sign-in page URL, §3 Email). The reference **storefront** covers
-> catalog, cart and **card checkout**: `/checkout`, the Stripe pay page (`/checkout/pay`) and
-> the order confirmation page (`/orders/<orderId>`) are built (ADR-0012), and so are the
-> customer account pages (`/account/login`, `/account/verify`, `/account/orders`). Two page
-> surfaces are not built yet: the x402 payment gate and the download delivery page (both still
-> under issue #27). Deploying today gives you a browsable catalog, carts with real inventory
-> holds, magic-link customer accounts, and a Stripe card purchase end-to-end once Stripe is
-> configured (§3). When #27 closes, this banner shrinks to a version note.
+The reference storefront includes catalog/variants, reserved carts, inclusive or
+exclusive prices, separate billing, card checkout, bank transfer, COD and order
+confirmation. Bank/COD require explicit settings and private receipt confirmation.
+Accounts, discounts, shipping rules, refunds and reporting are native modules;
+email requires a configured provider. Direct Solo/e-racuni and the selected Woo
+REST/webhook profile require account acceptance before live use.
+
+Digital entitlements do not yet provide a storefront file delivery page. x402
+does not yet have a storefront payment gate. Carrier booking/labels, automatic
+accounting corrections and arbitrary WordPress PHP plugins are not supplied.
+This guide describes deployment; the implementation work did not deploy a shop
+or execute real payment/accounting/carrier transactions.
 
 ## 1. Universal contracts
 
@@ -50,33 +50,36 @@ Three rules hold. Everything else in this guide is a consequence of them.
   **only** when the setup wizard is completed with "include sample content" checked. An
   empty `/products` page right after first boot is **healthy, not a failed boot**.
 - **Secrets model.** There is one deployable, so there is one place secrets can live — and
-  two stores inside it (§3). Two are **Worker secrets** (`wrangler secret put`):
+  two stores inside it (§3). The inherited Worker secrets (`wrangler secret put`) are
   `EMDASH_ENCRYPTION_KEY` and `OTTA_WH_TOKEN`. Every payment and email **credential** is
   provisioned by the operator in the admin console's **Settings** page and held in
   **write-only plugin `kv`** under `settings:*` — persisted only on a non-empty submit,
-  never rendered back into a block, read through a fail-closed reader. Nothing
+  never rendered back into a block, read through a fail-closed reader. New
+  Solo/e-racuni/Woo credentials use server-only Worker bindings instead (§3). Nothing
   secret-shaped ever goes in a tracked `wrangler.jsonc` (pinned by the site's config tests,
   which reject any `vars` key matching `/SECRET|KEY|TOKEN|PASSWORD/i`).
 
-## 2. Cloudflare Workers (free tier)
+## 2. Cloudflare Workers
 
 The site as a Worker, with commerce running in-process inside it. This shape is
-deploy-verified and is what `sites/staging` is built for.
+the target of the reference site's build. This fork's current evidence is local
+build/runtime validation; its production deployment remains an acceptance gate.
 
-### 2.0 Cost preconditions
+### 2.0 Resource configuration
 
-The free-tier claim rests on two deliberate choices — undo either of them and you are on a
-paid plan:
+The reference deployment uses these deliberate resource choices. Confirm the
+selected account's current plans, generated bindings and quotas before release:
 
-- **The plugin runs trusted in-process** — no `worker_loaders` binding. Worker Loaders (the
-  plugin-sandbox runner) are the cost pivot that flips the account onto Workers Paid. See
+- **The plugin runs trusted in-process** — no `worker_loaders` binding. See
   [ADR-0006](./adr/0006-trusted-in-process-deployment.md) for why this is allowed and what
   stays forbidden.
-- **No Cloudflare Images or Stream.** Media lives in R2; the site uses Astro's built-in
-  image service (the config deliberately does not set `imageService: "cloudflare"` — that is
-  the paid resizing product).
+- **Media lives in R2.** The site does not explicitly select
+  `imageService: "cloudflare"`; inspect the current adapter's generated Images
+  and session bindings as part of account provisioning. No video service is configured.
 
-The site's single `* * * * *` cron touches only D1, within free limits (§5).
+The site's minute cron maintains native state and can contact configured
+invoice, email and webhook providers (§5). Usage depends on enabled integrations
+and shop traffic; this guide does not promise a free production deployment.
 
 ### 2.1 The site Worker
 
@@ -110,7 +113,7 @@ The site's single `* * * * *` cron touches only D1, within free limits (§5).
    time (`astro.config.ts` passes it as `configPath`), so the build, not the deploy, is
    where your Worker name, D1, and R2 config becomes real. Commerce runs in-process, so
    there is no service URL to bake in; the optional email and x402 provider URLs are read
-   here too (§4):
+   here too, together with public invoice/Woo egress origins (§4):
 
    ```bash
    pnpm --filter @otta-sh/site-staging build
@@ -160,15 +163,15 @@ The site's single `* * * * *` cron touches only D1, within free limits (§5).
 
 ### 2.3 Failed-first-boot recovery
 
-**Only for an actual failed boot** — errors in `wrangler tail` (migration failures, partial
-schema seed). An empty `/products` catalog is NOT a failed boot (§2.2 step 1); never reset a
-healthy database. The seed applies only to an **empty** D1 database, so a midway failure
-cannot be retried in place:
+For an actual failed first boot, retain the migration/setup error and inspect the database
+before retrying. An empty `/products` catalog is expected before adding products (§2.2 step 1).
+Preserve the existing database and its backup as diagnostic/recovery evidence.
 
-1. `wrangler d1 delete YOUR-D1-DATABASE-NAME` and `wrangler d1 create YOUR-D1-DATABASE-NAME`.
-2. Update `database_id` in your `wrangler.local.jsonc` with the new id.
-3. **Rebuild** (the wrangler config is read at build time — §2.1 step 4), redeploy, then
-   claim the admin again (§2.1 step 5 → §2.2).
+If initial setup cannot resume and this is a disposable first installation with no customer
+or commerce data, provision a fresh database with `wrangler d1 create YOUR-NEW-DATABASE-NAME`.
+Update `database_id` in `wrangler.local.jsonc`, **rebuild**, redeploy and claim the admin
+(§2.1 step 5 → §2.2). Keep the old database until the new installation is verified.
+An existing shop needs migration repair or a qualified restore using [operations](docs/operations.md).
 
 ### 2.4 The `global_fetch_strictly_public` pairing invariant
 
@@ -184,8 +187,8 @@ cannot be retried in place:
 
 ## 3. Secrets & tokens checklist
 
-Two of these are **Worker secrets** on the site (`wrangler secret put`); the rest are
-**plugin credentials** the operator types into the admin console's **Settings** page, which
+The inherited payment/email settings are **plugin credentials** the operator
+types into the admin console's **Settings** page, which
 persists them to write-only plugin `kv` under `settings:*`. On Workers, **every `wrangler
 secret put` below** needs `--config wrangler.local.jsonc`: without it, wrangler defaults to
 the tracked template and uploads the secret to the placeholder-named Worker, not yours. In
@@ -199,6 +202,25 @@ order of appearance in a deployment's life:
 | Stripe secret key | admin Settings (`settings:stripeSecretKey`) | for Stripe payments — **together with the webhook secret** (see below) | before enabling Stripe |
 | x402 pay-to + facilitator credential | admin Settings | for x402 | see the x402 box |
 | Email API key + from-address (with the `EMAIL_API_URL` build-time value, §4) | admin Settings (from-address in `settings:emailFrom`) | optional | when wiring real email |
+| Solo API token | Worker binding `SOLO_API_TOKEN` | for direct Solo ownership | after provider account acceptance |
+| e-racuni username, secret and organization token | Worker bindings `ERACUNI_USERNAME`, `ERACUNI_SECRET_KEY`, `ERACUNI_ORG_TOKEN` | for direct e-racuni ownership | after provider account acceptance |
+| Woo consumer key/secret and optional webhook secret/destination | Worker bindings `WOO_CONSUMER_KEY`, `WOO_CONSUMER_SECRET`, `WOO_WEBHOOK_SECRET`, `WOO_WEBHOOK_DELIVERY_URL` | for the remote REST connector | before connector acceptance |
+
+Set these new runtime bindings with `wrangler secret put NAME --config
+wrangler.local.jsonc`. This uses the same real-Worker selection as the encryption
+key; deployment still follows the build redirect in §2.1. For local development,
+copy `.dev.vars.example` to `.dev.vars` inside `sites/staging`. These ignored
+files are server configuration, and their credentials never enter browser state
+or plugin status responses.
+
+Choose one `INVOICE_OWNER`: `disabled`, `solo`, `e-racuni` or
+`woocommerce-connector`. Direct issuance also requires `INVOICE_LIVE_ENABLED=true`
+after acceptance; credentials alone do not enable it. Configure stable
+`COMMERCE_SHOP_ID` and canonical `COMMERCE_PUBLIC_URL` bindings. Put only public
+endpoint origins in the build-time egress configuration (§4); a provider-issued
+webhook destination may contain a secret and belongs in runtime bindings.
+See [integration configuration and acceptance](./docs/integrations.md) for the
+complete table, supported invoice profile and connector instructions.
 
 - **`EMDASH_ENCRYPTION_KEY`** — generate with `npx emdash secrets generate`; never committed,
   never echoed into logs; **back it up in a password manager** (it protects the CMS's
@@ -206,9 +228,12 @@ order of appearance in a deployment's life:
 
 > **The Stripe webhook endpoint is public by design, and permanently site-owned.**
 > Stripe delivers to `POST /webhooks/stripe` on the site (`sites/staging/src/pages/webhooks/stripe.ts`)
-> — register **that** path in the Stripe dashboard, subscribed to exactly two events:
-> `payment_intent.succeeded` and `payment_intent.payment_failed`. Those are the only events the
-> settle route acts on — subscribe to nothing else. It is a transport shim: it reads the raw
+> — register **that** path in the Stripe dashboard, subscribed to
+> `payment_intent.succeeded`, `payment_intent.payment_failed`, `refund.created`,
+> `refund.updated` and `refund.failed`. Refund HTTP acceptance does not prove
+> completion: signed refund events update the native lifecycle. Unbound external
+> refunds are ignored; incomplete events for native refunds fail closed.
+> It is a transport shim: it reads the raw
 > delivered bytes, never parses them, attaches the edge token, and dispatches the plugin's
 > **public** `webhooks/stripe/settle` route in-process, replaying the status the plugin asks
 > for so Stripe's retry behaviour stays correct. It holds no Stripe secret and verifies no
@@ -231,7 +256,7 @@ order of appearance in a deployment's life:
 - **Stripe** — **set both the secret key and the webhook signing secret, or card checkout
   refuses every order.** The in-process commerce client builds the live Stripe gateway only
   when both are present (`packages/plugin/src/payments/stripe-wiring.ts`); with either one
-  missing there is no `stripe` gateway at all, and every checkout fails before an order is
+  missing there is no `stripe` gateway at all, and card checkout fails before an order is
   created. That is deliberate, not a half-configured fallback: a gateway that could take a
   live payment but never verify its confirmation (or the reverse) would leave orders holding
   stock against a payment nothing can settle. Independently, until the webhook signing secret
@@ -294,11 +319,22 @@ allowlist (capability `network:request`). That allowlist is resolved at **build*
 | `api.stripe.com` | always — the one constant entry |
 | the email API host | when an email API URL is configured |
 | the x402 facilitator host | when a facilitator URL is configured |
+| the Solo API host | when `SOLO_API_URL` is configured before build |
+| the e-racuni API host | when `ERACUNI_API_URL` is configured before build |
+| the Woo webhook provider host | when `WOO_WEBHOOK_API_ORIGIN` is configured before build |
 
 The two URLs are `EMAIL_API_URL` and `X402_FACILITATOR_URL`, read by
 `sites/staging/astro.config.ts` from `process.env`, falling back to `sites/staging/.env`.
 Set them in the shell or in `sites/staging/.env` **before** building (§2.1 step 4); unset,
 the provider is simply unconfigured and no host is granted for it.
+
+The new integration entries use the same build boundary. For Solo use the
+documented public API endpoint as `SOLO_API_URL`; for e-racuni use the account's
+qualified public JSON API endpoint. `WOO_WEBHOOK_API_ORIGIN` is the public
+provider origin alone, without the generated destination path or token. Runtime
+configuration must select an endpoint whose host the descriptor grants. No API
+token, consumer secret or token-bearing destination belongs in `.env` or a Vite
+define.
 
 Stripe traffic goes through the same gate: `@otta-sh/payments-stripe` would default its
 transport to `globalThis.fetch`, but the plugin constructs the live gateway with
@@ -316,9 +352,15 @@ editing a text field should not be able to move it.
 **Cron.** Two cadences, and they do different jobs. The **site's** Cron Trigger is
 `* * * * *` — that drives the host's cron *executor*, which claims due rows from its own
 task table. The **plugin** registers one task, `commerce-sweeps`, due every `*/15`; the
-executor fires the plugin's `cron` hook when it comes due. One task drives all nine sweep
+executor fires the plugin's `cron` hook when it comes due. That task drives all nine sweep
 legs: they share a store composition and a clock, and splitting them would only put nine
 rows in contention on the same documents.
+
+The integration wrappers also register `commerce-integrations` and
+`commerce-woo-webhooks`, each due every minute. The first handles bounded invoice
+work; the second scans a bounded order page and attempts one signed delivery.
+Disabled integrations do no provider work. Inspect the registered host tasks
+after loading the storefront and before claiming that automation is operating.
 
 Nothing needs to register that task by hand. The site lists the plugin in its `plugins`
 array, so the host never fires `plugin:activate` for it; instead the plugin wraps its four
@@ -341,6 +383,9 @@ and the sweeps are idempotent, so concurrent isolates racing the same sweep neve
 double-release or double-send. A hot aggregate therefore retries rather than blocking: the
 contention budget is a measured number recorded in ADR-0019, not a hope. The scaling ceiling
 is that single D1 database.
+
+For backup/restore, invoice reconciliation, stock migrations and offline-payment
+operations, follow [operations](./docs/operations.md).
 
 **Upgrading and rolling back.** Deploy a new version **all at once** (`wrangler deploy`),
 not as a gradual rollout that keeps old and new Workers serving side by side. A release that

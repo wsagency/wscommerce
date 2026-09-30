@@ -1,8 +1,8 @@
 # @otta-sh/site-staging
 
-The Otta **staging storefront + admin**: an EmDash site on Cloudflare Workers backed by
+The EmDash Commerce **reference storefront and admin**: an EmDash site on Cloudflare Workers backed by
 a D1 content database and an R2 media bucket, with the Otta plugin registered **trusted
-in-process** — no plugin sandbox, no Worker Loaders, Workers **free** plan. See [ADR-0006](../../adr/0006-trusted-in-process-deployment.md) for why that is
+in-process**. See [ADR-0006](../../adr/0006-trusted-in-process-deployment.md) for why that is
 allowed and what stays forbidden.
 
 Pages are thin theme shims per [ADR-0003](../../adr/0003-storefront-plugin-routes.md): the
@@ -56,7 +56,7 @@ Three behaviours, deliberately distinct:
 | `STRIPE_PUBLIC_KEY` | What happens |
 |---|---|
 | a valid `pk_test_…` / `pk_live_…` | full checkout: review → pay → confirmation |
-| **unset** | `/checkout` renders review + totals, says "Card payment isn't set up on this store yet.", and creates **no order** (the endpoint refuses too, not just the button) |
+| **unset** | Card payment is unavailable. Enabled bank transfer/COD can still create pending orders; their authenticated receipt actions supply payment evidence. |
 | set but malformed | **the build FAILS** |
 
 That last row is the point. An absent key and a *misspelt variable name* look identical at
@@ -73,10 +73,11 @@ the key.
 The deploy runbook for this site lives in the root [`DEPLOYMENT.md`](../../DEPLOYMENT.md):
 resource creation, the build/deploy ordering, first boot + claim, and failed-first-boot
 recovery are §2; the `global_fetch_strictly_public` ⇒ D1-`session`-off pairing invariant is
-§2.4; the secrets & tokens checklist is §3. There is one deployable, so the only Worker
-secrets are `EMDASH_ENCRYPTION_KEY` (required before first boot) and the optional
-`OTTA_WH_TOKEN` webhook edge gate — every payment and email credential is provisioned in the
-admin console's **Settings** page instead.
+§2.4; the secrets checklist is §3. Provision `EMDASH_ENCRYPTION_KEY` before first boot
+and the optional `OTTA_WH_TOKEN` webhook edge gate. Existing Stripe/email settings use
+the authenticated console. New Solo/e-racuni/Woo credentials use server runtime bindings;
+see [.dev.vars.example](.dev.vars.example) and [integration setup](../../docs/integrations.md).
+Production deployment and external account acceptance remain separate gates.
 
 ## Notes
 
@@ -86,8 +87,20 @@ admin console's **Settings** page instead.
   script is the hold ribbon's bundled countdown, `src/components/HoldRibbon.astro`), and
   `/orders/<orderId>` (the capability-URL confirmation page, which polls with a bounded
   `<meta http-equiv="refresh">` and never claims "paid" on the strength of Stripe's
-  redirect — the webhook is the sole authority). `POST /checkout/new-cart` is the way out
-  of the dead-cart trap. `allowedHosts` is unchanged: browser→Stripe is not plugin egress.
+  redirect — verified settlement supplies payment evidence). Bank transfer and COD
+  freeze their instructions and due dates into the order. COD acceptance permits dispatch
+  while unpaid; a receipt records the exact frozen amount/currency. Declared variants
+  have independent SKU/price/stock, managed in the authenticated Pricing & inventory
+  screen and selected before adding to the cart. `POST /checkout/new-cart` is the way out
+  of the dead-cart trap. Browser-to-Stripe traffic is separate from the plugin's scoped egress.
+  Native inventory keeps cart/order reservations and durable replay claims; commercial
+  writes must use its ports rather than raw CMS stock fields.
+- **Accounting compatibility:** `/wp-json` and `/wp-json/wc/v3` expose the documented
+  scoped Woo REST profile, including frozen order/variant amounts and signed durable
+  created/updated webhooks. These are remote protocol interfaces; PHP Woo plugins do not
+  execute in this site. Direct Solo/e-racuni invoice jobs are disabled by default and
+  have a single configured owner. See [profile](../../packages/compat-woocommerce/README.md)
+  and [operations](../../docs/operations.md) for recovery and live acceptance.
 - **Still a follow-up:** the x402 payment gate (designed to live at THIS Astro page layer)
   and the digital-download delivery page (the plugin route authorizes; the site serves the
   bytes / signed URL). Note for that task: `entitlements/download` is a public existence oracle

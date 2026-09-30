@@ -24,7 +24,7 @@ Retain Otta's pure domain, EmDash document/CAS stores, plugin and admin integrat
 
 Invoice ports carry a frozen order/billing/tax snapshot and an external correlation key. Solo and e-racuni are interchangeable providers, with issue/lookup/correction capabilities explicitly advertised. Durable integration jobs record queued, leased, successful, retryable, terminal and unknown outcomes. A provider without confirmed idempotency uses lookup or operator reconciliation after an unknown result. Credentials enter only through server settings/secrets and injected scoped HTTP transport.
 
-Offline payments support bank transfer and COD as native order payment methods, with buyer instructions and authorized manual confirmation. Unverified public input cannot mark an order paid. Shipping has configured flat/free/pickup methods and a carrier adapter boundary. MBE implementation and live booking require its actual API contract; an invented endpoint is prohibited.
+Offline payments support bank transfer and COD as native order payment methods, with buyer instructions and authorized manual confirmation. Unverified public input cannot mark an order paid. Shipping has configured flat/free methods and a carrier adapter boundary. A zero-priced named collection method uses the existing address-based flat-rate flow; dedicated pickup scheduling remains a further module. MBE implementation and live booking require its actual API contract; an invented endpoint is prohibited.
 
 ## WooCommerce compatibility is a core feature
 
