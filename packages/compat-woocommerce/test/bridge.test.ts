@@ -2,6 +2,27 @@ import { describe, expect, it } from "vitest";
 import { encodeWooHttpRequest, decodeWooHttpResponse, handleWooHttpBridge } from "../src/index.js";
 import type { WooHandlerOptions } from "../src/index.js";
 describe("thin native host HTTP bridge", () => {
+	it("stops reading an oversized body without trusting Content-Length", async () => {
+		let chunks = 0,
+			cancelled = false;
+		const stream = new ReadableStream<Uint8Array>({
+			pull(controller) {
+				if (++chunks > 10) controller.close();
+				else controller.enqueue(new Uint8Array(65536));
+			},
+			cancel() {
+				cancelled = true;
+			},
+		});
+		const init = { method: "PUT", body: stream, duplex: "half" } as RequestInit & {
+			duplex: "half";
+		};
+		await expect(
+			encodeWooHttpRequest(new Request("https://shop.test/wp-json/wc/v3/orders/1", init)),
+		).rejects.toMatchObject({ status: 400 });
+		expect(cancelled).toBe(true);
+		expect(chunks).toBeLessThan(10);
+	});
 	it("preserves server credentials and exact body without forwarding ambient cookies", async () => {
 		const body = '{ "meta_data": [] }';
 		const input = await encodeWooHttpRequest(

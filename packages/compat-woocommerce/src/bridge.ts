@@ -13,6 +13,31 @@ export interface WooHttpResponse {
 	body: string;
 }
 const FORWARDED_HEADERS = ["authorization", "content-type", "idempotency-key"];
+async function boundedBody(request: Request): Promise<string> {
+	if (!request.body) return "";
+	const reader = request.body.getReader(),
+		decoder = new TextDecoder();
+	let bytes = 0,
+		body = "";
+	try {
+		while (true) {
+			const chunk = await reader.read();
+			if (chunk.done) return body + decoder.decode();
+			bytes += chunk.value.byteLength;
+			if (bytes > 262144) {
+				await reader.cancel();
+				throw new WooMutationError(
+					"woocommerce_rest_invalid_param",
+					"Request body is too large.",
+					400,
+				);
+			}
+			body += decoder.decode(chunk.value, { stream: true });
+		}
+	} finally {
+		reader.releaseLock();
+	}
+}
 /** HTTP shim to the anonymous host plugin route. Never log this ephemeral authenticated envelope. */
 export async function encodeWooHttpRequest(request: Request): Promise<WooHttpRequest> {
 	const headers: Record<string, string> = {};
@@ -24,7 +49,7 @@ export async function encodeWooHttpRequest(request: Request): Promise<WooHttpReq
 		throw new WooMutationError("woocommerce_rest_invalid_param", "Request body is too large.", 400);
 	const body = ["GET", "HEAD", "OPTIONS"].includes(request.method)
 		? undefined
-		: await request.text();
+		: await boundedBody(request);
 	if (body !== undefined && new TextEncoder().encode(body).length > 262144)
 		throw new WooMutationError("woocommerce_rest_invalid_param", "Request body is too large.", 400);
 	return {

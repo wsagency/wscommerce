@@ -33,6 +33,18 @@ async function setup() {
 	};
 }
 describe("durable signed Woo webhook delivery over migrated SQLite", () => {
+	it("cannot finish a delivery after its lease expires during transport", async () => {
+		const { outbox, job } = await setup();
+		await outbox.enqueue(job);
+		expect(
+			await dispatchWooWebhook(outbox, async () => ({ status: 204 }), {
+				now: "2026-09-30T00:00:00Z",
+				leaseMs: 1000,
+				clockNow: () => "2026-09-30T00:00:02Z",
+			}),
+		).toBe("lease_lost");
+		expect((await outbox.get("delivery-1"))?.state).toBe("leased");
+	});
 	it("deduplicates a delivery and claims it once through CAS", async () => {
 		const { outbox, job } = await setup();
 		await outbox.enqueue(job);

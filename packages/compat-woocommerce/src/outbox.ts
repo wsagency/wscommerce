@@ -168,7 +168,7 @@ export type WooWebhookTransport = (input: {
 export async function dispatchWooWebhook(
 	outbox: WooWebhookOutboxPort,
 	transport: WooWebhookTransport,
-	options: { now: string; leaseMs?: number; maxAttempts?: number },
+	options: { now: string; leaseMs?: number; maxAttempts?: number; clockNow?: () => string },
 ): Promise<"delivered" | "retryable" | "terminal" | "idle" | "lease_lost"> {
 	const maxAttempts = options.maxAttempts ?? 10;
 	if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 100)
@@ -200,12 +200,13 @@ export async function dispatchWooWebhook(
 	}
 	if (state === "retryable" && lease.attempts >= maxAttempts) state = "terminal";
 	const delay = Math.min(1000 * 2 ** Math.min(lease.attempts - 1, 16), 3600000);
+	const finishedAt = options.clockNow?.() ?? options.now;
 	const saved = await outbox.finish(lease, {
 		state,
-		now: options.now,
+		now: finishedAt,
 		...(status === undefined ? {} : { status }),
 		...(state === "retryable"
-			? { availableAt: new Date(new Date(options.now).valueOf() + delay).toISOString() }
+			? { availableAt: new Date(new Date(finishedAt).valueOf() + delay).toISOString() }
 			: {}),
 	});
 	return saved ? state : "lease_lost";
