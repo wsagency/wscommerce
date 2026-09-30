@@ -341,6 +341,7 @@ export interface ProductSummary {
 }
 
 export interface ProductRecord {
+	readonly variants?: readonly ProductVariantRecord[];
 	readonly priceTaxMode?: "exclusive" | "inclusive";
 	readonly productId: string;
 	readonly sku: string | null;
@@ -362,6 +363,18 @@ export interface ProductRecord {
 	readonly deletedAt: string | null;
 	readonly onHand: number | null;
 	readonly createdAt: string;
+	readonly updatedAt: string;
+}
+
+export interface ProductVariantRecord {
+	readonly productId: string;
+	readonly variantKey: string;
+	readonly title: string | null;
+	readonly sku: string | null;
+	readonly priceCents: number | null;
+	readonly currency: string | null;
+	readonly onHand: number | null;
+	readonly orphanedAt: string | null;
 	readonly updatedAt: string;
 }
 

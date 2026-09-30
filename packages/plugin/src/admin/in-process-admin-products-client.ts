@@ -67,6 +67,7 @@ import {
 	type ProductListFilter,
 	type ProductSummary,
 	type UpdateProductCommerceFieldsInput,
+	listProductVariants,
 } from "@otta-sh/domain";
 import {
 	CommerceInputError,
@@ -77,7 +78,10 @@ import {
 	requireMoney,
 	requireNullableInteger,
 	requireWatermark,
+	requireVariantKey,
+	requireIdempotencyKey,
 } from "../commerce/commerce-input.js";
+import { InProcessCommerceClient } from "../commerce/in-process-commerce-client.js";
 import {
 	createInProcessCommerceStores,
 	type InProcessCommerceStores,
@@ -95,6 +99,9 @@ import type {
 	RestockResult,
 	StockRemovalResult,
 	TaxClassWire,
+	AdminVariantEditWire,
+	AdminVariantEditResult,
+	AdminVariantStockResult,
 } from "./admin-products-surface.js";
 
 /** The page-size bounds the list query schema enforced (`productsListQuery`:
@@ -114,6 +121,7 @@ const MAX_STOCK_MOVEMENT_QTY = 1_000_000_000;
 
 export class InProcessAdminProductsClient implements AdminProductsSurface {
 	readonly #stores: InProcessCommerceStores;
+	readonly #commerce: InProcessCommerceClient;
 
 	/**
 	 * Takes the whole context and constructs the adapters once per client, the
@@ -122,6 +130,7 @@ export class InProcessAdminProductsClient implements AdminProductsSurface {
 	 */
 	constructor(ctx: PluginContext, options: InProcessCommerceStoresOptions = {}) {
 		this.#stores = createInProcessCommerceStores(ctx, options);
+		this.#commerce = new InProcessCommerceClient(ctx, options);
 	}
 
 	/**
@@ -171,7 +180,116 @@ export class InProcessAdminProductsClient implements AdminProductsSurface {
 		// last place that should be the one guessing.
 		const onHand =
 			product.sku === null ? null : await this.#stores.inventory.findOnHand(product.sku);
-		return toProductDetailWire(product, onHand);
+		const variants = await listProductVariants(
+			this.#stores.productCommerce,
+			toProductId(productId),
+		);
+		return {
+			...toProductDetailWire(product, onHand),
+			...(variants.length === 0
+				? {}
+				: {
+						variants: variants.map((row) => ({
+							productId: row.productId,
+							variantKey: row.variantKey,
+							title: row.title,
+							sku: row.sku,
+							priceCents: row.price?.amount ?? null,
+							currency: row.price?.currency ?? null,
+							onHand: row.onHand,
+							orphanedAt: row.orphanedAt?.toISOString() ?? null,
+							updatedAt: row.updatedAt.toISOString(),
+						})),
+					}),
+		};
+	}
+
+	/** Edit a CMS-declared live variant through the validated native commerce client. */
+	async updateVariant(
+		productId: string,
+		variantKey: string,
+		body: AdminVariantEditWire,
+		key: string,
+	): Promise<AdminVariantEditResult> {
+		try {
+			requireIdToken("productId", productId);
+			const parent = await this.#stores.productCommerce.getByProductId(toProductId(productId));
+			if (parent === null || parent.deletedAt !== null)
+				return { ok: false, reason: "VARIANT_NOT_FOUND" };
+			return await this.#commerce.updateProductVariantFields(
+				productId,
+				variantKey,
+				{
+					...(body.sku === undefined ? {} : { sku: body.sku }),
+					...(body.price === undefined ? {} : { price: body.price }),
+				},
+				body.expectedUpdatedAt,
+				key,
+			);
+		} catch (err) {
+			if (isCommerceInputError(err))
+				return { ok: false, reason: "INVALID_FIELD", field: err.field };
+			throw err;
+		}
+	}
+
+	/** Available units only; the existing ledger and guarded movement preserve reservations. */
+	async moveVariantStock(
+		productId: string,
+		variantKey: string,
+		body: {
+			direction: "restock" | "removal";
+			qty: number;
+			onHand: number;
+			expectedUpdatedAt: string;
+		},
+		key: string,
+	): Promise<AdminVariantStockResult> {
+		try {
+			requireIdToken("productId", productId);
+			requireVariantKey(variantKey);
+			requireWatermark("expectedUpdatedAt", body.expectedUpdatedAt);
+			requireIdempotencyKey(key);
+			requireStockMovementQty(body.qty);
+			if (
+				(body.direction !== "restock" && body.direction !== "removal") ||
+				!Number.isSafeInteger(body.onHand) ||
+				body.onHand < 0
+			)
+				return { ok: false, reason: "invalid" };
+		} catch (err) {
+			if (isCommerceInputError(err)) return { ok: false, reason: "invalid" };
+			throw err;
+		}
+		const parent = await this.#stores.productCommerce.getByProductId(toProductId(productId));
+		if (parent === null || parent.deletedAt !== null) return { ok: false, reason: "not_found" };
+		const row = (
+			await listProductVariants(this.#stores.productCommerce, toProductId(productId))
+		).find(
+			(variant) =>
+				variant.variantKey === variantKey &&
+				variant.productId === productId &&
+				variant.orphanedAt === null,
+		);
+		if (row === undefined) return { ok: false, reason: "not_found" };
+		if (row.updatedAt.toISOString() !== body.expectedUpdatedAt)
+			return { ok: false, reason: "stale" };
+		if (row.sku === null) return { ok: false, reason: "no_sku" };
+		if (row.onHand === null) return { ok: false, reason: "no_inventory_row" };
+		if (row.onHand !== body.onHand) return { ok: false, reason: "stock_changed" };
+		const result =
+			body.direction === "restock"
+				? await restockUseCase(this.#stores.inventory, row.sku, body.qty, toIdempotencyKey(key))
+				: await removeStockUseCase(
+						this.#stores.inventory,
+						row.sku,
+						body.qty,
+						toIdempotencyKey(key),
+					);
+		if (result.ok) return { ok: true, onHand: result.onHand };
+		if (result.reason === "INSUFFICIENT_STOCK")
+			return { ok: false, reason: "insufficient_stock", onHand: result.onHand };
+		return { ok: false, reason: "no_inventory_row" };
 	}
 
 	/**

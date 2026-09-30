@@ -234,13 +234,16 @@ describe("the Pricing & inventory write path (workerd sandbox)", () => {
 	test("EVERY id in PRODUCTS_ACTION_IDS dispatches, and the retired `-review` step is not among them", async () => {
 		// The set is read straight off the dispatch table, so the gate and the table
 		// cannot disagree about what exists — the combination that used to blank a
-		// console. FIVE writes: three split saves, a restock and a removal.
+		// console. Five product writes plus variant edit/add/remove.
 		expect([...PRODUCTS_ACTION_IDS].toSorted()).toEqual([
 			"products:remove-stock",
 			"products:restock",
 			"products:save-identity",
 			"products:save-price",
 			"products:save-shipping",
+			"products:save-variant",
+			"products:variant-remove-stock",
+			"products:variant-restock",
 		]);
 		// An id nothing reachable can send is dead surface, and an unreachable
 		// safety check is not a safety check (ADR-0015's amendment). The React

@@ -82,6 +82,8 @@ import {
 	type ProductEditWire,
 	type RestockResult,
 	type StockRemovalResult,
+	type AdminVariantEditWire,
+	type AdminVariantEditResult,
 } from "./admin-products-surface.js";
 import { parseMinorUnitsInput } from "./money-input.js";
 import { readString, screenActions, type Notice } from "./scaffold/index.js";
@@ -101,6 +103,9 @@ const ACTION_RESTOCK = PRODUCTS_ACTIONS.custom("restock");
  *  reversible only by a separate, forgettable manual operation). The surface
  *  confirms it for itself before this ever runs. */
 const ACTION_REMOVE_STOCK = PRODUCTS_ACTIONS.custom("remove-stock");
+const ACTION_SAVE_VARIANT = PRODUCTS_ACTIONS.custom("save-variant");
+const ACTION_VARIANT_RESTOCK = PRODUCTS_ACTIONS.custom("variant-restock");
+const ACTION_VARIANT_REMOVE = PRODUCTS_ACTIONS.custom("variant-remove-stock");
 
 /**
  * What a write returns instead of a block tree.
@@ -688,6 +693,118 @@ function stockFailureNotice(
 	}
 }
 
+// -- declared variants --------------------------------------------------------
+
+/** A compact deterministic key includes identity, observed watermarks and all command fields. */
+async function variantCommandKey(command: readonly unknown[]): Promise<string> {
+	const bytes = await crypto.subtle.digest(
+		"SHA-256",
+		new TextEncoder().encode(JSON.stringify(command)),
+	);
+	return `admin-variant:${Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+const saveVariantAction: ProductsAction = async (client, payload) => {
+	const productId = readString(payload["productId"]);
+	const variantKey = readString(payload["variantKey"]);
+	const expectedUpdatedAt = readString(payload["expectedUpdatedAt"]);
+	if (!productId || !variantKey || !expectedUpdatedAt || client.updateVariant === undefined)
+		return applied(UNREADABLE);
+	const sku = readString(payload["sku"])?.trim();
+	const rawPrice = readString(payload["priceCents"])?.trim();
+	const currency = readString(payload["currency"])?.trim().toUpperCase();
+	const amount = rawPrice ? parseOnHand(rawPrice) : null;
+	if (
+		(rawPrice && (amount === null || amount <= 0 || !currency || !/^[A-Z]{3}$/.test(currency))) ||
+		(!sku && !rawPrice)
+	)
+		return applied({
+			variant: "error",
+			title: "Variant not saved",
+			description:
+				"Enter a SKU or a positive whole price in minor units with its 3-letter currency. Leave an unset price blank.",
+		});
+	const body: AdminVariantEditWire = {
+		expectedUpdatedAt,
+		...(sku ? { sku } : {}),
+		...(rawPrice && amount !== null && currency ? { price: { amount, currency } } : {}),
+	};
+	const result = await client.updateVariant(
+		productId,
+		variantKey,
+		body,
+		await variantCommandKey(["edit", productId, variantKey, body]),
+	);
+	return applied(variantEditNotice(result));
+};
+
+function variantEditNotice(result: AdminVariantEditResult): Notice {
+	if (result.ok)
+		return {
+			variant: "default",
+			title: "Variant saved",
+			description:
+				"The declared variant's SKU and price were saved. Its CMS key and name are unchanged.",
+		};
+	const messages: Record<Extract<AdminVariantEditResult, { ok: false }>["reason"], string> = {
+		VARIANT_NOT_FOUND:
+			"This variant is missing, orphaned, or belongs to another product. Restore its declaration in the CMS before editing it.",
+		STALE_EDIT:
+			"This variant changed after you opened it. Reload and review its current values before saving again.",
+		CURRENCY_MISMATCH:
+			"The variant currency must match its existing currency and the product currency.",
+		INVALID_FIELD: "Check the SKU, positive integer price and currency before saving again.",
+		SKU_TAKEN: "That SKU already belongs to another sellable product or variant.",
+		SKU_STOCK_CONFLICT:
+			"The target SKU already has stock. Choose an unused SKU; stock is never merged during a rename.",
+		SKU_HELD_STOCK:
+			"This SKU has held stock in live carts or orders. Wait for those holds to finish before renaming it.",
+	};
+	return { variant: "error", title: "Variant not saved", description: messages[result.reason] };
+}
+
+function variantStockAction(direction: "restock" | "removal"): ProductsAction {
+	return async (client, payload) => {
+		const productId = readString(payload["productId"]);
+		const variantKey = readString(payload["variantKey"]);
+		const expectedUpdatedAt = readString(payload["expectedUpdatedAt"]);
+		const qty = parseStockQty(readString(payload["qty"]) ?? "");
+		const onHand = parseOnHand(payload["onHand"]);
+		if (
+			!productId ||
+			!variantKey ||
+			!expectedUpdatedAt ||
+			qty === null ||
+			onHand === null ||
+			client.moveVariantStock === undefined
+		)
+			return applied(UNREADABLE);
+		const body = { direction, qty, onHand, expectedUpdatedAt };
+		const result = await client.moveVariantStock(
+			productId,
+			variantKey,
+			body,
+			await variantCommandKey(["stock", productId, variantKey, body]),
+		);
+		if (result.ok)
+			return applied({
+				variant: "default",
+				title: direction === "restock" ? "Variant stock added" : "Variant stock removed",
+				description: `Available stock is now ${result.onHand}. Existing held units are preserved.`,
+			});
+		return applied({
+			variant: "error",
+			title: "Variant stock not changed",
+			description:
+				result.reason === "stale" || result.reason === "stock_changed"
+					? "The variant or available count changed. Reload and review before submitting another movement."
+					: result.reason === "insufficient_stock"
+						? "Only available units can be removed. The requested quantity exceeds available stock; held units are protected."
+						: "A live declared variant with a SKU and stock record is required. Missing, orphaned and deleted variants cannot be changed here.",
+		});
+	};
+}
+
 // -- dispatch -----------------------------------------------------------------
 
 /**
@@ -708,6 +825,9 @@ const PRODUCTS_ACTIONS_BY_ID: Readonly<Record<string, ProductsAction>> = {
 	[ACTION_SAVE_SHIPPING]: saveAction,
 	[ACTION_RESTOCK]: restockAction,
 	[ACTION_REMOVE_STOCK]: removeStockAction,
+	[ACTION_SAVE_VARIANT]: saveVariantAction,
+	[ACTION_VARIANT_RESTOCK]: variantStockAction("restock"),
+	[ACTION_VARIANT_REMOVE]: variantStockAction("removal"),
 };
 
 /**

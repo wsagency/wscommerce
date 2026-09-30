@@ -32,22 +32,18 @@ test("native mixed-cart quote excludes COD without creating an order and preserv
 		const quote = await h.client.quoteCheckout({ cartId });
 		expect(quote).toMatchObject({ ok: true, codEligible: true });
 		const route = createCheckoutSummaryRouteHandler();
-		expect(
-			await route(
-				{ input: { cartId }, request: new Request("https://local.test/checkout") },
-				h.ctx,
-			),
-		).toMatchObject({ ok: true, paymentMethods: [{ id: "cod" }] });
+		const request = { url: "https://local.test/checkout", method: "GET", headers: {} };
+		expect(await route({ input: { cartId }, request }, h.ctx)).toMatchObject({
+			ok: true,
+			paymentMethods: [{ id: "cod" }],
+		});
 		await h.client.addCartLine(cartId, "digital", "digital", 1, "digital-add");
 		expect(await h.client.quoteCheckout({ cartId })).toMatchObject({
 			ok: true,
 			requiresShipping: true,
 			codEligible: false,
 		});
-		const summary = await route(
-			{ input: { cartId }, request: new Request("https://local.test/checkout") },
-			h.ctx,
-		);
+		const summary = await route({ input: { cartId }, request }, h.ctx);
 		expect(summary).toMatchObject({ ok: true, paymentMethods: [] });
 		expect(
 			await h.stores.orderStore.getByIdempotencyKey(idempotencyKey(`checkout:${cartId}`)),
@@ -56,12 +52,10 @@ test("native mixed-cart quote excludes COD without creating an order and preserv
 		await h.ctx.kv.set(OFFLINE_SETTING_KEYS.bankEnabled, "true");
 		await h.ctx.kv.set(OFFLINE_SETTING_KEYS.bankInstructions, "Local test bank instructions");
 		await h.ctx.kv.set(OFFLINE_SETTING_KEYS.bankWindowHours, "72");
-		expect(
-			await route(
-				{ input: { cartId }, request: new Request("https://local.test/checkout") },
-				h.ctx,
-			),
-		).toMatchObject({ ok: true, paymentMethods: [{ id: "bank_transfer" }] });
+		expect(await route({ input: { cartId }, request }, h.ctx)).toMatchObject({
+			ok: true,
+			paymentMethods: [{ id: "bank_transfer" }],
+		});
 		expect(h.egressAttempts()).toBe(0);
 	} finally {
 		await h.close();

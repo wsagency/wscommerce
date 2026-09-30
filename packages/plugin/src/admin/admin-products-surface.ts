@@ -43,6 +43,8 @@ export interface ProductSummaryWire {
  *  read (`onHand`) the detail leaf fetches for the ONE product opened; the
  *  list gets the same field from its per-page join instead. */
 export interface ProductDetailWire {
+	/** Private variant projection, including orphaned rows and exact available counts. */
+	variants?: AdminProductVariantWire[];
 	priceTaxMode?: "exclusive" | "inclusive";
 	productId: string;
 	sku: string | null;
@@ -85,6 +87,34 @@ export interface ProductDetailWire {
 	createdAt: string;
 	updatedAt: string;
 }
+
+export interface AdminProductVariantWire {
+	productId: string;
+	variantKey: string;
+	title: string | null;
+	sku: string | null;
+	priceCents: number | null;
+	currency: string | null;
+	onHand: number | null;
+	orphanedAt: string | null;
+	updatedAt: string;
+}
+
+export interface AdminVariantEditWire {
+	expectedUpdatedAt: string;
+	sku?: string;
+	price?: { amount: number; currency: string };
+}
+
+export type AdminVariantEditResult =
+	import("../product-commerce/commerce-client.js").VariantUpdateResult;
+export type AdminVariantStockResult =
+	| { ok: true; onHand: number }
+	| {
+			ok: false;
+			reason: "not_found" | "no_sku" | "no_inventory_row" | "invalid" | "stale" | "stock_changed";
+	  }
+	| { ok: false; reason: "insufficient_stock"; onHand: number };
 
 /** The list filter the console builds from its filter form. `active` is a
  *  tri-state string ("" ⇒ both) so the wire query mirrors the service's
@@ -226,6 +256,23 @@ export type StockRemovalResult =
  * one class happens to expose.
  */
 export interface AdminProductsSurface {
+	updateVariant?(
+		productId: string,
+		variantKey: string,
+		body: AdminVariantEditWire,
+		key: string,
+	): Promise<AdminVariantEditResult>;
+	moveVariantStock?(
+		productId: string,
+		variantKey: string,
+		body: {
+			direction: "restock" | "removal";
+			qty: number;
+			onHand: number;
+			expectedUpdatedAt: string;
+		},
+		key: string,
+	): Promise<AdminVariantStockResult>;
 	/**
 	 * Update the commerce-owned fields of one product (admin-UX Increment 2 slice
 	 * 2). `key` is the stable idempotency key (a double-submit dedupes). Every

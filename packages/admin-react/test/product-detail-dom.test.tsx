@@ -139,6 +139,175 @@ async function mountDetail(over: Partial<ProductRecord> = {}): Promise<HTMLEleme
 	return mounted.container;
 }
 
+test("product detail renders declared variants with read-only CMS identity and accessible SKU, price and stock controls", async () => {
+	const variant = {
+		productId: "p_base",
+		variantKey: "blue",
+		title: "Blue / large",
+		sku: null,
+		priceCents: null,
+		currency: null,
+		onHand: null,
+		orphanedAt: null,
+		updatedAt: BASE.updatedAt,
+	};
+	const container = await mountDetail({
+		variants: [
+			variant,
+			{
+				...variant,
+				variantKey: "old",
+				title: "Old / archived",
+				sku: "OLD",
+				priceCents: 1000,
+				currency: "USD",
+				onHand: 5,
+				orphanedAt: BASE.updatedAt,
+			},
+		],
+	});
+	const live = container.querySelector('[data-testid="variant-blue"]');
+	const orphan = container.querySelector('[data-testid="variant-old"]');
+	if (!live || !orphan) throw new Error("variants not rendered on the real product screen");
+	expect(live.textContent).toContain("Blue / large");
+	expect(live.textContent).toContain("CMS key");
+	expect(live.querySelector('input[aria-label="SKU for Blue / large"]')).not.toBeNull();
+	expect(
+		live.querySelector('input[aria-label="Price in minor units for Blue / large"]'),
+	).not.toBeNull();
+	expect(live.querySelector('input[aria-label="Currency for Blue / large"]')).not.toBeNull();
+	expect(live.querySelector('[data-testid="variant-stock-controls"]')).toBeNull();
+	expect(orphan.textContent).toContain("Orphaned");
+	expect(orphan.textContent).toContain("5");
+	expect(orphan.querySelectorAll("input,button")).toHaveLength(0);
+	expect(container.querySelectorAll('input[name="variantKey"],input[name="title"]')).toHaveLength(
+		0,
+	);
+});
+
+test("saving a variant sends its own revision and preserves another variant's draft through the refresh", async () => {
+	const blue = {
+		productId: "p_base",
+		variantKey: "blue",
+		title: "Blue / large",
+		sku: "BLUE",
+		priceCents: 1000,
+		currency: "USD",
+		onHand: 7,
+		orphanedAt: null,
+		updatedAt: BASE.updatedAt,
+	};
+	const red = { ...blue, variantKey: "red", title: "Red / small", sku: "RED" };
+	let variants = [blue, red];
+	apiFetch.mockImplementation((_input, init) => {
+		const sent = JSON.parse(String(init?.body ?? "{}")) as { type?: string };
+		if (sent.type !== "otta_console_act") return Promise.resolve(payload({ variants }));
+		variants = [{ ...blue, priceCents: 2500, updatedAt: "2026-03-04T10:20:00.000Z" }, red];
+		return Promise.resolve(
+			actPayload({ variant: "default", title: "Variant saved", description: "Updated." }),
+		);
+	});
+	mounted = await mount(NODE);
+	await mounted.rerender(NODE);
+	const container = mounted.container;
+	const bluePrice = container.querySelector<HTMLInputElement>('[data-testid="variant-price-blue"]');
+	const redSku = container.querySelector<HTMLInputElement>('[data-testid="variant-sku-red"]');
+	const save = container.querySelector('[data-testid="variant-save-blue"]');
+	if (!bluePrice || !redSku || !save) throw new Error("missing variant controls");
+	await type(bluePrice, "2500");
+	await type(redSku, "RED-DRAFT");
+	await fire(save, "click");
+	await mounted.rerender(NODE);
+	await mounted.rerender(NODE);
+	expect(
+		apiFetch.mock.calls.map(([, init]) => JSON.parse(String(init?.body ?? "{}"))),
+	).toContainEqual(
+		expect.objectContaining({
+			type: "otta_console_act",
+			action_id: "products:save-variant",
+			value: {
+				productId: "p_base",
+				variantKey: "blue",
+				expectedUpdatedAt: BASE.updatedAt,
+				sku: "BLUE",
+				priceCents: "2500",
+				currency: "USD",
+			},
+		}),
+	);
+	expect(
+		container.querySelector<HTMLInputElement>('[data-testid="variant-price-blue"]')?.value,
+	).toBe("2500");
+	expect(
+		container.querySelector<HTMLButtonElement>('[data-testid="variant-save-blue"]')?.disabled,
+	).toBe(true);
+	expect(container.querySelector<HTMLInputElement>('[data-testid="variant-sku-red"]')?.value).toBe(
+		"RED-DRAFT",
+	);
+	const back = container.querySelector('[data-testid="products-back"]');
+	if (!back) throw new Error("missing Back control");
+	await fire(back, "click");
+	expect(container.querySelector('[data-testid="detail-leave-confirm"]')?.textContent).toContain(
+		"Variants",
+	);
+});
+
+test("variant stock movement confirms the quantity and sends the observed count without a caller-selected SKU", async () => {
+	const variant = {
+		productId: "p_base",
+		variantKey: "blue",
+		title: "Blue / large",
+		sku: "BLUE",
+		priceCents: 1000,
+		currency: "USD",
+		onHand: 7,
+		orphanedAt: null,
+		updatedAt: BASE.updatedAt,
+	};
+	apiFetch.mockImplementation((_input, init) => {
+		const sent = JSON.parse(String(init?.body ?? "{}")) as { type?: string };
+		return Promise.resolve(
+			sent.type === "otta_console_act"
+				? actPayload({ variant: "default", title: "Stock added", description: "Updated." })
+				: payload({ variants: [variant] }),
+		);
+	});
+	mounted = await mount(NODE);
+	await mounted.rerender(NODE);
+	const container = mounted.container;
+	const quantity = container.querySelector<HTMLInputElement>('[data-testid="variant-qty-blue"]');
+	const add = container.querySelector('[data-testid="variant-restock-blue"]');
+	if (!quantity || !add) throw new Error("missing variant stock controls");
+	await type(quantity, "2");
+	await fire(add, "click");
+	const writes = () =>
+		apiFetch.mock.calls
+			.map(([, init]) => JSON.parse(String(init?.body ?? "{}")))
+			.filter((sent) => sent.type === "otta_console_act");
+	expect(writes()).toHaveLength(0);
+	expect(
+		container.querySelector('dialog[open] [data-testid="otta-confirm-text"]')?.textContent,
+	).toContain("Blue / large");
+	expect(
+		container.querySelector('dialog[open] [data-testid="otta-confirm-text"]')?.textContent,
+	).toContain("2");
+	const confirm = container.querySelector('dialog[open] [data-testid="otta-confirm-yes"]');
+	if (!confirm) throw new Error("missing stock confirm");
+	await fire(confirm, "click");
+	expect(writes()).toContainEqual(
+		expect.objectContaining({
+			action_id: "products:variant-restock",
+			value: {
+				productId: "p_base",
+				variantKey: "blue",
+				expectedUpdatedAt: BASE.updatedAt,
+				onHand: "7",
+				qty: "2",
+			},
+		}),
+	);
+});
+
 /** The strip's value cell for one label, and only that one. */
 function field(container: HTMLElement, label: string): HTMLElement {
 	const strip = container.querySelector('[data-testid="detail-identity"]');

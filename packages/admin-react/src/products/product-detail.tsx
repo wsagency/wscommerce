@@ -139,6 +139,7 @@ import {
 	panelStyle,
 } from "../ui.js";
 import { UNTITLED, toned } from "./products-list.js";
+import { ProductVariants } from "./product-variants.js";
 
 const TAB_LABELS = PRODUCT_TAB_LABELS;
 
@@ -530,6 +531,11 @@ export function ProductDetail({
 		price: false,
 		shipping: false,
 	});
+	const [variantsDirty, setVariantsDirty] = React.useState(false);
+	const [variantFormKeys, setVariantFormKeys] = React.useState<Readonly<Record<string, number>>>(
+		{},
+	);
+	const savedVariantKey = React.useRef<string | null>(null);
 	const reportDirty = React.useCallback<DirtyReporter>((section, value) => {
 		setDirty((prev) => (prev[section] === value ? prev : { ...prev, [section]: value }));
 	}, []);
@@ -552,7 +558,7 @@ export function ProductDetail({
 	// twice, so both read this one predicate rather than each deciding. Computed
 	// HERE, above the loading branch, because the two effects below are hooks and
 	// the screen outside needs the answer before this component has a record.
-	const holdsWork = leaveNeedsConfirm(dirty);
+	const holdsWork = leaveNeedsConfirm(dirty) || variantsDirty;
 	React.useEffect(() => {
 		onUnsavedChange?.(holdsWork);
 	}, [holdsWork, onUnsavedChange]);
@@ -604,6 +610,13 @@ export function ProductDetail({
 			const saved = savedSection.current;
 			savedSection.current = null;
 			setFormKeys((prev) => nextFormKeys(prev, saved));
+			const variantKey = savedVariantKey.current;
+			savedVariantKey.current = null;
+			if (variantKey !== null)
+				setVariantFormKeys((previous) => ({
+					...previous,
+					[variantKey]: (previous[variantKey] ?? 0) + 1,
+				}));
 		});
 		return () => {
 			cancelled = true;
@@ -659,6 +672,9 @@ export function ProductDetail({
 			// move (see `refusalKeepsDraft`). The re-read happens either way — every
 			// other form's watermark moved with it.
 			savedSection.current = refusalKeepsDraft(outcome) ? null : sectionForAction(action.actionId);
+			if (action.actionId === "products:save-variant" && outcome?.variant !== "error") {
+				savedVariantKey.current = action.value["variantKey"] ?? null;
+			}
 			if (slot === undefined) {
 				setNotice(outcome);
 			} else {
@@ -905,6 +921,46 @@ export function ProductDetail({
 				]}
 			/>
 
+			<ProductVariants
+				product={p}
+				busy={busy}
+				formKeys={variantFormKeys}
+				onDirtyChange={setVariantsDirty}
+				onSave={(value) =>
+					dispatch({
+						actionId: "products:save-variant",
+						value,
+						title: "",
+						text: "",
+						confirmLabel: "",
+						denyLabel: "",
+					})
+				}
+				onStock={({ variant, direction, qty, onHand }) => {
+					const confirm =
+						direction === "restock"
+							? addStockConfirm(qty, variant.sku ?? "", onHand)
+							: removeStockConfirm(qty);
+					setPending({
+						actionId:
+							direction === "restock"
+								? "products:variant-restock"
+								: "products:variant-remove-stock",
+						value: {
+							productId: p.productId,
+							variantKey: variant.variantKey,
+							expectedUpdatedAt: variant.updatedAt,
+							onHand: String(onHand),
+							qty: String(qty),
+						},
+						title: confirm.title,
+						text: `${variant.title ?? variant.variantKey}: ${confirm.text}`,
+						confirmLabel: confirm.confirm,
+						denyLabel: confirm.deny,
+					});
+				}}
+			/>
+
 			{/* Two dialogs, never both open: the confirm below is modal, which makes
 			    the Back button behind it inert, and this one is reachable only from
 			    that button. The wrapper is how a test tells them apart — the dialog
@@ -912,6 +968,7 @@ export function ProductDetail({
 			<LeaveConfirm
 				open={leaving}
 				dirty={dirty}
+				variantsDirty={variantsDirty}
 				onStay={() => setLeaving(false)}
 				onLeave={() => {
 					setLeaving(false);
@@ -925,7 +982,11 @@ export function ProductDetail({
 				text={pending?.text ?? ""}
 				confirmLabel={pending?.confirmLabel ?? ""}
 				denyLabel={pending?.denyLabel ?? ""}
-				confirmTone={pending?.slot === "stock-add" ? "neutral" : "danger"}
+				confirmTone={
+					pending?.slot === "stock-add" || pending?.actionId === "products:variant-restock"
+						? "neutral"
+						: "danger"
+				}
 				onDeny={() => setPending(null)}
 				onConfirm={() => {
 					if (pending !== null) dispatch(pending);
@@ -949,15 +1010,22 @@ export function ProductDetail({
 export function LeaveConfirm({
 	open,
 	dirty,
+	variantsDirty = false,
 	onStay,
 	onLeave,
 }: {
 	open: boolean;
 	dirty: Readonly<Record<ProductSection, boolean>>;
+	variantsDirty?: boolean;
 	onStay: () => void;
 	onLeave: () => void;
 }): React.ReactElement {
-	const confirm = open ? leaveWithoutSavingConfirm(dirtySectionLabels(dirty)) : null;
+	const confirm = open
+		? leaveWithoutSavingConfirm([
+				...dirtySectionLabels(dirty),
+				...(variantsDirty ? ["Variants"] : []),
+			])
+		: null;
 	return (
 		<div data-testid="detail-leave-confirm">
 			<ConfirmDialog
