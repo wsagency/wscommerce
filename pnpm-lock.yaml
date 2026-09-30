@@ -244,6 +244,9 @@ importers:
 
   packages/plugin:
     dependencies:
+      '@emdash-commerce/compat-woocommerce':
+        specifier: workspace:*
+        version: link:../compat-woocommerce
       '@emdash-commerce/invoicing':
         specifier: workspace:*
         version: link:../invoicing
@@ -330,6 +333,9 @@ importers:
       '@emdash-cms/cloudflare':
         specifier: 1.0.1
         version: 1.0.1(8e35cc000bf1d14eb34da024fc444cf8)
+      '@emdash-commerce/compat-woocommerce':
+        specifier: workspace:*
+        version: link:../../packages/compat-woocommerce
       '@otta-sh/admin-react':
         specifier: workspace:*
         version: link:../../packages/admin-react

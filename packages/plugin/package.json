@@ -42,6 +42,7 @@
 		"build": "tsdown"
 	},
 	"dependencies": {
+		"@emdash-commerce/compat-woocommerce": "workspace:*",
 		"@emdash-commerce/invoicing": "workspace:*",
 		"@otta-sh/admin-presentation": "workspace:*",
 		"@otta-sh/domain": "workspace:*",
