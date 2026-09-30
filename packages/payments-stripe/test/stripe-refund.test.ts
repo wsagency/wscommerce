@@ -26,6 +26,7 @@ class MockTransport implements StripeTransport {
 		refundId: "re_123",
 		amountCents: 0,
 		currency: "usd",
+		status: "succeeded",
 	};
 	readonly reads: Array<{ providerRef: string; secretKey: string }> = [];
 	readonly creates: Array<{
@@ -206,6 +207,26 @@ function stubFetch(handler: (url: string, init?: RequestInit) => Response): type
 }
 
 describe("createStripeHttpTransport (default live transport; stub fetch — NO network)", () => {
+	for (const body of [
+		{ id: "re_bad", amount: 500, currency: "usd" },
+		{ id: "re_bad", amount: 500, currency: "usd", status: "unknown" },
+		{ id: "re_bad", amount: 500.5, currency: "usd", status: "succeeded" },
+		{ id: "re_bad", amount: 500, currency: "", status: "succeeded" },
+		{ id: "", amount: 500, currency: "usd", status: "succeeded" },
+	]) {
+		test(`malformed successful refund response stays ambiguous: ${JSON.stringify(body)}`, async () => {
+			const transport = createStripeHttpTransport({ fetch: stubFetch(() => Response.json(body)) });
+			expect(
+				await transport.createRefund({
+					providerRef: "pi_1",
+					amountCents: 500,
+					idempotencyKey: "rf-bad",
+					secretKey: SK,
+				}),
+			).toEqual({ ok: false, class: "ambiguous" });
+		});
+	}
+
 	test("reads the PaymentIntent's latest_charge for amount_refunded + captured", async () => {
 		const transport = createStripeHttpTransport({
 			baseUrl: "https://api.example",
@@ -228,25 +249,39 @@ describe("createStripeHttpTransport (default live transport; stub fetch — NO n
 
 	test("createRefund posts amount + native Idempotency-Key; a network reject is AMBIGUOUS", async () => {
 		let seenIdemHeader: string | undefined;
+		let seenBody: URLSearchParams | undefined;
 		const ok = createStripeHttpTransport({
 			baseUrl: "https://api.example",
 			fetch: stubFetch((url, init) => {
 				expect(url).toContain("/v1/refunds");
 				const headers = new Headers(init?.headers);
 				seenIdemHeader = headers.get("idempotency-key") ?? undefined;
-				return new Response(JSON.stringify({ id: "re_9", amount: 500, currency: "usd" }), {
-					status: 200,
-				});
+				seenBody = new URLSearchParams(String(init?.body));
+				return new Response(
+					JSON.stringify({ id: "re_9", amount: 500, currency: "usd", status: "succeeded" }),
+					{
+						status: 200,
+					},
+				);
 			}),
 		});
 		expect(
 			await ok.createRefund({
+				orderId: "ord-9",
 				providerRef: "pi_1",
 				amountCents: 500,
 				idempotencyKey: "rf-9",
 				secretKey: SK,
 			}),
-		).toEqual({ ok: true, refundId: "re_9", amountCents: 500, currency: "usd" });
+		).toEqual({
+			ok: true,
+			refundId: "re_9",
+			amountCents: 500,
+			currency: "usd",
+			status: "succeeded",
+		});
+		expect(seenBody?.get("metadata[order_id]")).toBe("ord-9");
+		expect(seenBody?.get("metadata[refund_key]")).toBe("rf-9");
 		expect(seenIdemHeader).toBe("rf-9");
 
 		const netFail = createStripeHttpTransport({

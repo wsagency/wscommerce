@@ -794,6 +794,32 @@ const MIXED: RefundsSummary = {
 	remainingCents: TOTAL_CENTS - FINALIZED_CENTS - UNVERIFIED_CENTS,
 };
 
+test("a pending provider refund filling the ceiling shows held capacity and never claims a full refund", async () => {
+	const pending: RefundsSummary = {
+		...CAPTURED,
+		refunds: [
+			{
+				...refundRow(TOTAL_CENTS),
+				status: "unverified",
+				providerStatus: "pending",
+				refundRef: "re_pending",
+			},
+		],
+		refundedTotalCents: TOTAL_CENTS,
+		finalizedTotalCents: 0,
+		remainingCents: 0,
+	};
+	const view = await show(detailFor("paid", pending));
+	await fire(tab(view, "money"), "click");
+	expect(fieldValue(view, "detail-money", "Refunded").textContent).toBe(formatAmount(0, CUR));
+	expect(table(view, "detail-refund-ledger").textContent).toContain("Pending at payment provider");
+	expect(view.container.querySelector('[data-testid="refunds-full-note"]')).toBeNull();
+	expect(view.container.querySelector('[data-testid="refund-full"]')).toBeNull();
+	expect(one(view, '[data-testid="refunds-held-note"]').textContent).toContain(
+		"awaiting completion",
+	);
+});
+
 test("a voided attempt is not listed as a refund, and an in-flight one is labelled for what it is", async () => {
 	const view = await show(detailFor("paid", MIXED));
 	await fire(tab(view, "money"), "click");

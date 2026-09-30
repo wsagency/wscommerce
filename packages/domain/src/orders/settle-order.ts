@@ -8,6 +8,7 @@ import type { PaymentEventStore } from "../ports/payment-event-store.js";
 import type { PaymentGateway, RawConfirmation } from "../ports/payment-gateway.js";
 import type { SettleFailure } from "./errors.js";
 import type { Order } from "./model.js";
+import { settleRefund } from "./settle-refund.js";
 
 export interface SettleDeps {
 	orderStore: OrderStore;
@@ -22,7 +23,7 @@ export type SettleResult =
 	| { ok: false; reason: SettleFailure };
 
 /** The success-side of a verified confirmation, after narrowing. */
-type VerifiedSuccess = Extract<ConfirmationResult, { ok: true }>;
+type VerifiedSuccess = Extract<ConfirmationResult, { ok: true; outcome: "succeeded" | "failed" }>;
 
 /**
  * The gateway-agnostic settlement use-case (§5): **verify → dedupe → transition →
@@ -117,6 +118,7 @@ export async function settleOrder(
 
 	const order = await deps.orderStore.getById(conf.orderId);
 	if (order === null) return { ok: false, reason: "ORDER_NOT_FOUND" };
+	if (conf.outcome === "refund") return settleRefund(deps, conf);
 
 	// A verified FAILURE event (a declined attempt) is recorded above and moves
 	// nothing: no state flip, no stock or coupon release, whatever state the order

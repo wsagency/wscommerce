@@ -86,6 +86,48 @@ export function refundOrderContract(
 	opts: RefundOrderContractOptions,
 ): void {
 	describe(`refundOrderContract [${opts.dialect}]`, () => {
+		for (const providerStatus of ["pending", "requires_action", "failed", "canceled"] as const) {
+			test(`${providerStatus} retains truthful provider evidence without completed money`, async () => {
+				const h = await makeHarness();
+				const id = await h.seedPaidOrder({ id: `ord-status-${providerStatus}`, totalCents: 1000 });
+				const gw = new FakePaymentGateway({ id: "stripe" });
+				gw.setRefundResult({
+					ok: false,
+					reason: "PROVIDER_OUTCOME",
+					providerStatus,
+					refundRef: "re_status",
+					amount: cents(1000),
+					currency: USD,
+				});
+				const cmd = {
+					orderId: id,
+					amount: cents(1000),
+					currency: USD,
+					refundedBy: "admin",
+					idempotencyKey: idempotencyKey(`rf-status-${providerStatus}`),
+				};
+				const reason =
+					providerStatus === "failed" || providerStatus === "canceled"
+						? "GATEWAY_TERMINAL"
+						: "GATEWAY_PENDING";
+				expect(await refundOrder({ orderStore: h.orderStore }, gw, cmd)).toEqual({
+					ok: false,
+					reason,
+				});
+				expect((await h.orderStore.getById(id))?.state).toBe("paid");
+				expect((await h.orderStore.listRefunds(id))[0]).toMatchObject({
+					refundRef: "re_status",
+					providerStatus,
+					status: reason === "GATEWAY_PENDING" ? "unverified" : "voided",
+				});
+				expect(await refundOrder({ orderStore: h.orderStore }, gw, cmd)).toEqual({
+					ok: false,
+					reason,
+				});
+				expect(gw.refundCalls).toHaveLength(1);
+			});
+		}
+
 		test("a full gateway refund records the ledger row and flips the order to refunded", async () => {
 			const h = await makeHarness();
 			const id = await h.seedPaidOrder({ id: "ord-full", totalCents: 1000 });

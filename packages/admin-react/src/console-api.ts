@@ -141,6 +141,7 @@ export interface RefundRow {
 	 *  still in progress), `unverified` (outcome unknown — check the provider) or
 	 *  `voided` (nothing moved). Absent on a row from an older plugin ⇒ recorded. */
 	readonly status?: string | null;
+	readonly providerStatus?: string | null;
 }
 
 export interface RefundsSummary {

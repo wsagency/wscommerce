@@ -894,6 +894,8 @@ describe("Orders refunds with Stripe configured (workerd sandbox, Stripe stubbed
 		expect(Object.fromEntries(posts[0]?.form ?? [])).toEqual({
 			payment_intent: `pi-${id.slice("order-".length)}`,
 			amount: "500",
+			"metadata[order_id]": id,
+			"metadata[refund_key]": `admin-refund:${id}:500:0`,
 		});
 
 		const ledger = await orderStore.listRefunds(toOrderId(id));

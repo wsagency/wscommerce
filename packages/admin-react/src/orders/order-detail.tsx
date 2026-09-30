@@ -177,7 +177,7 @@ export function checkRefundInput(
  * Absent is not zero, and zero is not all of it. This is the same condition the
  * group's own label uses, which is why the two can no longer disagree.
  */
-export type RefundPanelMode = "empty" | "fully-refunded" | "form";
+export type RefundPanelMode = "empty" | "fully-refunded" | "awaiting" | "form";
 
 /** A refund row's lifecycle, as the ledger labels it. A row with no status came
  *  from a plugin that only ever listed finalized refunds. */
@@ -195,6 +195,14 @@ const REFUND_STATUS_LABEL: Readonly<Record<RefundRowStatus, string>> = {
 	unverified: "Outcome unknown — check your payment provider",
 };
 
+function refundStatusLabel(refund: RefundsSummary["refunds"][number]): string {
+	if (refund.status === "unverified" && refund.providerStatus === "pending")
+		return "Pending at payment provider";
+	if (refund.status === "unverified" && refund.providerStatus === "requires_action")
+		return "Customer action required";
+	return REFUND_STATUS_LABEL[refundRowStatus(refund)];
+}
+
 /** Money that actually came back. An older plugin sends no finalized total, and
  *  listed only finalized rows, so its active total is the same figure. */
 function finalizedRefundedCents(refunds: RefundsSummary): number {
@@ -204,9 +212,14 @@ function finalizedRefundedCents(refunds: RefundsSummary): number {
 export function refundPanelMode(summary: {
 	readonly ceilingCents: number;
 	readonly remainingCents: number;
+	readonly finalizedTotalCents?: number;
 }): RefundPanelMode {
 	if (summary.ceilingCents === 0) return "empty";
-	return summary.remainingCents <= 0 ? "fully-refunded" : "form";
+	if (summary.remainingCents > 0) return "form";
+	return summary.finalizedTotalCents !== undefined &&
+		summary.finalizedTotalCents < summary.ceilingCents
+		? "awaiting"
+		: "fully-refunded";
 }
 
 /** A pending confirm: what the operator is about to do, and the sentence they
@@ -427,7 +440,12 @@ export function RefundsPanel({
 	const finalizedCents = finalizedRefundedCents(refunds);
 	const recordedCount = listed.filter((refund) => refundRowStatus(refund) === "recorded").length;
 	const unverifiedCents = listed
-		.filter((refund) => refundRowStatus(refund) === "unverified")
+		.filter(
+			(refund) =>
+				refundRowStatus(refund) === "unverified" &&
+				refund.providerStatus !== "pending" &&
+				refund.providerStatus !== "requires_action",
+		)
 		.reduce((sum, refund) => sum + refund.amountCents, 0);
 	return (
 		<>
@@ -500,7 +518,7 @@ export function RefundsPanel({
 								<td className="otta-td otta-num" style={endCellStyle}>
 									{formatAmount(refund.amountCents, refund.currency ?? cur)}
 								</td>
-								<td className="otta-td">{REFUND_STATUS_LABEL[refundRowStatus(refund)]}</td>
+								<td className="otta-td">{refundStatusLabel(refund)}</td>
 								<td className="otta-td">
 									<code>{refund.refundRef ?? refund.providerRef ?? "—"}</code>
 								</td>
@@ -523,6 +541,11 @@ export function RefundsPanel({
 				{refundMode === "empty" ? null : refundMode === "fully-refunded" ? (
 					<p style={{ fontSize: 13, marginBlockStart: 12 }} data-testid="refunds-full-note">
 						{FULLY_REFUNDED_NOTE}
+					</p>
+				) : refundMode === "awaiting" ? (
+					<p style={{ fontSize: 13, marginBlockStart: 12 }} data-testid="refunds-held-note">
+						The remaining refund capacity is reserved for refunds awaiting completion or
+						reconciliation. Check your payment provider before issuing another refund.
 					</p>
 				) : (
 					<div style={{ marginBlockStart: 12, display: "grid", gap: 12, maxInlineSize: 420 }}>

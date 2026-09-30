@@ -357,6 +357,8 @@ export type ReportingOrderEvent =
 			/** `null` when the order was just created — there is no bucket to leave. */
 			readonly fromState: string | null;
 			readonly toState: string;
+			/** A provider correction can make this pair recur. Absent for its first occurrence. */
+			readonly transitionRevision?: number;
 			/** The order's net total in minor units (`order_totals.total_cents`). */
 			readonly orderTotalCents: number;
 	  }
@@ -392,16 +394,20 @@ export function reportingDailyDocId(currency: string, date: string): string {
  *
  * The key is `(orderId, fromState → toState)` because that is the unit the port makes
  * once-only: the same transition delivered twice is one move between buckets. The
- * order state machine never revisits a state, so a repeated `(from, to)` pair is
- * always a redelivery rather than a second, genuine move — and if that ever changed,
- * this id is where it would have to change with it.
+ * A later provider refund correction can restore an earlier state. Repeated pairs
+ * carry their occurrence number, derived from the durable transition history.
+ * The first occurrence retains the legacy key.
  */
 export function reportingTransitionClaimId(
 	orderId: string,
 	fromState: string | null,
 	toState: string,
+	transitionRevision?: number,
 ): string {
-	return `${escapeIdPart(orderId)}:${fromState === null ? "" : escapeIdPart(fromState)}>${escapeIdPart(toState)}`;
+	const key = `${escapeIdPart(orderId)}:${fromState === null ? "" : escapeIdPart(fromState)}>${escapeIdPart(toState)}`;
+	return transitionRevision === undefined || transitionRevision <= 1
+		? key
+		: `${key}:${transitionRevision}`;
 }
 
 /** A refund's claim id — one per refund ledger row, whatever else moves. */

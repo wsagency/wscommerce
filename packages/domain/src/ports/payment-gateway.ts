@@ -74,8 +74,9 @@ export interface RefundInput {
 }
 
 /**
- * The normalized result of a `refund` attempt (ADR-0008). A success carries the
- * provider refund id (`refundRef`) + the confirmed amount/currency. A failure is
+ * The normalized result of a `refund` attempt (ADR-0008, ADR-0025). A success
+ * means the provider reports `succeeded`, and carries its refund id + money.
+ * Creating a provider refund object alone never confirms completed money. A failure is
  * a typed reason from the explicit live-error taxonomy:
  *  - `UNSUPPORTED` — the gateway cannot refund at all (x402): a capability
  *    statement, never treat as retryable.
@@ -89,17 +90,37 @@ export interface RefundInput {
  *  - `UNVERIFIED` — the **ambiguous timeout**: `refunds.create` errored with an
  *    unknown fate. NEVER a clean failure — surface as "unverified, re-check the
  *    provider before retrying" (a blind retry could double-refund).
+ *  - `PROVIDER_OUTCOME` — known non-success, carrying the provider refund id,
+ *    amount/currency and status. Pending/action outcomes keep ceiling capacity;
+ *    failed/canceled release it only after the evidence matches the reservation.
  */
 export type RefundResult =
 	| { ok: true; refundRef: string; amount: Cents; currency: Currency }
-	| { ok: false; reason: RefundFailureReason };
+	| { ok: false; reason: Exclude<RefundFailureReason, "PROVIDER_OUTCOME"> }
+	| {
+			ok: false;
+			reason: "PROVIDER_OUTCOME";
+			providerStatus: Exclude<RefundProviderStatus, "succeeded">;
+			refundRef: string;
+			amount: Cents;
+			currency: Currency;
+	  };
+
+/** Only succeeded is completed money; every other status retains provider evidence. */
+export type RefundProviderStatus =
+	| "succeeded"
+	| "pending"
+	| "requires_action"
+	| "failed"
+	| "canceled";
 
 export type RefundFailureReason =
 	| "UNSUPPORTED"
 	| "PROVIDER_ALREADY_REFUNDED"
 	| "RETRYABLE"
 	| "TERMINAL"
-	| "UNVERIFIED";
+	| "UNVERIFIED"
+	| "PROVIDER_OUTCOME";
 
 /**
  * ONE purchased line, as STRUCTURE — never a pre-rendered provider sentence.
@@ -270,7 +291,27 @@ export interface X402Proof {
 	signature: string;
 }
 
+export interface VerifiedRefundConfirmation {
+	ok: true;
+	outcome: "refund";
+	orderId: OrderId;
+	/** The refund id, distinct from the original captured payment. */
+	providerRef: string;
+	paymentRef: string;
+	chargeRef?: string;
+	refundKey: IdempotencyKey;
+	providerStatus: RefundProviderStatus;
+	amount: Cents;
+	currency: Currency;
+	dedupeKey: string;
+	gateway: PaymentMethod;
+	/** Provider event creation time, not refund creation time or local arrival time. */
+	eventCreated: number;
+	previousStatus?: RefundProviderStatus;
+}
+
 export type ConfirmationResult =
+	| VerifiedRefundConfirmation
 	| {
 			ok: true;
 			/**

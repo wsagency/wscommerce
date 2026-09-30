@@ -117,12 +117,14 @@
 import {
 	cents,
 	computeRefundCeiling,
+	refundProviderUpdate,
+	type ApplyRefundProviderOutcomeInput,
+	type ApplyRefundProviderOutcomeStoreResult,
 	emailTemplateForState,
 	isLegalOrderTransition,
 	type CancelOrderInput,
 	type CancelOrderStoreResult,
 	type CapturedPayment,
-	type Cents,
 	type Clock,
 	type CreateOrderInput,
 	type CreateOrderResult,
@@ -789,60 +791,111 @@ export class EmdashOrderStore implements OrderStore {
 	}
 
 	async finalizeRefund(input: FinalizeRefundInput): Promise<FinalizeRefundStoreResult> {
+		const row = await this.getRefundByIdempotencyKey(input.idempotencyKey);
+		if (row === null) return MISSING_FINALIZE;
+		const captured = (await this.getCapturedPayments(row.orderId)).find(
+			(payment) => payment.status === "succeeded" && payment.gateway === row.gateway,
+		);
+		if (captured === undefined) return MISSING_FINALIZE;
+		const result = await this.applyRefundProviderOutcome({
+			...(input.expected ?? {
+				orderId: row.orderId,
+				gateway: row.gateway,
+				amount: row.amount,
+				currency: row.currency,
+				paymentRef: row.paymentRef ?? captured.providerRef,
+			}),
+			idempotencyKey: input.idempotencyKey,
+			refundRef: input.refundRef,
+			providerStatus: "succeeded",
+		});
+		if (result.refund?.status !== "recorded" || result.outcome === "mismatch")
+			return MISSING_FINALIZE;
+		return {
+			found: true,
+			alreadyFinalized: result.outcome === "noop",
+			refund: result.refund,
+			order: result.order,
+			fullyRefunded: result.fullyRefunded,
+		};
+	}
+
+	async applyRefundProviderOutcome(
+		input: ApplyRefundProviderOutcomeInput,
+	): Promise<ApplyRefundProviderOutcomeStoreResult> {
 		const claim = await this.#refundKeys.get(input.idempotencyKey);
-		// No claim at all: there is no order to open, so this is the loud residual the
-		// use-case surfaces — never a silent drop of a provider reference.
-		if (claim === null) return MISSING_FINALIZE;
-		const orderId = claim.orderId;
-		const result = await this.#casOrder<Omit<FinalizeRefundStoreResult, "order">>(
-			"finalizeRefund",
+		const missing: ApplyRefundProviderOutcomeStoreResult = {
+			outcome: "not_found",
+			refund: null,
+			order: null,
+			fullyRefunded: false,
+		};
+		if (claim === null) return missing;
+		if (claim.orderId !== input.orderId) return { ...missing, outcome: "mismatch" };
+		const orderId = input.orderId;
+		return this.#casOrder<ApplyRefundProviderOutcomeStoreResult>(
+			"applyRefundProviderOutcome",
 			async () => {
 				const current = await this.#orders.getVersioned(orderId);
-				if (current === null) return casDone(MISSING_FINALIZE_INNER);
+				if (current === null) return casDone(missing);
 				const doc = normalizeOrderDoc(current.value);
 				const entry = findRefund(doc, input.idempotencyKey);
-				if (entry === undefined) return casDone(MISSING_FINALIZE_INNER);
-				// ALREADY finalized: the BENIGN duplicate iff the reference is the same one
-				// (a concurrent same-key caller finalized first, and the provider's native
-				// idempotency guarantees one refund). A DIFFERENT reference is the loud
-				// residual, and the recorded row is left exactly as it is.
-				if (entry.status === "recorded") {
-					return casDone(
-						entry.refundRef === input.refundRef
-							? {
-									found: true,
-									alreadyFinalized: true,
-									refund: toRefundRecord(entry, orderId as OrderId),
-									fullyRefunded: doc.state === "refunded",
-								}
-							: MISSING_FINALIZE_INNER,
-					);
-				}
-				// STATUS-GUARDED, exactly as the SQL's `WHERE status IN
-				// ('reserved','unverified')` was: a stray finalize can never resurrect a
-				// `voided` row's released capacity.
-				if (entry.status !== "reserved" && entry.status !== "unverified") {
-					return casDone(MISSING_FINALIZE_INNER);
-				}
-
-				const now = this.#clock.now().toISOString();
-				const finalized: RefundEntryDoc = {
+				if (entry === undefined) return casDone(missing);
+				const currentResult = (
+					outcome: ApplyRefundProviderOutcomeStoreResult["outcome"],
+				): ApplyRefundProviderOutcomeStoreResult => ({
+					outcome,
+					refund: toRefundRecord(entry, orderId),
+					order: toOrder(doc),
+					fullyRefunded: doc.state === "refunded",
+				});
+				const captured = doc.payments.some(
+					(payment) =>
+						payment.status === "succeeded" &&
+						payment.gateway === input.gateway &&
+						payment.providerRef === input.paymentRef &&
+						payment.currency === input.currency,
+				);
+				if (
+					!captured ||
+					doc.refunds.some(
+						(other) =>
+							other.idempotencyKey !== input.idempotencyKey && other.refundRef === input.refundRef,
+					)
+				)
+					return casDone(currentResult("mismatch"));
+				const decision = refundProviderUpdate(toRefundRecord(entry, orderId), input);
+				if (decision !== "apply") return casDone(currentResult(decision));
+				const status: RefundStatus =
+					input.providerStatus === "succeeded"
+						? "recorded"
+						: input.providerStatus === "failed" || input.providerStatus === "canceled"
+							? "voided"
+							: "unverified";
+				const delta =
+					(status === "recorded" ? entry.amount : 0) -
+					(entry.status === "recorded" ? entry.amount : 0);
+				const financialRevision =
+					(entry.financialRevision ?? (entry.status === "recorded" ? 1 : 0)) +
+					(delta === 0 ? 0 : 1);
+				const updated: RefundEntryDoc = {
 					...entry,
-					status: "recorded",
+					status,
+					paymentRef: input.paymentRef,
 					refundRef: input.refundRef,
+					providerStatus: input.providerStatus,
+					financialRevision,
+					...(input.event === undefined ? {} : { providerEvent: input.event }),
 				};
 				const refunds = doc.refunds.map((row) =>
-					row.idempotencyKey === input.idempotencyKey ? finalized : row,
+					row.idempotencyKey === input.idempotencyKey ? updated : row,
 				);
+				const now = this.#clock.now().toISOString();
 				let next: OrderDoc = { ...doc, refunds, updatedAt: now };
-				// NO re-arbitration. The reservation already holds this capacity, so a
-				// finalize arriving after a concurrent void of some OTHER row still
-				// finalizes — the SQL's semantics, and the port's.
 				const ceiling = computeRefundCeiling(
 					cents(capturedPaymentTotal(doc.payments)),
 					doc.totals.total,
 				);
-				let fullyRefunded = false;
 				if (
 					finalizedRefundTotal(refunds) === ceiling &&
 					isLegalOrderTransition(doc.state, "refunded")
@@ -850,29 +903,49 @@ export class EmdashOrderStore implements OrderStore {
 					next = this.#flipped(next, {
 						fromState: doc.state,
 						toState: "refunded",
-						enqueueEmail: emailTemplateForState("refunded") !== null,
+						enqueueEmail: true,
 						actor: entry.refundedBy,
 						now,
 					});
-					fullyRefunded = true;
+				} else if (delta < 0) {
+					// A later bank return changes financial truth, not fulfillment. Restore
+					// the exact state the full-refund event replaced; never use a broad
+					// admin transition out of the terminal refunded state.
+					const preceding = doc.events.findLast((event) => event.toState === "refunded")?.fromState;
+					if (doc.state === "refunded" && preceding !== undefined && preceding !== null)
+						next = this.#flipped(next, {
+							fromState: "refunded",
+							toState: preceding,
+							enqueueEmail: false,
+							actor: "payment-provider",
+							now,
+						});
+					next = {
+						...next,
+						reconciliationFlag: `refund ${input.refundRef} changed from succeeded to ${input.providerStatus} — reconcile the returned funds`,
+					};
 				}
 				const written = await this.#orders.compareAndSet(orderId, current.revision, next);
 				if (!written.applied) return CAS_RETRY;
-				// The full-refund path composes `#flipped` rather than `#flip`, so it brackets
-				// its own locator — same ordering, same reason.
-				if (fullyRefunded) await this.#recordOutboxLocator(next, "refunded");
-				await this.#reportRefund(next, finalized.currency, finalized.id, finalized.amount);
-				if (fullyRefunded) await this.#reportTransition(next, doc.state, "refunded");
+				if (delta !== 0)
+					await this.#reportRefund(
+						next,
+						entry.currency,
+						financialRevision === 1 ? entry.id : `${entry.id}:${financialRevision}`,
+						delta,
+					);
+				if (doc.state !== next.state) {
+					if (next.state === "refunded") await this.#recordOutboxLocator(next, "refunded");
+					await this.#reportTransition(next, doc.state, next.state);
+				}
 				return casDone({
-					found: true,
-					alreadyFinalized: false,
-					refund: toRefundRecord(finalized, orderId as OrderId),
-					fullyRefunded,
+					outcome: "applied",
+					refund: toRefundRecord(updated, orderId),
+					order: toOrder(next),
+					fullyRefunded: next.state === "refunded",
 				});
 			},
 		);
-		const order = result.refund === null ? null : await this.getById(orderId as OrderId);
-		return { ...result, order };
 	}
 
 	voidRefund(idempotencyKey: IdempotencyKey): Promise<boolean> {
@@ -1395,6 +1468,7 @@ export class EmdashOrderStore implements OrderStore {
 			kind: input.kind,
 			gateway: input.gateway,
 			refundRef: input.refundRef,
+			...(input.paymentRef === undefined ? {} : { paymentRef: input.paymentRef }),
 			reason: input.reason,
 			refundedBy: input.refundedBy,
 			status: opts.status,
@@ -2093,6 +2167,9 @@ export class EmdashOrderStore implements OrderStore {
 		toState: OrderState,
 	): Promise<void> {
 		try {
+			const transitionRevision = doc.events.filter(
+				(event) => event.fromState === fromState && event.toState === toState,
+			).length;
 			await this.#reporting.recordOrderEvent({
 				kind: "transition",
 				orderId: doc.orderId,
@@ -2100,6 +2177,7 @@ export class EmdashOrderStore implements OrderStore {
 				currency: doc.currency,
 				fromState,
 				toState,
+				...(transitionRevision > 1 ? { transitionRevision } : {}),
 				orderTotalCents: doc.totals.total,
 			});
 		} catch {
@@ -2112,7 +2190,7 @@ export class EmdashOrderStore implements OrderStore {
 		doc: OrderDoc,
 		currency: Currency,
 		refundId: string,
-		amount: Cents,
+		amount: number,
 	): Promise<void> {
 		try {
 			await this.#reporting.recordOrderEvent({
@@ -2164,6 +2242,9 @@ function toRefundRecord(refund: RefundEntryDoc, orderId: OrderId): RefundRecord 
 		kind: refund.kind,
 		gateway: refund.gateway,
 		refundRef: refund.refundRef,
+		...(refund.paymentRef === undefined ? {} : { paymentRef: refund.paymentRef }),
+		...(refund.providerStatus === undefined ? {} : { providerStatus: refund.providerStatus }),
+		...(refund.providerEvent === undefined ? {} : { providerEvent: refund.providerEvent }),
 		reason: refund.reason,
 		refundedBy: refund.refundedBy,
 		status: refund.status,

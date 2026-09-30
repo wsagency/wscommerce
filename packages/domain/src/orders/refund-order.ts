@@ -71,6 +71,8 @@ export type RefundOrderFailure =
 	 *  The reservation is marked UNVERIFIED and KEEPS holding ceiling capacity
 	 *  (the safe direction). Do NOT blind-retry; re-check the provider first. */
 	| "GATEWAY_UNVERIFIED"
+	/** Provider accepted the refund but it is pending or requires customer action. */
+	| "GATEWAY_PENDING"
 	/** The gateway declared itself unable to refund at the moment of the call
 	 *  (a defensive mapping — the use-case already branches on `refundable`, so a
 	 *  well-behaved gateway never reaches here). The reservation is voided. */
@@ -233,7 +235,7 @@ export async function refundOrder(
 		};
 	}
 	if (existing !== null && existing.status === "unverified") {
-		return { ok: false, reason: "GATEWAY_UNVERIFIED" };
+		return { ok: false, reason: pendingReason(existing) };
 	}
 	if (existing !== null && existing.status === "voided") {
 		return { ok: false, reason: "GATEWAY_TERMINAL" };
@@ -289,6 +291,7 @@ export async function refundOrder(
 			kind,
 			gateway: gateway.id,
 			refundRef: null,
+			paymentRef: captured.providerRef,
 			reason,
 			refundedBy,
 			idempotencyKey: cmd.idempotencyKey,
@@ -310,6 +313,12 @@ export async function refundOrder(
 			return { ok: false, reason: "IDEMPOTENCY_KEY_REUSED" };
 		}
 		createdReservation = reserved.outcome !== "duplicate";
+		if (reserved.outcome === "duplicate" && reserved.refund !== null) {
+			if (reserved.refund.status === "unverified")
+				return { ok: false, reason: pendingReason(reserved.refund) };
+			if (reserved.refund.status === "voided") return { ok: false, reason: "GATEWAY_TERMINAL" };
+			if (reserved.refund.status === "recorded") return settleRecordOutcome(reserved, cmd);
+		}
 	}
 
 	// 2. ISSUE — only ever reached with a committed reservation holding the
@@ -326,6 +335,56 @@ export async function refundOrder(
 	// 3. SETTLE the reservation by outcome.
 	if (!gwRes.ok) {
 		switch (gwRes.reason) {
+			case "PROVIDER_OUTCOME": {
+				if (gwRes.amount !== target.amount || gwRes.currency !== target.currency) {
+					await deps.orderStore.markRefundUnverified(cmd.idempotencyKey);
+					await deps.orderStore.flagReconciliation(
+						cmd.orderId,
+						`refund ${gwRes.refundRef}: provider money differs from the reserved amount — reconcile before retrying`,
+					);
+					return { ok: false, reason: "GATEWAY_UNVERIFIED" };
+				}
+				const observed = await deps.orderStore.applyRefundProviderOutcome({
+					orderId: target.orderId,
+					gateway: gateway.id,
+					amount: target.amount,
+					currency: target.currency,
+					paymentRef: captured.providerRef,
+					idempotencyKey: cmd.idempotencyKey,
+					refundRef: gwRes.refundRef,
+					providerStatus: gwRes.providerStatus,
+				});
+				if (
+					observed.refund === null ||
+					observed.order === null ||
+					observed.outcome === "mismatch"
+				) {
+					await deps.orderStore.markRefundUnverified(cmd.idempotencyKey);
+					await deps.orderStore.flagReconciliation(
+						cmd.orderId,
+						`refund ${gwRes.refundRef}: provider outcome could not be attached to its reservation — reconcile before retrying`,
+					);
+					return { ok: false, reason: "GATEWAY_UNVERIFIED" };
+				}
+				// A webhook can finish before the synchronous response arrives. Return
+				// the durable winner, never regress it to the response's older snapshot.
+				if (observed.refund.status === "recorded")
+					return {
+						ok: true,
+						recorded: false,
+						duplicate: true,
+						fullyRefunded: observed.fullyRefunded,
+						refund: observed.refund,
+						order: observed.order,
+					};
+				return {
+					ok: false,
+					reason:
+						observed.refund.status === "voided"
+							? "GATEWAY_TERMINAL"
+							: pendingReason(observed.refund),
+				};
+			}
 			case "RETRYABLE":
 				// Definitely not processed; keep the reservation so a same-key retry
 				// resumes it (capacity stays held meanwhile — the safe direction).
@@ -369,11 +428,41 @@ export async function refundOrder(
 		}
 	}
 
+	if (gwRes.amount !== target.amount || gwRes.currency !== target.currency) {
+		await deps.orderStore.markRefundUnverified(cmd.idempotencyKey);
+		await deps.orderStore.flagReconciliation(
+			cmd.orderId,
+			`refund ${gwRes.refundRef}: provider money differs from the reserved amount — reconcile before retrying`,
+		);
+		return { ok: false, reason: "GATEWAY_UNVERIFIED" };
+	}
 	const finalized = await deps.orderStore.finalizeRefund({
 		idempotencyKey: cmd.idempotencyKey,
 		refundRef: gwRes.refundRef,
+		expected: {
+			orderId: target.orderId,
+			gateway: gateway.id,
+			amount: target.amount,
+			currency: target.currency,
+			paymentRef: captured.providerRef,
+		},
 	});
 	if (!finalized.found || finalized.refund === null || finalized.order === null) {
+		// A verified webhook can supersede the create response while that response
+		// is still in flight. Its bound refund remains on the ledger; surface that
+		// newer outcome instead of claiming completed money is missing.
+		const latest = await deps.orderStore.getRefundByIdempotencyKey(cmd.idempotencyKey);
+		if (
+			latest !== null &&
+			latest.providerEvent !== undefined &&
+			latest.refundRef === gwRes.refundRef &&
+			latest.paymentRef === captured.providerRef &&
+			latest.gateway === gateway.id &&
+			refundMatchesCommand(latest, cmd)
+		) {
+			if (latest.status === "voided") return { ok: false, reason: "GATEWAY_TERMINAL" };
+			if (latest.status === "unverified") return { ok: false, reason: pendingReason(latest) };
+		}
 		// The LOUD residual — impossible by construction (the reservation was
 		// committed before issuance and only this key-scoped flow settles it), but
 		// if it EVER fires: money left the provider. NOT reached by a concurrent
@@ -408,6 +497,12 @@ export async function refundOrder(
 		refund: finalized.refund,
 		order: finalized.order,
 	};
+}
+
+function pendingReason(refund: RefundRecord): "GATEWAY_PENDING" | "GATEWAY_UNVERIFIED" {
+	return refund.providerStatus === "pending" || refund.providerStatus === "requires_action"
+		? "GATEWAY_PENDING"
+		: "GATEWAY_UNVERIFIED";
 }
 
 /** Map a one-shot `recordRefund` result (the manual path) to the outcome. */

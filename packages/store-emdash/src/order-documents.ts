@@ -1,3 +1,4 @@
+import type { RefundProviderStatus, RefundProviderEvent } from "@otta-sh/domain";
 /**
  * The order document model: **one aggregate document per order**, carrying the
  * header, the frozen line snapshot, the totals, the ship-to, the audit events,
@@ -323,6 +324,11 @@ export interface RefundEntryDoc {
 	kind: RefundKind;
 	gateway: PaymentMethod;
 	refundRef: string | null;
+	paymentRef?: string;
+	providerStatus?: RefundProviderStatus;
+	providerEvent?: RefundProviderEvent;
+	/** Durable sequence for once-only signed reporting adjustments. */
+	financialRevision?: number;
 	reason: string | null;
 	refundedBy: string;
 	status: RefundStatus;

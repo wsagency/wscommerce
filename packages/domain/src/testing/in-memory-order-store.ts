@@ -1,3 +1,4 @@
+import { refundProviderUpdate } from "../orders/refund-provider-state.js";
 import { cents, currency as toCurrency } from "../money/cents.js";
 import {
 	type CustomerId,
@@ -9,6 +10,8 @@ import {
 import type { Clock } from "../ports/clock.js";
 import type { IdGen } from "../ports/id-gen.js";
 import type {
+	ApplyRefundProviderOutcomeInput,
+	ApplyRefundProviderOutcomeStoreResult,
 	CancelOrderInput,
 	CancelOrderStoreResult,
 	CapturedPayment,
@@ -333,6 +336,7 @@ export class InMemoryOrderStore implements OrderStore {
 			kind: input.kind,
 			gateway: input.gateway,
 			refundRef: input.refundRef,
+			...(input.paymentRef === undefined ? {} : { paymentRef: input.paymentRef }),
 			reason: input.reason,
 			refundedBy: input.refundedBy,
 			status: opts.status,
@@ -368,74 +372,117 @@ export class InMemoryOrderStore implements OrderStore {
 	}
 
 	async finalizeRefund(input: FinalizeRefundInput): Promise<FinalizeRefundStoreResult> {
-		// FINALIZE a reserved refund after the gateway confirmed issuance (ADR-0008):
-		// stamp refundRef, flip `reserved|unverified → recorded`, and — when the
-		// FINALIZED Σ reaches the ceiling — drive → refunded. Never loses arbitration
-		// (the reservation already holds the capacity). STATUS-GUARDED: only a
-		// reserved/unverified row is settled — a voided/recorded row is never
-		// clobbered. A key already `recorded` with the SAME refundRef (a concurrent
-		// same-key caller finalized first) is the BENIGN duplicate; anything else is
-		// found:false — the loud residual.
-		const row = this.#refunds.find(
-			(r) =>
-				r.idempotencyKey === input.idempotencyKey &&
-				(r.status === "reserved" || r.status === "unverified"),
+		const row = this.#refunds.find((entry) => entry.idempotencyKey === input.idempotencyKey);
+		const missing: FinalizeRefundStoreResult = {
+			found: false,
+			alreadyFinalized: false,
+			refund: null,
+			fullyRefunded: false,
+			order: null,
+		};
+		if (row === undefined) return missing;
+		const captured = (await this.getCapturedPayments(row.orderId)).find(
+			(payment) => payment.status === "succeeded" && payment.gateway === row.gateway,
 		);
-		if (row === undefined) {
-			const existing = this.#refunds.find((r) => r.idempotencyKey === input.idempotencyKey);
-			if (
-				existing !== undefined &&
-				existing.status === "recorded" &&
-				existing.refundRef === input.refundRef
-			) {
-				const dupOrder = this.#orders.get(existing.orderId);
-				return {
-					found: true,
-					alreadyFinalized: true,
-					refund: { ...existing },
-					fullyRefunded: dupOrder?.order.state === "refunded",
-					order: dupOrder === undefined ? null : this.#clone(dupOrder.order),
-				};
-			}
-			return {
-				found: false,
-				alreadyFinalized: false,
-				refund: null,
-				fullyRefunded: false,
-				order: null,
-			};
-		}
-		const stored = this.#orders.get(row.orderId);
-		const now = this.#clock.now().toISOString();
-		row.status = "recorded";
-		row.refundRef = input.refundRef;
-		let fullyRefunded = false;
-		if (stored !== undefined) {
-			stored.order.updatedAt = now;
-			const capturedTotal = cents(
-				this.#payments
-					.filter((p) => p.orderId === row.orderId && p.status === "succeeded")
-					.reduce((sum, p) => sum + p.amount, 0),
-			);
-			const ceiling = Math.min(capturedTotal, stored.order.totals.total);
-			const finalizedTotal = this.#refunds
-				.filter((r) => r.orderId === row.orderId && r.status === "recorded")
-				.reduce((sum, r) => sum + r.amount, 0);
-			if (finalizedTotal === ceiling && isLegalOrderTransition(stored.order.state, "refunded")) {
-				const fromState = stored.order.state;
-				stored.order.state = "refunded";
-				this.#appendEvent(row.orderId, fromState, "refunded", row.refundedBy);
-				if (emailTemplateForState("refunded") !== null) this.#enqueue(row.orderId, "refunded");
-				fullyRefunded = true;
-			}
-		}
+		if (captured === undefined) return missing;
+		const result = await this.applyRefundProviderOutcome({
+			...(input.expected ?? {
+				orderId: row.orderId,
+				gateway: row.gateway,
+				amount: row.amount,
+				currency: row.currency,
+				paymentRef: row.paymentRef ?? captured.providerRef,
+			}),
+			idempotencyKey: input.idempotencyKey,
+			refundRef: input.refundRef,
+			providerStatus: "succeeded",
+		});
+		if (result.refund?.status !== "recorded" || result.outcome === "mismatch") return missing;
 		return {
 			found: true,
-			alreadyFinalized: false,
-			refund: { ...row },
-			fullyRefunded,
-			order: stored === undefined ? null : this.#clone(stored.order),
+			alreadyFinalized: result.outcome === "noop",
+			refund: result.refund,
+			order: result.order,
+			fullyRefunded: result.fullyRefunded,
 		};
+	}
+
+	async applyRefundProviderOutcome(
+		input: ApplyRefundProviderOutcomeInput,
+	): Promise<ApplyRefundProviderOutcomeStoreResult> {
+		const row = this.#refunds.find((entry) => entry.idempotencyKey === input.idempotencyKey);
+		const stored = this.#orders.get(input.orderId);
+		const missing: ApplyRefundProviderOutcomeStoreResult = {
+			outcome: "not_found",
+			refund: null,
+			order: null,
+			fullyRefunded: false,
+		};
+		if (row === undefined || stored === undefined) return missing;
+		const result = (
+			outcome: ApplyRefundProviderOutcomeStoreResult["outcome"],
+		): ApplyRefundProviderOutcomeStoreResult => ({
+			outcome,
+			refund: { ...row },
+			order: this.#clone(stored.order),
+			fullyRefunded: stored.order.state === "refunded",
+		});
+		const captured = this.#payments.some(
+			(payment) =>
+				payment.orderId === input.orderId &&
+				payment.status === "succeeded" &&
+				payment.gateway === input.gateway &&
+				payment.providerRef === input.paymentRef &&
+				payment.currency === input.currency,
+		);
+		if (
+			!captured ||
+			this.#refunds.some(
+				(other) =>
+					other.idempotencyKey !== input.idempotencyKey && other.refundRef === input.refundRef,
+			)
+		)
+			return result("mismatch");
+		const decision = refundProviderUpdate(row, input);
+		if (decision !== "apply") return result(decision);
+		const wasRecorded = row.status === "recorded";
+		row.status =
+			input.providerStatus === "succeeded"
+				? "recorded"
+				: input.providerStatus === "failed" || input.providerStatus === "canceled"
+					? "voided"
+					: "unverified";
+		row.refundRef = input.refundRef;
+		row.paymentRef = input.paymentRef;
+		row.providerStatus = input.providerStatus;
+		if (input.event !== undefined) row.providerEvent = input.event;
+		const now = this.#clock.now().toISOString();
+		stored.order.updatedAt = now;
+		const capturedTotal = this.#payments
+			.filter((payment) => payment.orderId === input.orderId && payment.status === "succeeded")
+			.reduce((sum, payment) => sum + payment.amount, 0);
+		const finalizedTotal = this.#refunds
+			.filter((entry) => entry.orderId === input.orderId && entry.status === "recorded")
+			.reduce((sum, entry) => sum + entry.amount, 0);
+		if (
+			finalizedTotal === Math.min(capturedTotal, stored.order.totals.total) &&
+			isLegalOrderTransition(stored.order.state, "refunded")
+		) {
+			const fromState = stored.order.state;
+			stored.order.state = "refunded";
+			this.#appendEvent(input.orderId, fromState, "refunded", row.refundedBy);
+			this.#enqueue(input.orderId, "refunded");
+		} else if (wasRecorded && row.status !== "recorded") {
+			const preceding = this.#events.findLast(
+				(event) => event.orderId === input.orderId && event.toState === "refunded",
+			)?.fromState;
+			if (stored.order.state === "refunded" && preceding !== undefined && preceding !== null) {
+				stored.order.state = preceding;
+				this.#appendEvent(input.orderId, "refunded", preceding, "payment-provider");
+			}
+			stored.order.reconciliationFlag = `refund ${input.refundRef} changed from succeeded to ${input.providerStatus} — reconcile the returned funds`;
+		}
+		return result("applied");
 	}
 
 	async voidRefund(idempotencyKey: IdempotencyKey): Promise<boolean> {

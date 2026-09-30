@@ -232,6 +232,7 @@ export interface RefundWire {
 	 *  UNKNOWN — check the provider) or `voided` (nothing moved; an audit row
 	 *  only). Only `recorded` is a refund that happened. */
 	status: string;
+	providerStatus?: string;
 	/** The idempotency key the refund was attempted under — Stripe's native
 	 *  `Idempotency-Key` for a gateway refund, so it is what an operator searches
 	 *  the provider's request log for, and how the console tells ONE refund's

@@ -748,6 +748,13 @@ function refundFailureNotice(reason: string | undefined): Notice {
 				description:
 					"The refund request timed out and its outcome is unknown. Do NOT retry — check your provider dashboard first, then reconcile.",
 			};
+		case "GATEWAY_PENDING":
+			return {
+				variant: "error",
+				title: "Refund awaiting completion",
+				description:
+					"The payment provider accepted the refund, but it is pending or requires customer action. Check your provider dashboard. Its amount remains reserved; do not issue it again.",
+			};
 		case "IDEMPOTENCY_KEY_REUSED":
 			return {
 				variant: "error",

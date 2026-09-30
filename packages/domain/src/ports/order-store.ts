@@ -1,4 +1,5 @@
 import type { Cents, Currency } from "../money/cents.js";
+import type { RefundProviderStatus } from "./payment-gateway.js";
 import type {
 	CustomerId,
 	IdempotencyKey,
@@ -129,7 +130,8 @@ export interface OrderStore {
 	reserveRefund(input: RecordRefundInput): Promise<RecordRefundStoreResult>;
 
 	/**
-	 * FINALIZE a reserved refund after the gateway confirmed issuance (ADR-0008):
+	 * FINALIZE a reserved refund after the gateway confirmed `succeeded` (ADR-0008,
+	 * ADR-0025):
 	 * stamp the provider `refundRef`, flip the row `reserved|unverified →
 	 * recorded`, and — when the FINALIZED `Σ` now reaches the ceiling — drive the
 	 * `→ refunded` transition through `#flipAndEnqueue`, all in ONE transaction
@@ -144,6 +146,12 @@ export interface OrderStore {
 	 * a `REFUND_UNRECORDED` anomaly, never a silent drop of the provider ref.
 	 */
 	finalizeRefund(input: FinalizeRefundInput): Promise<FinalizeRefundStoreResult>;
+	/** Apply authenticated provider evidence to the existing reservation in one guarded write.
+	 * Pending/action outcomes retain capacity; confirmed failures release it. Provider
+	 * event time orders snapshots, and a later bank return can reverse completed money. */
+	applyRefundProviderOutcome(
+		input: ApplyRefundProviderOutcomeInput,
+	): Promise<ApplyRefundProviderOutcomeStoreResult>;
 
 	/**
 	 * VOID a reservation whose gateway leg definitively did NOT issue (a
@@ -836,8 +844,8 @@ export interface CapturedPayment {
 	status: string;
 }
 
-/** A refund row (ADR-0008). `kind:"gateway"` carries the provider `refundRef`
- *  (money actually moved); `kind:"manual"` has `refundRef:null` (an out-of-band
+/** A refund row (ADR-0008). `kind:"gateway"` carries any known provider `refundRef`
+ *  (even while pending or after failure); `kind:"manual"` has `refundRef:null` (an out-of-band
  *  return the admin recorded — x402's honest degraded path). `status` is the
  *  row's reserve-before-issue lifecycle — see {@link RefundStatus}. */
 export interface RefundRecord {
@@ -848,6 +856,10 @@ export interface RefundRecord {
 	kind: RefundKind;
 	gateway: PaymentMethod;
 	refundRef: string | null;
+	/** Original captured payment and most recent provider evidence. Absent on legacy/manual rows. */
+	paymentRef?: string;
+	providerStatus?: RefundProviderStatus;
+	providerEvent?: RefundProviderEvent;
 	reason: string | null;
 	refundedBy: string;
 	status: RefundStatus;
@@ -866,21 +878,54 @@ export type RefundKind = "gateway" | "manual";
  *    gateway leg has not confirmed yet. Holds ceiling capacity; never drives
  *    the state flip. A crash here is resumable (same key re-issues, Stripe's
  *    native idempotency dedupes provider-side).
- *  - `unverified` — the gateway leg ended AMBIGUOUS (timeout, fate unknown).
- *    KEEPS holding capacity — the safe direction — until a human re-checks the
- *    provider. Never drives the flip.
- *  - `voided`     — the gateway leg definitively did not issue (fail-closed
- *    pre-flight / terminal rejection). Capacity RELEASED; kept as an audit
+ *  - `unverified` — completion awaits the provider (`providerStatus` is pending
+ *    or requires_action), or the fate is unknown (timeout). KEEPS holding
+ *    capacity until verified completion/failure or manual reconciliation.
+ *    Never drives the flip; the same key cannot blindly issue again.
+ *  - `voided`     — the gateway leg definitively did not complete (fail-closed
+ *    pre-flight / terminal rejection / verified failed or canceled refund).
+ *    Capacity RELEASED; kept as an audit
  *    record of the attempt.
  * Ceiling arbitration counts every non-`voided` row (`recorded` + `reserved` +
  * `unverified` — the ACTIVE sum); the `→ refunded` flip counts `recorded` only.
  */
 export type RefundStatus = "recorded" | "reserved" | "unverified" | "voided";
 
-/** Finalize a reserved refund with the gateway's confirmed `refundRef`. */
+/** Finalize a reserved refund with a provider `succeeded` response. */
 export interface FinalizeRefundInput {
 	idempotencyKey: IdempotencyKey;
 	refundRef: string;
+	/** Money-bearing binding for a gateway response; legacy direct callers may omit it. */
+	expected?: RefundProviderBinding;
+}
+
+export interface RefundProviderBinding {
+	orderId: OrderId;
+	gateway: PaymentMethod;
+	amount: Cents;
+	currency: Currency;
+	paymentRef: string;
+}
+
+export interface RefundProviderEvent {
+	id: string;
+	created: number;
+	previousStatus?: RefundProviderStatus;
+}
+
+export interface ApplyRefundProviderOutcomeInput extends RefundProviderBinding {
+	idempotencyKey: IdempotencyKey;
+	refundRef: string;
+	providerStatus: RefundProviderStatus;
+	/** Omitted for a synchronous response. Events always win over a delayed response. */
+	event?: RefundProviderEvent;
+}
+
+export interface ApplyRefundProviderOutcomeStoreResult {
+	outcome: "applied" | "noop" | "mismatch" | "not_found";
+	refund: RefundRecord | null;
+	order: Order | null;
+	fullyRefunded: boolean;
 }
 
 /** `found:false` ⇒ no reserved/unverified row under the key AND no benign
@@ -912,6 +957,7 @@ export interface RecordRefundInput {
 	gateway: PaymentMethod;
 	/** Provider refund id for a `gateway` refund; null for a `manual` record. */
 	refundRef: string | null;
+	paymentRef?: string;
 	/** Optional free-text reason (trimmed → null by the use-case). */
 	reason: string | null;
 	refundedBy: string;

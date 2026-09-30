@@ -171,6 +171,10 @@ export type {
 	RecordRefundStoreResult,
 	FinalizeRefundInput,
 	FinalizeRefundStoreResult,
+	ApplyRefundProviderOutcomeInput,
+	ApplyRefundProviderOutcomeStoreResult,
+	RefundProviderBinding,
+	RefundProviderEvent,
 	RefundKind,
 	RefundRecord,
 	RefundStatus,
@@ -255,6 +259,8 @@ export {
 	type RefundFailureReason,
 	type RefundInput,
 	type RefundResult,
+	type RefundProviderStatus,
+	type VerifiedRefundConfirmation,
 	type X402Proof,
 } from "./ports/payment-gateway.js";
 export type {
@@ -296,6 +302,7 @@ export {
 	type RefundOrderFailure,
 	type RefundOrderOutcome,
 } from "./orders/refund-order.js";
+export { refundProviderUpdate } from "./orders/refund-provider-state.js";
 export type {
 	AppendOrderNoteInput,
 	AppendOrderNoteResult,

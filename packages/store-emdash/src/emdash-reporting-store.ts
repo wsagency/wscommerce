@@ -1200,8 +1200,12 @@ function reconstructEvents(orders: OrderDoc[]): ReportingOrderEvent[] {
 				orderTotalCents: order.totals.total,
 			});
 		}
+		const transitions = new Map<string, number>();
 		for (const event of order.events) {
 			if (event.toState === null) continue;
+			const pair = reportingTransitionClaimId(order.orderId, event.fromState, event.toState);
+			const transitionRevision = (transitions.get(pair) ?? 0) + 1;
+			transitions.set(pair, transitionRevision);
 			events.push({
 				kind: "transition",
 				orderId: order.orderId,
@@ -1209,6 +1213,7 @@ function reconstructEvents(orders: OrderDoc[]): ReportingOrderEvent[] {
 				currency: order.currency,
 				fromState: event.fromState,
 				toState: event.toState,
+				...(transitionRevision > 1 ? { transitionRevision } : {}),
 				// DIAGNOSTIC only here: a reconstructed event is used to identify a CLAIM, never
 				// to move a counter, so this is the order's total today rather than whatever it
 				// was when that transition happened — and nothing recomputes from it.
@@ -1216,15 +1221,20 @@ function reconstructEvents(orders: OrderDoc[]): ReportingOrderEvent[] {
 			});
 		}
 		for (const refund of order.refunds) {
-			if (refund.status !== FINALIZED_REFUND_STATUS) continue;
-			events.push({
-				kind: "refund",
-				orderId: order.orderId,
-				orderCreatedAt: order.createdAt,
-				currency: refund.currency,
-				refundId: refund.id,
-				refundedCents: refund.amount,
-			});
+			const revisions =
+				refund.financialRevision ?? (refund.status === FINALIZED_REFUND_STATUS ? 1 : 0);
+			// Recorded/unrecorded changes alternate. Reconstruct every claim, including
+			// reversals, so a delayed correction cannot double-count an absolute rebuild.
+			for (let revision = 1; revision <= revisions; revision++) {
+				events.push({
+					kind: "refund",
+					orderId: order.orderId,
+					orderCreatedAt: order.createdAt,
+					currency: refund.currency,
+					refundId: revision === 1 ? refund.id : `${refund.id}:${revision}`,
+					refundedCents: revision % 2 === 1 ? refund.amount : -refund.amount,
+				});
+			}
 		}
 	}
 	return events;
@@ -1233,7 +1243,12 @@ function reconstructEvents(orders: OrderDoc[]): ReportingOrderEvent[] {
 /** Which claim an event is filed under. */
 function claimIdFor(event: ReportingOrderEvent): string {
 	return event.kind === "transition"
-		? reportingTransitionClaimId(event.orderId, event.fromState, event.toState)
+		? reportingTransitionClaimId(
+				event.orderId,
+				event.fromState,
+				event.toState,
+				event.transitionRevision,
+			)
 		: reportingRefundClaimId(event.orderId, event.refundId);
 }
 
@@ -1309,8 +1324,13 @@ function planDelta(doc: CurrentReportingDailyDoc, event: ReportingOrderEvent): D
 			move("revenueCents", "revenueCents", 0, event.orderTotalCents);
 		}
 	} else {
-		move("refundEntries", "refundEntries", 0, 1);
-		move("refundedCents", "refundedCents", 0, event.refundedCents);
+		if (event.refundedCents < 0) {
+			move("refundEntries", "refundEntries", 1, 0);
+			move("refundedCents", "refundedCents", -event.refundedCents, 0);
+		} else {
+			move("refundEntries", "refundEntries", 0, 1);
+			move("refundedCents", "refundedCents", 0, event.refundedCents);
+		}
 	}
 
 	const plan: DeltaPlan = { where: {}, delta: {}, floored: [] };

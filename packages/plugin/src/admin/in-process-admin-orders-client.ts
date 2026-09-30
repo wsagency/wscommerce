@@ -776,6 +776,7 @@ function toRefundWire(refund: RefundRecord): RefundWire {
 		refundedBy: refund.refundedBy,
 		createdAt: refund.createdAt,
 		status: refund.status,
+		...(refund.providerStatus === undefined ? {} : { providerStatus: refund.providerStatus }),
 		idempotencyKey: refund.idempotencyKey,
 	};
 }
@@ -810,6 +811,7 @@ function refundFailureStatus(reason: RefundOrderFailure): 400 | 404 | 409 | 502 
 		case "PROVIDER_ALREADY_REFUNDED":
 		case "REFUND_NOT_SUPPORTED":
 		case "GATEWAY_UNVERIFIED":
+		case "GATEWAY_PENDING":
 		// The loud residual (ADR-0008, reserve-before-issue): a gateway refund
 		// issued but its reserved ledger row could not be finalized. A DISTINCT 409
 		// so it is never conflated with a clean pre-issuance rejection.

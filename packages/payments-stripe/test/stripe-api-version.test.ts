@@ -10,7 +10,7 @@ function recordingFetch(seen: Array<{ url: string; headers: Headers }>): typeof 
 		const url = String(target);
 		seen.push({ url, headers: new Headers(init?.headers) });
 		const body = url.includes("/v1/refunds")
-			? { id: "re_1", amount: 500, currency: "usd" }
+			? { id: "re_1", amount: 500, currency: "usd", status: "succeeded" }
 			: url.includes("/v1/charges/")
 				? { amount_refunded: 0, amount_captured: 1000, currency: "usd" }
 				: init?.method === "GET"

@@ -2,6 +2,7 @@ import {
 	cents,
 	currency as toCurrency,
 	orderId as toOrderId,
+	idempotencyKey as toIdempotencyKey,
 	PaymentIntentError,
 	type ClientAction,
 	type Clock,
@@ -14,6 +15,7 @@ import {
 	type RawConfirmation,
 	type RefundInput,
 	type RefundResult,
+	type RefundProviderStatus,
 } from "@otta-sh/domain";
 
 /** Default replay-window tolerance for the signed `t` timestamp — 300s, matching
@@ -223,6 +225,7 @@ export interface StripeTransport {
 		secretKey: string;
 	}): Promise<StripePreflightResult>;
 	createRefund(input: {
+		orderId?: string;
 		providerRef: string;
 		amountCents: number;
 		idempotencyKey: string;
@@ -300,7 +303,13 @@ export type StripePreflightResult =
  *  `ambiguous` (network error / timeout — fate UNKNOWN, must be re-checked, never
  *  blind-retried). */
 export type StripeCreateRefundResult =
-	| { ok: true; refundId: string; amountCents: number; currency: string }
+	| {
+			ok: true;
+			refundId: string;
+			amountCents: number;
+			currency: string;
+			status: RefundProviderStatus;
+	  }
 	| { ok: false; class: "retryable" | "terminal" | "ambiguous" };
 
 /**
@@ -397,10 +406,20 @@ export class StripePaymentGateway implements PaymentGateway {
 			return { ok: false, reason: pre.class === "retryable" ? "RETRYABLE" : "TERMINAL" };
 		}
 		const { amountRefunded, amountCaptured } = pre.view;
+		if (
+			!Number.isSafeInteger(amountRefunded) ||
+			amountRefunded < 0 ||
+			!Number.isSafeInteger(amountCaptured) ||
+			amountCaptured < 0 ||
+			pre.view.currency.toUpperCase() !== input.currency
+		) {
+			return { ok: false, reason: "TERMINAL" };
+		}
 		if (amountRefunded > input.priorRefunded || amountRefunded + input.amount > amountCaptured) {
 			return { ok: false, reason: "PROVIDER_ALREADY_REFUNDED" };
 		}
 		const created = await this.#transport.createRefund({
+			orderId: input.orderId,
 			providerRef: input.providerRef,
 			amountCents: input.amount,
 			idempotencyKey: input.idempotencyKey,
@@ -410,6 +429,17 @@ export class StripePaymentGateway implements PaymentGateway {
 			if (created.class === "ambiguous") return { ok: false, reason: "UNVERIFIED" };
 			return { ok: false, reason: created.class === "retryable" ? "RETRYABLE" : "TERMINAL" };
 		}
+		if (created.amountCents !== input.amount || created.currency.toUpperCase() !== input.currency)
+			return { ok: false, reason: "UNVERIFIED" };
+		if (created.status !== "succeeded")
+			return {
+				ok: false,
+				reason: "PROVIDER_OUTCOME",
+				providerStatus: created.status,
+				refundRef: created.refundId,
+				amount: cents(created.amountCents),
+				currency: toCurrency(created.currency.toUpperCase()),
+			};
 		return {
 			ok: true,
 			refundRef: created.refundId,
@@ -570,14 +600,21 @@ function normalizeEvent(event: unknown): ConfirmationResult {
 	const e = event as {
 		id?: unknown;
 		type?: unknown;
-		data?: { object?: Record<string, unknown> };
+		created?: unknown;
+		data?: { object?: Record<string, unknown>; previous_attributes?: { status?: unknown } };
 	};
 	if (typeof e.id !== "string" || typeof e.type !== "string")
 		return { ok: false, reason: "MALFORMED" };
-	if (e.type !== SUCCEEDED && e.type !== FAILED) return { ok: false, reason: "UNKNOWN_EVENT" };
+	const refundEvent =
+		e.type === "refund.created" ||
+		e.type === "refund.updated" ||
+		e.type === "refund.failed" ||
+		e.type === "charge.refund.updated";
+	if (e.type !== SUCCEEDED && e.type !== FAILED && !refundEvent)
+		return { ok: false, reason: "UNKNOWN_EVENT" };
 
 	const obj = e.data?.object;
-	if (obj === undefined) return { ok: false, reason: "MALFORMED" };
+	if (typeof obj !== "object" || obj === null) return { ok: false, reason: "MALFORMED" };
 	const providerRef = obj["id"];
 	const amount = obj["amount"];
 	const cur = obj["currency"];
@@ -589,10 +626,50 @@ function normalizeEvent(event: unknown): ConfirmationResult {
 	if (
 		typeof providerRef !== "string" ||
 		typeof amount !== "number" ||
+		!Number.isSafeInteger(amount) ||
+		amount < 0 ||
 		typeof cur !== "string" ||
+		!/^[a-z]{3}$/iu.test(cur) ||
 		typeof orderRef !== "string"
 	) {
 		return { ok: false, reason: "MALFORMED" };
+	}
+	if (refundEvent) {
+		const refundKey = (metadata as Record<string, unknown> | null)?.["refund_key"];
+		// Dashboard/out-of-band refunds have no native reservation. Acknowledge
+		// them without manufacturing a completed local ledger row.
+		if (typeof refundKey !== "string" || refundKey.length === 0)
+			return { ok: false, reason: "UNKNOWN_EVENT" };
+		const paymentRef =
+			typeof obj["payment_intent"] === "string" ? obj["payment_intent"] : obj["charge"];
+		const status = obj["status"];
+		if (
+			!isRefundStatus(status) ||
+			amount <= 0 ||
+			typeof paymentRef !== "string" ||
+			paymentRef.length === 0 ||
+			typeof e.created !== "number" ||
+			!Number.isSafeInteger(e.created) ||
+			e.created < 0
+		)
+			return { ok: false, reason: "MALFORMED" };
+		const previousStatus = e.data?.previous_attributes?.status;
+		return {
+			ok: true,
+			outcome: "refund",
+			orderId: toOrderId(orderRef),
+			providerRef,
+			paymentRef,
+			...(typeof obj["charge"] === "string" ? { chargeRef: obj["charge"] } : {}),
+			refundKey: toIdempotencyKey(refundKey),
+			providerStatus: status,
+			amount: cents(amount),
+			currency: toCurrency(cur.toUpperCase()),
+			dedupeKey: e.id,
+			gateway: "stripe",
+			eventCreated: e.created,
+			...(isRefundStatus(previousStatus) ? { previousStatus } : {}),
+		};
 	}
 	return {
 		ok: true,
@@ -867,6 +944,7 @@ export function createStripeHttpTransport(options: StripeHttpTransportOptions): 
 		},
 
 		async createRefund({
+			orderId,
 			providerRef,
 			amountCents,
 			idempotencyKey,
@@ -876,6 +954,8 @@ export function createStripeHttpTransport(options: StripeHttpTransportOptions): 
 			// A PI id vs a bare charge id — target the right Stripe param.
 			form.set(providerRef.startsWith("ch_") ? "charge" : "payment_intent", providerRef);
 			form.set("amount", String(amountCents));
+			if (orderId !== undefined) form.set("metadata[order_id]", orderId);
+			form.set("metadata[refund_key]", idempotencyKey);
 			let res: Response;
 			try {
 				res = await doFetch(`${base}/v1/refunds`, {
@@ -972,15 +1052,37 @@ async function stripeErrorCode(res: Response): Promise<string | undefined> {
 }
 
 /** Parse a Stripe refund object into the created-refund result, or null. */
-function createdRefundOf(
-	refund: unknown,
-): { refundId: string; amountCents: number; currency: string } | null {
+function createdRefundOf(refund: unknown): {
+	refundId: string;
+	amountCents: number;
+	currency: string;
+	status: RefundProviderStatus;
+} | null {
 	if (typeof refund !== "object" || refund === null) return null;
-	const r = refund as { id?: unknown; amount?: unknown; currency?: unknown };
-	if (typeof r.id !== "string" || typeof r.amount !== "number" || typeof r.currency !== "string") {
+	const r = refund as { id?: unknown; amount?: unknown; currency?: unknown; status?: unknown };
+	if (
+		typeof r.id !== "string" ||
+		r.id.length === 0 ||
+		typeof r.amount !== "number" ||
+		!Number.isSafeInteger(r.amount) ||
+		r.amount <= 0 ||
+		typeof r.currency !== "string" ||
+		!/^[a-z]{3}$/iu.test(r.currency) ||
+		!isRefundStatus(r.status)
+	) {
 		return null;
 	}
-	return { refundId: r.id, amountCents: r.amount, currency: r.currency };
+	return { refundId: r.id, amountCents: r.amount, currency: r.currency, status: r.status };
+}
+
+function isRefundStatus(value: unknown): value is RefundProviderStatus {
+	return (
+		value === "succeeded" ||
+		value === "pending" ||
+		value === "requires_action" ||
+		value === "failed" ||
+		value === "canceled"
+	);
 }
 
 // -- offline fake-Stripe driver (test/proxy helper; NO network) --------------
