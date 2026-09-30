@@ -1,4 +1,5 @@
 import {
+	translateAdminAuthored,
 	NEXT_AT_END_TITLE,
 	NEXT_PAGE_LABEL,
 	NEXT_RELEASES_SCAN_TITLE,
@@ -882,14 +883,17 @@ export const REFRESH_HALTED_DESCRIPTION =
  * is not on offer. So while it is unavailable it says why, and it states the cost
  * only when pressing it would incur one.
  */
-export function refreshControl(opts: {
-	readonly busy: boolean;
-	readonly refreshing: boolean;
-}): PagerControl {
+export function refreshControl(
+	opts: {
+		readonly busy: boolean;
+		readonly refreshing: boolean;
+	},
+	locale: unknown = "en",
+): PagerControl {
 	return {
-		label: opts.refreshing ? REFRESHING_LABEL : REFRESH_LABEL,
+		label: translateAdminAuthored(locale, opts.refreshing ? REFRESHING_LABEL : REFRESH_LABEL),
 		unavailable: opts.busy,
-		title: opts.busy ? REFRESH_BUSY_TITLE : REFRESH_TITLE,
+		title: translateAdminAuthored(locale, opts.busy ? REFRESH_BUSY_TITLE : REFRESH_TITLE),
 	};
 }
 
@@ -960,20 +964,23 @@ export interface PagerView {
  * happened, so the position stays on screen with both controls dimmed and
  * explained.
  */
-export function pagerView(opts: {
-	readonly trail: PageTrail;
-	readonly hasNext: boolean;
-	/** Rows on screen, which is what a `total` is sanity-checked against. */
-	readonly rows: number;
-	/** The count line's OWN figure — `listOutcome`'s `statedTotal`. */
-	readonly total?: number;
-	readonly pageSize?: number;
-	/** How many responses the rows on screen were merged from. Above one, the
-	 *  position states the window rather than its last page. */
-	readonly span?: number;
-	readonly busy: boolean;
-	readonly withdrawn: boolean;
-}): PagerView {
+export function pagerView(
+	opts: {
+		readonly trail: PageTrail;
+		readonly hasNext: boolean;
+		/** Rows on screen, which is what a `total` is sanity-checked against. */
+		readonly rows: number;
+		/** The count line's OWN figure — `listOutcome`'s `statedTotal`. */
+		readonly total?: number;
+		readonly pageSize?: number;
+		/** How many responses the rows on screen were merged from. Above one, the
+		 *  position states the window rather than its last page. */
+		readonly span?: number;
+		readonly busy: boolean;
+		readonly withdrawn: boolean;
+	},
+	locale: unknown = "en",
+): PagerView {
 	const index = pageNumber(opts.trail);
 	const derived = pageCount(opts.rows, {
 		...(opts.total !== undefined ? { total: opts.total } : {}),
@@ -991,28 +998,35 @@ export function pagerView(opts: {
 		// ANY CURSOR IN THE STACK MEANS THIS LIST IS PAGED — see the note above.
 		visible: !opts.withdrawn && (opts.hasNext || opts.trail.cursors.length > 0),
 		previous: {
-			label: PREVIOUS_PAGE_LABEL,
+			label: translateAdminAuthored(locale, PREVIOUS_PAGE_LABEL),
 			unavailable: opts.busy || !canPrevious,
 			title: canPrevious
 				? undefined
 				: opts.trail.grounded
-					? PREVIOUS_AT_START_TITLE
-					: PREVIOUS_UNWALKED_TITLE,
+					? translateAdminAuthored(locale, PREVIOUS_AT_START_TITLE)
+					: translateAdminAuthored(locale, PREVIOUS_UNWALKED_TITLE),
 		},
 		next: {
-			label: NEXT_PAGE_LABEL,
+			label: translateAdminAuthored(locale, NEXT_PAGE_LABEL),
 			unavailable: opts.busy || !opts.hasNext,
 			// THE COST IS STATED BEFORE THE CLICK, not discovered after it. Paging on
 			// from an accumulated scan shows the next page alone, so the pages the
 			// operator gathered are released — the one thing about this pager that
 			// takes something away, and the one place it can be said in time.
-			title: !opts.hasNext ? NEXT_AT_END_TITLE : accumulated ? NEXT_RELEASES_SCAN_TITLE : undefined,
+			title: !opts.hasNext
+				? translateAdminAuthored(locale, NEXT_AT_END_TITLE)
+				: accumulated
+					? translateAdminAuthored(locale, NEXT_RELEASES_SCAN_TITLE)
+					: undefined,
 		},
-		position: pagePositionLine({
-			...(index !== undefined ? { index } : {}),
-			...(pages !== undefined ? { pages } : {}),
-			...(opts.span !== undefined ? { span: opts.span } : {}),
-		}),
+		position: pagePositionLine(
+			{
+				...(index !== undefined ? { index } : {}),
+				...(pages !== undefined ? { pages } : {}),
+				...(opts.span !== undefined ? { span: opts.span } : {}),
+			},
+			locale,
+		),
 	};
 }
 

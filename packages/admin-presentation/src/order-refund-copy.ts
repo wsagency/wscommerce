@@ -16,6 +16,7 @@
  * Decision 3). Pure string work, no IO, no wire types — the signatures take
  * primitives precisely so this module never learns what an order looks like.
  */
+import { adminMessage } from "./admin-messages.js";
 import { SHORT_ID_CONFIRM_LEN, shortIdFixed } from "./short-id.js";
 
 /** `confirm.text`'s hard budget (§1): exactly two sentences, ≤200 characters. */
@@ -71,29 +72,48 @@ export function refundConfirmText(
 	amount: string,
 	recipient: string,
 	refundable: boolean,
+	locale: unknown = "en",
 ): string {
 	const consequence = refundable
-		? "This sends the money back through Stripe and cannot be reversed."
-		: "This records a refund made out of band — it does not move money.";
-	const order = `Order #${shortIdFixed(orderId, SHORT_ID_CONFIRM_LEN)}`;
-	const named =
-		recipient === UNNAMED_REFUND_RECIPIENT
-			? `${order} — refund ${amount} to ${recipient}? ${consequence}`
-			: `${order} — refund ${amount} to "${recipient}"? ${consequence}`;
-	return named.length <= CONFIRM_BUDGET
-		? named
-		: `${order} — refund ${amount} to ${UNNAMED_REFUND_RECIPIENT}? ${consequence}`;
+		? adminMessage(locale, "This sends the money back through Stripe and cannot be reversed.")
+		: adminMessage(locale, "This records a refund made out of band — it does not move money.");
+	const id = shortIdFixed(orderId, SHORT_ID_CONFIRM_LEN);
+	const fallback = adminMessage(locale, "this order's buyer");
+	const name = recipient === UNNAMED_REFUND_RECIPIENT ? fallback : `"${recipient}"`;
+	const compose = (to: string) =>
+		adminMessage(locale, "Order #{id} — refund {amount} to {recipient}? {consequence}", {
+			id,
+			amount,
+			recipient: to,
+			consequence,
+		});
+	const named = compose(name);
+	return named.length <= CONFIRM_BUDGET ? named : compose(fallback);
 }
 
 /** The honest per-gateway capability copy (ADR-0008), each ≤200 (§1): Stripe
  *  moves money; x402 / no-secret is record-only, and says why. Takes primitives
  *  rather than a summary object so this module stays free of wire types. */
-export function refundCapabilityText(refundable: boolean, paymentMethod: string | null): string {
+export function refundCapabilityText(
+	refundable: boolean,
+	paymentMethod: string | null,
+	locale: unknown = "en",
+): string {
 	if (refundable) {
-		return `Paid via ${paymentMethod ?? "the payment provider"} — refunding here issues a REAL refund through Stripe and money moves back to the buyer.`;
+		return adminMessage(
+			locale,
+			"Paid via {method} — refunding here issues a REAL refund through Stripe and money moves back to the buyer.",
+			{ method: paymentMethod ?? adminMessage(locale, "the payment provider") },
+		);
 	}
 	if (paymentMethod === "x402") {
-		return "Paid on-chain (x402), which cannot be reversed and has no signing wallet — refunds here are RECORD-ONLY. Send the return yourself, then record it here.";
+		return adminMessage(
+			locale,
+			"Paid on-chain (x402), which cannot be reversed and has no signing wallet — refunds here are RECORD-ONLY. Send the return yourself, then record it here.",
+		);
 	}
-	return "Automatic refunds are unavailable for this order — refunds here are RECORD-ONLY. Issue it through your payment provider, then record it here.";
+	return adminMessage(
+		locale,
+		"Automatic refunds are unavailable for this order — refunds here are RECORD-ONLY. Issue it through your payment provider, then record it here.",
+	);
 }

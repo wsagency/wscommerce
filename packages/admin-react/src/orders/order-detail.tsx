@@ -1,3 +1,4 @@
+import { useAdminLocale, useAdminPresentation } from "../locale.js";
 /**
  * The React order detail.
  *
@@ -40,49 +41,28 @@
  * that has to change changes once.
  */
 import {
-	CANCEL_BANNER,
-	CANCEL_CONFIRM,
-	CANCEL_GROUP_LABEL,
-	CANCEL_PICK_REASON,
-	CUSTOMER_CONTEXT_UNAVAILABLE,
-	FULFILMENT_LABELS,
-	FULLY_REFUNDED_NOTE,
-	MARK_REFUNDED_CONFIRM,
-	ORDERS_BACK_LABEL,
-	ORDER_LINES_EMPTY,
-	ORDER_LINES_SNAPSHOT_NOTE,
-	REFUNDS_GROUP_EMPTY_LABEL,
-	REFUNDS_UNAVAILABLE,
-	REFUND_ADDITIVE_NOTE,
+	adminMessage,
+	adminPresentation,
+	translateAdminAuthored,
 	REFUND_AMOUNT_INVALID,
 	REFUND_BY_REQUIRED,
-	OFFLINE_PAYMENT_COPY,
-	REFUND_PARTIAL_GROUP_LABEL,
-	RESOLVE_RECONCILIATION_NOTE,
-	SHIPPING_ADDRESS_ABSENT,
-	TIMELINE_EMPTY,
-	TIMELINE_UNAVAILABLE,
 	UNNAMED_REFUND_RECIPIENT,
 	buyerReferenceText,
 	cancelConfirmText,
 	fit,
 	formatAmount,
-	formatDate,
 	formatMinorUnitsInput,
-	formatTimestamp,
 	orderStateCell,
 	parseMinorUnitsInput,
-	reconciliationAlertSentence,
-	reconciliationSummary,
-	refundCapabilityText,
 	refundConfirmText,
 	refundTooHighInline,
-	refundsGroupLabel,
 } from "@otta-sh/admin-presentation";
 import * as React from "react";
 import {
 	fetchOrderDetail,
 	isFailure,
+	failurePresentation,
+	type Failure,
 	performAction,
 	type CustomerContext,
 	type DetailPayload,
@@ -146,21 +126,29 @@ export function checkRefundInput(
 	refundedBy: string,
 	remainingCents: number,
 	currency: string,
+	locale: unknown = "en",
 ): RefundCheck {
 	const parsed = parseMinorUnitsInput(amountInput, { allowZero: false });
 	if (parsed === null) {
-		return { ok: false, refusal: { message: REFUND_AMOUNT_INVALID, field: "amount" } };
+		return {
+			ok: false,
+			refusal: { message: translateAdminAuthored(locale, REFUND_AMOUNT_INVALID), field: "amount" },
+		};
 	}
 	if (refundedBy.trim().length === 0) {
-		return { ok: false, refusal: { message: REFUND_BY_REQUIRED, field: "refundedBy" } };
+		return {
+			ok: false,
+			refusal: { message: translateAdminAuthored(locale, REFUND_BY_REQUIRED), field: "refundedBy" },
+		};
 	}
 	if (parsed > remainingCents) {
 		return {
 			ok: false,
 			refusal: {
 				message: refundTooHighInline(
-					formatAmount(parsed, currency),
-					formatAmount(remainingCents, currency),
+					formatAmount(parsed, currency, locale),
+					formatAmount(remainingCents, currency, locale),
+					locale,
 				),
 				field: "amount",
 			},
@@ -197,12 +185,15 @@ const REFUND_STATUS_LABEL: Readonly<Record<RefundRowStatus, string>> = {
 	unverified: "Outcome unknown — check your payment provider",
 };
 
-function refundStatusLabel(refund: RefundsSummary["refunds"][number]): string {
+function refundStatusLabel(
+	refund: RefundsSummary["refunds"][number],
+	locale: unknown = "en",
+): string {
 	if (refund.status === "unverified" && refund.providerStatus === "pending")
-		return "Pending at payment provider";
+		return adminMessage(locale, "Pending at payment provider");
 	if (refund.status === "unverified" && refund.providerStatus === "requires_action")
-		return "Customer action required";
-	return REFUND_STATUS_LABEL[refundRowStatus(refund)];
+		return adminMessage(locale, "Customer action required");
+	return translateAdminAuthored(locale, REFUND_STATUS_LABEL[refundRowStatus(refund)]);
 }
 
 /** Money that actually came back. An older plugin sends no finalized total, and
@@ -235,25 +226,35 @@ interface PendingAction {
 	readonly text: string;
 	readonly confirmLabel: string;
 	readonly denyLabel: string;
+	/** Recompose display copy without replacing the queued mutation. */
+	readonly confirmationForLocale?: (
+		locale: unknown,
+	) => Pick<PendingAction, "title" | "text" | "confirmLabel" | "denyLabel">;
+}
+
+function confirmationFields(copy: { title: string; text: string; confirm: string; deny: string }) {
+	return { title: copy.title, text: copy.text, confirmLabel: copy.confirm, denyLabel: copy.deny };
 }
 
 /** The timeline's event label — the same mapping as the Block Kit screen's
  *  `timelineWhat`, including reading the state through `orderStateCell` so a
  *  `Status → cancelled` line says `cancelled · closed` here too. */
-function timelineWhat(entry: TimelineEntry): string {
+function timelineWhat(entry: TimelineEntry, locale: unknown = "en"): string {
 	switch (entry.kind) {
 		case "created":
-			return "Order created";
+			return adminMessage(locale, "Order created");
 		case "state_change":
-			return `Status → ${orderStateCell(entry.toState ?? "")}`;
+			return adminMessage(locale, "Status → {status}", {
+				status: orderStateCell(entry.toState ?? "", locale),
+			});
 		case "note":
-			return "Note added";
+			return adminMessage(locale, "Note added");
 		case "fulfillment":
-			return "Fulfilment recorded";
+			return adminMessage(locale, "Fulfilment recorded");
 		case "cancellation":
-			return "Cancelled";
+			return adminMessage(locale, "Cancelled");
 		case "reconciliation_resolved":
-			return "Reconciliation resolved";
+			return adminMessage(locale, "Reconciliation resolved");
 		default:
 			return entry.kind;
 	}
@@ -435,6 +436,9 @@ export function RefundsPanel({
 	readonly amountRef: React.RefObject<HTMLInputElement | null>;
 	readonly refundedByRef: React.RefObject<HTMLInputElement | null>;
 }): React.ReactElement {
+	const copy = useAdminPresentation();
+	const { t, locale } = useAdminLocale();
+
 	const refundMode = refundPanelMode(refunds);
 	// A `voided` attempt moved nothing and is not a refund; it stays on the wire
 	// for audit only. Everything else is listed WITH its status.
@@ -455,10 +459,10 @@ export function RefundsPanel({
 				<Fields
 					testId="detail-money"
 					entries={[
-						["Captured", formatAmount(refunds.capturedTotalCents, cur)],
-						["Refunded", formatAmount(finalizedCents, cur)],
-						["Remaining refundable", formatAmount(refunds.remainingCents, cur)],
-						["Refunds recorded", String(recordedCount)],
+						[t("Captured"), copy.formatAmount(refunds.capturedTotalCents, cur)],
+						[t("Refunded"), copy.formatAmount(finalizedCents, cur)],
+						[t("Remaining refundable"), copy.formatAmount(refunds.remainingCents, cur)],
+						[t("Refunds recorded"), String(recordedCount)],
 					]}
 				/>
 			</section>
@@ -468,10 +472,10 @@ export function RefundsPanel({
 				defaultOpen
 				label={
 					refundMode === "empty"
-						? REFUNDS_GROUP_EMPTY_LABEL
-						: refundsGroupLabel(
-								formatAmount(finalizedCents, cur),
-								formatAmount(refunds.ceilingCents, cur),
+						? copy.REFUNDS_GROUP_EMPTY_LABEL
+						: copy.refundsGroupLabel(
+								copy.formatAmount(finalizedCents, cur),
+								copy.formatAmount(refunds.ceilingCents, cur),
 							)
 				}
 			>
@@ -492,35 +496,38 @@ export function RefundsPanel({
 				*/}
 				{refundMode !== "empty" && (
 					<p style={{ fontSize: 12, opacity: 0.8 }} data-testid="refund-capability">
-						{refundCapabilityText(refunds.refundable, refunds.paymentMethod)}
+						{copy.refundCapabilityText(refunds.refundable, refunds.paymentMethod)}
 					</p>
 				)}
 
 				{unverifiedCents > 0 && (
 					<p style={{ fontSize: 13 }} data-testid="refund-unverified-note">
-						{`Refunds totalling ${formatAmount(unverifiedCents, cur)} have an unknown outcome — check your payment provider before refunding again. The amount stays reserved on this order until it is reconciled; match it in the provider by its idempotency key below.`}
+						{t(
+							"Refunds totalling {amount} have an unknown outcome — check your payment provider before refunding again. The amount stays reserved on this order until it is reconciled; match it in the provider by its idempotency key below.",
+							{ amount: copy.formatAmount(unverifiedCents, cur) },
+						)}
 					</p>
 				)}
 
 				{listed.length > 0 && (
 					<Table
 						testId="detail-refund-ledger"
-						caption="Refunds recorded"
+						caption={t("Refunds recorded")}
 						headers={[
-							<EndHeader label="Amount" />,
-							"Status",
-							"Provider ref",
-							"Idempotency key",
-							"By",
-							"When",
+							<EndHeader label={t("Amount")} />,
+							t("Status"),
+							t("Provider ref"),
+							t("Idempotency key"),
+							t("By"),
+							t("When"),
 						]}
 					>
 						{listed.map((refund, index) => (
 							<tr key={`${refund.idempotencyKey ?? refund.refundRef ?? "ref"}:${String(index)}`}>
 								<td className="otta-td otta-num" style={endCellStyle}>
-									{formatAmount(refund.amountCents, refund.currency ?? cur)}
+									{copy.formatAmount(refund.amountCents, refund.currency ?? cur)}
 								</td>
-								<td className="otta-td">{refundStatusLabel(refund)}</td>
+								<td className="otta-td">{refundStatusLabel(refund, locale)}</td>
 								<td className="otta-td">
 									<code>{refund.refundRef ?? refund.providerRef ?? "—"}</code>
 								</td>
@@ -529,7 +536,7 @@ export function RefundsPanel({
 								</td>
 								<td className="otta-td">{refund.refundedBy ?? "—"}</td>
 								<td className="otta-td otta-num">
-									{refund.createdAt != null ? formatTimestamp(refund.createdAt) : "—"}
+									{refund.createdAt != null ? copy.formatTimestamp(refund.createdAt) : "—"}
 								</td>
 							</tr>
 						))}
@@ -542,12 +549,13 @@ export function RefundsPanel({
 				    of a second true one. */}
 				{refundMode === "empty" ? null : refundMode === "fully-refunded" ? (
 					<p style={{ fontSize: 13, marginBlockStart: 12 }} data-testid="refunds-full-note">
-						{FULLY_REFUNDED_NOTE}
+						{copy.FULLY_REFUNDED_NOTE}
 					</p>
 				) : refundMode === "awaiting" ? (
 					<p style={{ fontSize: 13, marginBlockStart: 12 }} data-testid="refunds-held-note">
-						The remaining refund capacity is reserved for refunds awaiting completion or
-						reconciliation. Check your payment provider before issuing another refund.
+						{t(
+							"The remaining refund capacity is reserved for refunds awaiting completion or reconciliation. Check your payment provider before issuing another refund.",
+						)}
 					</p>
 				) : (
 					<div style={{ marginBlockStart: 12, display: "grid", gap: 12, maxInlineSize: 420 }}>
@@ -556,13 +564,15 @@ export function RefundsPanel({
 								testId="refund-full"
 								danger
 								disabled={busy}
-								label={`Refund ${formatAmount(refunds.remainingCents, cur)} (full remaining)`}
+								label={t("Refund {amount} (full remaining)", {
+									amount: copy.formatAmount(refunds.remainingCents, cur),
+								})}
 								onClick={() => askRefund(refunds.remainingCents)}
 							/>
 						</div>
-						<Group testId="refund-partial" label={REFUND_PARTIAL_GROUP_LABEL}>
+						<Group testId="refund-partial" label={copy.REFUND_PARTIAL_GROUP_LABEL}>
 							<div style={{ display: "grid", gap: 10 }}>
-								<Field label={`Refund amount (${cur})`}>
+								<Field label={t("Refund amount ({currency})", { currency: cur })}>
 									<input
 										className="otta-focusable"
 										data-testid="refund-amount"
@@ -572,7 +582,7 @@ export function RefundsPanel({
 												? { ...inputStyle, borderColor: FAIL_ACCENT }
 												: inputStyle
 										}
-										placeholder="e.g. 19.99"
+										placeholder={t("e.g. 19.99")}
 										{...(amountError?.field === "amount"
 											? { "aria-invalid": true, "aria-describedby": REFUND_ERROR_ID }
 											: {})}
@@ -583,7 +593,7 @@ export function RefundsPanel({
 										}}
 									/>
 								</Field>
-								<Field label="Reason (optional)">
+								<Field label={t("Reason (optional)")}>
 									<input
 										className="otta-focusable"
 										data-testid="refund-reason"
@@ -592,7 +602,7 @@ export function RefundsPanel({
 										onChange={(event) => setRefundReason(event.target.value)}
 									/>
 								</Field>
-								<Field label="Refunded by">
+								<Field label={t("Refunded by")}>
 									<input
 										className="otta-focusable"
 										data-testid="refund-by"
@@ -635,13 +645,14 @@ export function RefundsPanel({
 										testId="refund-partial-submit"
 										danger
 										disabled={busy}
-										label="Refund this amount"
+										label={t("Refund this amount")}
 										onClick={() => {
 											const checked = checkRefundInput(
 												amountInput,
 												refundedBy,
 												refunds.remainingCents,
 												cur,
+												locale,
 											);
 											if (!checked.ok) {
 												// A refusal that leaves focus where it was makes the
@@ -660,8 +671,11 @@ export function RefundsPanel({
 									/>
 								</div>
 								<p style={{ fontSize: 12, opacity: 0.7, margin: 0 }}>
-									{REFUND_ADDITIVE_NOTE} The remaining refundable amount is{" "}
-									{formatMinorUnitsInput(refunds.remainingCents)}.
+									{copy.REFUND_ADDITIVE_NOTE} {t("The remaining refundable amount is")}{" "}
+									{locale === "hr"
+										? copy.formatAmount(refunds.remainingCents, cur)
+										: formatMinorUnitsInput(refunds.remainingCents)}
+									.
 								</p>
 							</div>
 						</Group>
@@ -681,6 +695,9 @@ export function OfflinePaymentPanel({
 	busy: boolean;
 	ask: (action: PendingAction) => void;
 }): React.ReactElement | null {
+	const copy = useAdminPresentation();
+	const { t } = useAdminLocale();
+
 	const [recorder, setRecorder] = React.useState("");
 	const [receipt, setReceipt] = React.useState("");
 	const [amount, setAmount] = React.useState(String(order.totals.totalCents));
@@ -688,25 +705,25 @@ export function OfflinePaymentPanel({
 	if (!payment) return null;
 	const title =
 		payment.status === "received"
-			? OFFLINE_PAYMENT_COPY.received
+			? copy.OFFLINE_PAYMENT_COPY.received
 			: payment.status === "accepted"
-				? OFFLINE_PAYMENT_COPY.accepted
-				: OFFLINE_PAYMENT_COPY.awaiting;
+				? copy.OFFLINE_PAYMENT_COPY.accepted
+				: copy.OFFLINE_PAYMENT_COPY.awaiting;
 	return (
-		<Group label={`${OFFLINE_PAYMENT_COPY.label} — ${title}`} testId="offline-payment">
+		<Group label={`${copy.OFFLINE_PAYMENT_COPY.label} — ${title}`} testId="offline-payment">
 			<Fields
 				entries={[
-					["Method", payment.method],
-					["Payment deadline", formatTimestamp(payment.paymentDueAt)],
-					["Reference", payment.paymentReference],
-					["Receipt", payment.receiptRef ?? "—"],
+					[t("Method"), payment.method === "cod" ? t("Cash on delivery") : t("Bank transfer")],
+					[t("Payment deadline"), copy.formatTimestamp(payment.paymentDueAt)],
+					[t("Reference"), payment.paymentReference],
+					[t("Receipt"), payment.receiptRef ?? "—"],
 				]}
 			/>
 			{payment.status !== "received" && (
 				<div style={{ display: "grid", gap: 10, marginBlockStart: 12 }}>
-					<Field label={OFFLINE_PAYMENT_COPY.recorder}>
+					<Field label={copy.OFFLINE_PAYMENT_COPY.recorder}>
 						<input
-							aria-label={OFFLINE_PAYMENT_COPY.recorder}
+							aria-label={copy.OFFLINE_PAYMENT_COPY.recorder}
 							value={recorder}
 							maxLength={200}
 							onChange={(event) => setRecorder(event.target.value)}
@@ -716,39 +733,48 @@ export function OfflinePaymentPanel({
 						payment.status === "awaiting" &&
 						order.state === "pending" && (
 							<Button
-								label={OFFLINE_PAYMENT_COPY.accept}
+								label={copy.OFFLINE_PAYMENT_COPY.accept}
 								disabled={busy || recorder.trim().length === 0}
 								testId="accept-cod"
 								onClick={() =>
 									ask({
 										actionId: "orders:accept-cod",
 										value: { orderId: order.id, state: order.state, acceptedBy: recorder },
-										title: OFFLINE_PAYMENT_COPY.accept,
-										text: OFFLINE_PAYMENT_COPY.acceptText,
-										confirmLabel: "Accept",
-										denyLabel: "Go back",
+										title: copy.OFFLINE_PAYMENT_COPY.accept,
+										text: copy.OFFLINE_PAYMENT_COPY.acceptText,
+										confirmLabel: t("Accept"),
+										denyLabel: t("Go back"),
+										confirmationForLocale: (nextLocale) => {
+											const nextCopy = adminPresentation(nextLocale).OFFLINE_PAYMENT_COPY;
+											return {
+												title: nextCopy.accept,
+												text: nextCopy.acceptText,
+												confirmLabel: adminMessage(nextLocale, "Accept"),
+												denyLabel: adminMessage(nextLocale, "Go back"),
+											};
+										},
 									})
 								}
 							/>
 						)}
-					<Field label={OFFLINE_PAYMENT_COPY.receipt}>
+					<Field label={copy.OFFLINE_PAYMENT_COPY.receipt}>
 						<input
-							aria-label={OFFLINE_PAYMENT_COPY.receipt}
+							aria-label={copy.OFFLINE_PAYMENT_COPY.receipt}
 							value={receipt}
 							maxLength={100}
 							onChange={(event) => setReceipt(event.target.value)}
 						/>
 					</Field>
-					<Field label={`${OFFLINE_PAYMENT_COPY.amount} — ${order.totals.currency}`}>
+					<Field label={`${copy.OFFLINE_PAYMENT_COPY.amount} — ${order.totals.currency}`}>
 						<input
-							aria-label={OFFLINE_PAYMENT_COPY.amount}
+							aria-label={copy.OFFLINE_PAYMENT_COPY.amount}
 							value={amount}
 							inputMode="numeric"
 							onChange={(event) => setAmount(event.target.value)}
 						/>
 					</Field>
 					<Button
-						label={OFFLINE_PAYMENT_COPY.confirm}
+						label={copy.OFFLINE_PAYMENT_COPY.confirm}
 						disabled={busy || !recorder.trim() || !receipt.trim() || !/^\d+$/.test(amount)}
 						testId="confirm-offline-payment"
 						onClick={() =>
@@ -762,10 +788,19 @@ export function OfflinePaymentPanel({
 									currency: order.totals.currency,
 									recordedBy: recorder,
 								},
-								title: OFFLINE_PAYMENT_COPY.confirm,
-								text: OFFLINE_PAYMENT_COPY.confirmText,
-								confirmLabel: "Record receipt",
-								denyLabel: "Go back",
+								title: copy.OFFLINE_PAYMENT_COPY.confirm,
+								text: copy.OFFLINE_PAYMENT_COPY.confirmText,
+								confirmLabel: t("Record receipt"),
+								denyLabel: t("Go back"),
+								confirmationForLocale: (nextLocale) => {
+									const nextCopy = adminPresentation(nextLocale).OFFLINE_PAYMENT_COPY;
+									return {
+										title: nextCopy.confirm,
+										text: nextCopy.confirmText,
+										confirmLabel: adminMessage(nextLocale, "Record receipt"),
+										denyLabel: adminMessage(nextLocale, "Go back"),
+									};
+								},
 							})
 						}
 					/>
@@ -791,10 +826,14 @@ export function OrderDetail({
 	 *  detail never touches history itself: one writer. */
 	onTabChange?: (index: number) => void;
 }): React.ReactElement {
+	const copy = useAdminPresentation();
+	const { t, a, locale } = useAdminLocale();
+
 	const [detail, setDetail] = React.useState<DetailPayload | null>(null);
-	const [failure, setFailure] = React.useState<{ title: string; description: string } | null>(null);
+	const [failure, setFailure] = React.useState<Failure | null>(null);
 	const [notice, setNotice] = React.useState<{
 		variant: "default" | "error";
+		source?: Failure;
 		title: string;
 		description: string;
 	} | null>(null);
@@ -826,7 +865,7 @@ export function OrderDetail({
 		void fetchOrderDetail(orderId).then((result) => {
 			if (cancelled) return;
 			if (isFailure(result)) {
-				setFailure({ title: result.title, description: result.description });
+				setFailure(result);
 				return;
 			}
 			setFailure(null);
@@ -843,7 +882,12 @@ export function OrderDetail({
 		void performAction(action.actionId, action.value).then((result) => {
 			setBusy(false);
 			if (isFailure(result)) {
-				setNotice({ variant: "error", title: result.title, description: result.description });
+				setNotice({
+					variant: "error",
+					title: result.title,
+					source: result,
+					description: result.description,
+				});
 				return;
 			}
 			const served = result.notice;
@@ -866,12 +910,12 @@ export function OrderDetail({
 	if (failure !== null) {
 		return (
 			<div>
-				<Button label={ORDERS_BACK_LABEL} onClick={onBack} testId="orders-back" />
+				<Button label={copy.ORDERS_BACK_LABEL} onClick={onBack} testId="orders-back" />
 				<div style={{ marginBlockStart: 16 }}>
 					<Notice
 						variant="error"
-						title={failure.title}
-						description={failure.description}
+						title={failurePresentation(failure, locale).title}
+						description={failurePresentation(failure, locale).description}
 						testId="detail-failure"
 					/>
 				</div>
@@ -882,11 +926,12 @@ export function OrderDetail({
 	if (detail === null) {
 		return (
 			<p style={{ fontSize: 13, opacity: 0.7 }} aria-live="polite">
-				Loading order…
+				{t("Loading order…")}
 			</p>
 		);
 	}
 
+	const confirmation = pending?.confirmationForLocale?.(locale) ?? pending;
 	const order = detail.order;
 	// The HEADING'S OWN QUESTION — "what to print" — answered by the same
 	// shared helper the list's Customer cell uses. NOT what a refund confirm
@@ -900,16 +945,16 @@ export function OrderDetail({
 			: order.totals.currency;
 
 	const ladder: ReadonlyArray<readonly [string, number]> = [
-		["Subtotal", order.totals.subtotalCents],
-		["Discount", order.totals.discountCents],
-		["Shipping", order.totals.shippingCents],
-		["Tax", order.totals.taxCents],
-		["Total", order.totals.totalCents],
+		[t("Subtotal"), order.totals.subtotalCents],
+		[t("Discount"), order.totals.discountCents],
+		[t("Shipping"), order.totals.shippingCents],
+		[t("Tax"), order.totals.taxCents],
+		[t("Total"), order.totals.totalCents],
 	];
 
 	const askRefund = (amountCents: number) => {
 		if (refunds === null) return;
-		const amount = formatAmount(amountCents, cur);
+		const amount = copy.formatAmount(amountCents, cur);
 		// THE DESTRUCTIVE ACTION'S OWN, STRICTER RECIPIENT — see
 		// `resolveRefundRecipient`. A PROVEN email first (claimed + verified),
 		// then the clamped buyerRef, then the shared "this order's buyer"
@@ -929,12 +974,29 @@ export function OrderDetail({
 				reason: refundReason,
 				refundedBy,
 			},
-			title: `Refund ${amount}?`,
+			title: t("Refund {amount}?", { amount }),
 			// THE SHARED SENTENCE. Id first, 8 characters, the same helper the
 			// Block Kit confirm calls — see `@otta-sh/admin-presentation`.
-			text: refundConfirmText(order.id, amount, refundRecipient, refunds.refundable),
-			confirmLabel: `Yes, refund ${amount}`,
-			denyLabel: "Keep as is",
+			text: copy.refundConfirmText(order.id, amount, refundRecipient, refunds.refundable),
+			confirmLabel: t("Yes, refund {amount}", { amount }),
+			denyLabel: t("Keep as is"),
+			confirmationForLocale: (nextLocale) => {
+				const displayedAmount = formatAmount(amountCents, cur, nextLocale);
+				return {
+					title: adminMessage(nextLocale, "Refund {amount}?", { amount: displayedAmount }),
+					text: refundConfirmText(
+						order.id,
+						displayedAmount,
+						refundRecipient,
+						refunds.refundable,
+						nextLocale,
+					),
+					confirmLabel: adminMessage(nextLocale, "Yes, refund {amount}", {
+						amount: displayedAmount,
+					}),
+					denyLabel: adminMessage(nextLocale, "Keep as is"),
+				};
+			},
 		});
 	};
 
@@ -976,17 +1038,17 @@ export function OrderDetail({
 				// `order-detail-dom.test.tsx`.
 				data-customer-id={order.customerId ?? undefined}
 			>
-				Order · {recipient} · {formatDate(order.createdAt)}
+				{t("Order ·")} {recipient} · {copy.formatDate(order.createdAt)}
 			</h1>
 			<div style={{ marginBlockEnd: 16 }}>
-				<Button label={ORDERS_BACK_LABEL} onClick={onBack} testId="orders-back" />
+				<Button label={copy.ORDERS_BACK_LABEL} onClick={onBack} testId="orders-back" />
 			</div>
 
 			{notice !== null && (
 				<Notice
 					variant={notice.variant}
-					title={notice.title}
-					description={notice.description}
+					title={failurePresentation(notice.source ?? notice, locale).title}
+					description={failurePresentation(notice.source ?? notice, locale).description}
 					testId="detail-notice"
 				/>
 			)}
@@ -994,7 +1056,7 @@ export function OrderDetail({
 			{order.reconciliationFlag !== null && (
 				<Notice
 					variant="alert"
-					title="Needs reconciliation"
+					title={t("Needs reconciliation")}
 					// SHARED, and the trim is the reason it has to be. The sentence
 					// quotes a flag the SERVICE produced, so its length is service data
 					// — the one banner on this screen that can blow §1's 240-char
@@ -1002,7 +1064,7 @@ export function OrderDetail({
 					// applies `fitBanner` inside itself precisely so neither surface can
 					// render the untrimmed version; a hand-copied template here had the
 					// same words and none of the budget.
-					description={reconciliationAlertSentence(order.reconciliationFlag)}
+					description={copy.reconciliationAlertSentence(order.reconciliationFlag)}
 					testId="detail-reconciliation"
 				/>
 			)}
@@ -1016,31 +1078,31 @@ export function OrderDetail({
 						[
 							// D1: `failed` is the one status that gets a ring, here and on the
 							// list. Nothing else on this screen is pilled.
-							"Status",
+							t("Status"),
 							order.state === PILLED_ORDER_STATE ? (
 								<StatusPill key="state" tone="fail" testId="detail-state-pill">
-									{orderStateCell(order.state)}
+									{copy.orderStateCell(order.state)}
 								</StatusPill>
 							) : (
-								orderStateCell(order.state)
+								copy.orderStateCell(order.state)
 							),
 						],
-						["Total", formatAmount(order.totals.totalCents, order.totals.currency)],
-						["Placed", formatTimestamp(order.createdAt)],
-						["Payment", order.paymentMethod ?? "—"],
+						[t("Total"), copy.formatAmount(order.totals.totalCents, order.totals.currency)],
+						[t("Placed"), copy.formatTimestamp(order.createdAt)],
+						[t("Payment"), order.paymentMethod ?? "—"],
 						[
 							// §1.3: the full id remains obtainable, and on the React tier it
 							// is also COPYABLE — the affordance the Block Kit surface could
 							// not offer at all.
-							"Order ID",
+							t("Order ID"),
 							<span key="id" style={{ display: "inline-flex", alignItems: "center" }}>
 								<code data-testid="detail-full-id">{order.id}</code>
 								<CopyIdButton id={order.id} testId="detail-copy-id" />
 							</span>,
 						],
 						[
-							"Reconciliation",
-							reconciliationSummary(
+							t("Reconciliation"),
+							copy.reconciliationSummary(
 								order.reconciliationFlag,
 								order.reconciliationResolution?.outcome ?? null,
 							),
@@ -1051,7 +1113,7 @@ export function OrderDetail({
 
 			<div
 				role="tablist"
-				aria-label="Order sections"
+				aria-label={t("Order sections")}
 				style={{ display: "flex", gap: 4, marginBlockEnd: 12 }}
 			>
 				{TAB_LABELS.map((label, index) => (
@@ -1075,7 +1137,7 @@ export function OrderDetail({
 							opacity: tab === index ? 1 : 0.7,
 						}}
 					>
-						{label}
+						{a(label)}
 					</button>
 				))}
 			</div>
@@ -1087,16 +1149,16 @@ export function OrderDetail({
 			>
 				{tab === 0 && (
 					<>
-						<h2 style={{ fontSize: 16, fontWeight: 650, marginBlockEnd: 8 }}>Line items</h2>
+						<h2 style={{ fontSize: 16, fontWeight: 650, marginBlockEnd: 8 }}>{t("Line items")}</h2>
 						<Table
 							testId="detail-lines"
-							caption="Line items"
+							caption={t("Line items")}
 							headers={[
-								"SKU",
-								"Title",
-								<EndHeader label="Qty" />,
-								<EndHeader label="Unit price" />,
-								<EndHeader label="Line total" />,
+								t("SKU"),
+								t("Title"),
+								<EndHeader label={t("Qty")} />,
+								<EndHeader label={t("Unit price")} />,
+								<EndHeader label={t("Line total")} />,
 							]}
 						>
 							{order.lines.map((line, index) => (
@@ -1109,32 +1171,32 @@ export function OrderDetail({
 										{line.quantity}
 									</td>
 									<td className="otta-td otta-num" style={endCellStyle}>
-										{formatAmount(line.unitPriceCents, line.currency)}
+										{copy.formatAmount(line.unitPriceCents, line.currency)}
 									</td>
 									<td className="otta-td otta-num" style={endCellStyle}>
-										{formatAmount(line.unitPriceCents * line.quantity, line.currency)}
+										{copy.formatAmount(line.unitPriceCents * line.quantity, line.currency)}
 									</td>
 								</tr>
 							))}
 						</Table>
 						{order.lines.length === 0 && (
-							<p style={{ fontSize: 13, opacity: 0.75 }}>{ORDER_LINES_EMPTY}</p>
+							<p style={{ fontSize: 13, opacity: 0.75 }}>{copy.ORDER_LINES_EMPTY}</p>
 						)}
 						<p style={{ fontSize: 12, opacity: 0.7, marginBlockStart: 10 }}>
-							{ORDER_LINES_SNAPSHOT_NOTE}
+							{copy.ORDER_LINES_SNAPSHOT_NOTE}
 						</p>
 
 						<div style={{ marginBlockStart: 16, maxInlineSize: 360 }}>
 							<Table
 								testId="detail-totals"
-								caption="Totals"
-								headers={["Line", <EndHeader label="Amount" />]}
+								caption={t("Totals")}
+								headers={[t("Line"), <EndHeader label={t("Amount")} />]}
 							>
 								{ladder.map(([label, amount]) => (
 									<tr key={label}>
 										<td className="otta-td">{label}</td>
 										<td className="otta-td otta-num" style={endCellStyle}>
-											{formatAmount(amount, order.totals.currency)}
+											{copy.formatAmount(amount, order.totals.currency)}
 										</td>
 									</tr>
 								))}
@@ -1143,11 +1205,11 @@ export function OrderDetail({
 
 						<div style={{ marginBlockStart: 16 }}>
 							{detail.customer === null ? (
-								<Unavailable text={CUSTOMER_CONTEXT_UNAVAILABLE} />
+								<Unavailable text={copy.CUSTOMER_CONTEXT_UNAVAILABLE} />
 							) : (
 								<Group
 									testId="detail-customer"
-									label={`Customer — ${detail.customer.identity.email ?? detail.customer.identity.buyerRef}${
+									label={`${t("Customer — {reference}", { reference: detail.customer.identity.email ?? detail.customer.identity.buyerRef })}${
 										detail.customer.identity.linkage === "claimed"
 											? ""
 											: ` (${detail.customer.identity.linkage})`
@@ -1155,14 +1217,14 @@ export function OrderDetail({
 								>
 									<Fields
 										entries={[
-											["Contact email", detail.customer.identity.buyerRef],
-											["Orders placed", String(detail.customer.orderCount)],
-											["Name", detail.customer.identity.name ?? "—"],
+											[t("Contact email"), detail.customer.identity.buyerRef],
+											[t("Orders placed"), String(detail.customer.orderCount)],
+											[t("Name"), detail.customer.identity.name ?? "—"],
 											[
-												"Email verified",
+												t("Email verified"),
 												detail.customer.identity.emailVerifiedAt != null
-													? formatTimestamp(detail.customer.identity.emailVerifiedAt)
-													: "not verified",
+													? copy.formatTimestamp(detail.customer.identity.emailVerifiedAt)
+													: t("not verified"),
 											],
 										]}
 									/>
@@ -1175,9 +1237,9 @@ export function OrderDetail({
 				{tab === 1 && (
 					<>
 						{order.reconciliationFlag !== null && (
-							<Group testId="detail-resolve" label="Resolve reconciliation" defaultOpen>
+							<Group testId="detail-resolve" label={t("Resolve reconciliation")} defaultOpen>
 								<p style={{ fontSize: 12, opacity: 0.75, marginBlockStart: 0 }}>
-									{RESOLVE_RECONCILIATION_NOTE}
+									{copy.RESOLVE_RECONCILIATION_NOTE}
 								</p>
 								<ResolveForm
 									outcomes={detail.vocabulary.reconciliationOutcomes}
@@ -1201,47 +1263,53 @@ export function OrderDetail({
 						)}
 
 						{order.shippingAddress === null ? (
-							<Unavailable text={SHIPPING_ADDRESS_ABSENT} />
+							<Unavailable text={copy.SHIPPING_ADDRESS_ABSENT} />
 						) : (
 							<Group
 								testId="detail-shipping"
-								label={`Shipping address — ${order.shippingAddress.country ?? "—"}`}
+								label={t("Shipping address — {country}", {
+									country: order.shippingAddress.country ?? "—",
+								})}
 							>
 								<Fields
 									entries={[
-										["Name", order.shippingAddress.name ?? "—"],
-										["Country", order.shippingAddress.country ?? "—"],
-										["Address line 1", order.shippingAddress.line1 ?? "—"],
-										["Address line 2", order.shippingAddress.line2 ?? "—"],
-										["City", order.shippingAddress.city ?? "—"],
-										["Region", order.shippingAddress.region ?? "—"],
-										["Postal code", order.shippingAddress.postalCode ?? "—"],
-										["Email", order.shippingAddress.email ?? "—"],
+										[t("Name"), order.shippingAddress.name ?? "—"],
+										[t("Country"), order.shippingAddress.country ?? "—"],
+										[t("Address line 1"), order.shippingAddress.line1 ?? "—"],
+										[t("Address line 2"), order.shippingAddress.line2 ?? "—"],
+										[t("City"), order.shippingAddress.city ?? "—"],
+										[t("Region"), order.shippingAddress.region ?? "—"],
+										[t("Postal code"), order.shippingAddress.postalCode ?? "—"],
+										[t("Email"), order.shippingAddress.email ?? "—"],
 									]}
 								/>
 							</Group>
 						)}
 
 						{order.fulfillment !== null && (
-							<Group testId="detail-fulfilment" label="Fulfilment — recorded">
+							<Group testId="detail-fulfilment" label={t("Fulfilment — recorded")}>
 								<Fields
 									entries={[
-										["Carrier", order.fulfillment.carrier ?? "—"],
-										["Tracking number", order.fulfillment.trackingNumber ?? "—"],
+										[t("Carrier"), order.fulfillment.carrier ?? "—"],
+										[t("Tracking number"), order.fulfillment.trackingNumber ?? "—"],
 										[
-											"Shipped",
+											t("Shipped"),
 											order.fulfillment.shippedAt != null
-												? formatTimestamp(order.fulfillment.shippedAt)
+												? copy.formatTimestamp(order.fulfillment.shippedAt)
 												: "—",
 										],
-										["Recorded by", order.fulfillment.recordedBy ?? "—"],
+										[t("Recorded by"), order.fulfillment.recordedBy ?? "—"],
 									]}
 								/>
 							</Group>
 						)}
 
 						{order.fulfillment === null && order.state === "processing" && (
-							<Group testId="detail-record-fulfilment" label={FULFILMENT_LABELS.submit} defaultOpen>
+							<Group
+								testId="detail-record-fulfilment"
+								label={copy.FULFILMENT_LABELS.submit}
+								defaultOpen
+							>
 								<FulfilmentForm
 									busy={busy}
 									onSubmit={(values) => {
@@ -1260,13 +1328,15 @@ export function OrderDetail({
 
 						{detail.transitions.length > 0 && (
 							<section style={panelStyle}>
-								<h3 style={{ fontSize: 14, fontWeight: 650, marginBlockStart: 0 }}>Status</h3>
+								<h3 style={{ fontSize: 14, fontWeight: 650, marginBlockStart: 0 }}>
+									{t("Status")}
+								</h3>
 								<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
 									{detail.transitions.map((toState) => (
 										<Button
 											key={toState}
 											testId={`transition-${toState}`}
-											label={`Mark ${toState}`}
+											label={t("Mark {status}", { status: copy.orderStateLabel(toState) })}
 											danger={DANGER_TRANSITIONS.has(toState)}
 											disabled={busy}
 											onClick={() => {
@@ -1285,10 +1355,12 @@ export function OrderDetail({
 												setPending({
 													actionId: `orders:transition-${toState}`,
 													value,
-													title: MARK_REFUNDED_CONFIRM.title,
-													text: MARK_REFUNDED_CONFIRM.text,
-													confirmLabel: MARK_REFUNDED_CONFIRM.confirm,
-													denyLabel: MARK_REFUNDED_CONFIRM.deny,
+													title: copy.MARK_REFUNDED_CONFIRM.title,
+													text: copy.MARK_REFUNDED_CONFIRM.text,
+													confirmLabel: copy.MARK_REFUNDED_CONFIRM.confirm,
+													denyLabel: copy.MARK_REFUNDED_CONFIRM.deny,
+													confirmationForLocale: (nextLocale) =>
+														confirmationFields(adminPresentation(nextLocale).MARK_REFUNDED_CONFIRM),
 												});
 											}}
 										/>
@@ -1297,13 +1369,13 @@ export function OrderDetail({
 							</section>
 						)}
 
-						<Group testId="detail-cancel" label={CANCEL_GROUP_LABEL}>
+						<Group testId="detail-cancel" label={copy.CANCEL_GROUP_LABEL}>
 							<Notice
 								variant="alert"
-								title={CANCEL_BANNER.title}
-								description={CANCEL_BANNER.description}
+								title={copy.CANCEL_BANNER.title}
+								description={copy.CANCEL_BANNER.description}
 							/>
-							<p style={{ fontSize: 12, opacity: 0.75 }}>{CANCEL_PICK_REASON}</p>
+							<p style={{ fontSize: 12, opacity: 0.75 }}>{copy.CANCEL_PICK_REASON}</p>
 							{/* One button per reason the plugin says has an id, taken from the list
 							    it SHIPS rather than filtered out of `cancellationReasons` here. The
 							    ids are derived on that side from the same constant; a second copy
@@ -1315,25 +1387,34 @@ export function OrderDetail({
 									<Button
 										key={reason.value}
 										testId={`cancel-${reason.value}`}
-										label={reason.label}
+										label={a(reason.label)}
 										danger
 										disabled={busy}
 										onClick={() => {
 											setPending({
 												actionId: `orders:cancel-${reason.value}`,
 												value: { orderId: order.id, reason: reason.value, state: order.state },
-												title: CANCEL_CONFIRM.title,
-												text: cancelConfirmText(reason.label),
-												confirmLabel: CANCEL_CONFIRM.confirm,
-												denyLabel: CANCEL_CONFIRM.deny,
+												title: copy.CANCEL_CONFIRM.title,
+												text: copy.cancelConfirmText(a(reason.label)),
+												confirmLabel: copy.CANCEL_CONFIRM.confirm,
+												denyLabel: copy.CANCEL_CONFIRM.deny,
+												confirmationForLocale: (nextLocale) => ({
+													...confirmationFields({
+														...adminPresentation(nextLocale).CANCEL_CONFIRM,
+														text: cancelConfirmText(
+															translateAdminAuthored(nextLocale, reason.label),
+															nextLocale,
+														),
+													}),
+												}),
 											});
 										}}
 									/>
 								))}
 							</div>
-							<Group testId="detail-cancel-note" label="Cancel with a note">
+							<Group testId="detail-cancel-note" label={t("Cancel with a note")}>
 								<div style={{ display: "grid", gap: 10, maxInlineSize: 420 }}>
-									<Field label="Reason">
+									<Field label={t("Reason")}>
 										<select
 											className="otta-focusable"
 											data-testid="cancel-note-reason"
@@ -1341,15 +1422,15 @@ export function OrderDetail({
 											value={cancelReason}
 											onChange={(event) => setCancelReason(event.target.value)}
 										>
-											<option value="">Choose a reason…</option>
+											<option value="">{t("Choose a reason…")}</option>
 											{detail.vocabulary.cancellationReasons.map((reason) => (
 												<option key={reason.value} value={reason.value}>
-													{reason.label}
+													{a(reason.label)}
 												</option>
 											))}
 										</select>
 									</Field>
-									<Field label="Detail (optional)">
+									<Field label={t("Detail (optional)")}>
 										<input
 											className="otta-focusable"
 											data-testid="cancel-note-detail"
@@ -1358,7 +1439,7 @@ export function OrderDetail({
 											onChange={(event) => setCancelDetail(event.target.value)}
 										/>
 									</Field>
-									<Field label="Cancelled by">
+									<Field label={t("Cancelled by")}>
 										<input
 											className="otta-focusable"
 											data-testid="cancel-note-by"
@@ -1369,7 +1450,7 @@ export function OrderDetail({
 									</Field>
 									<div>
 										<Button
-											label="Cancel the order"
+											label={t("Cancel the order")}
 											testId="cancel-with-note"
 											danger
 											disabled={busy || cancelReason.length === 0}
@@ -1387,10 +1468,18 @@ export function OrderDetail({
 														cancelledBy,
 														state: order.state,
 													},
-													title: CANCEL_CONFIRM.title,
-													text: cancelConfirmText(label),
-													confirmLabel: CANCEL_CONFIRM.confirm,
-													denyLabel: CANCEL_CONFIRM.deny,
+													title: copy.CANCEL_CONFIRM.title,
+													text: copy.cancelConfirmText(a(label)),
+													confirmLabel: copy.CANCEL_CONFIRM.confirm,
+													denyLabel: copy.CANCEL_CONFIRM.deny,
+													confirmationForLocale: (nextLocale) =>
+														confirmationFields({
+															...adminPresentation(nextLocale).CANCEL_CONFIRM,
+															text: cancelConfirmText(
+																translateAdminAuthored(nextLocale, label),
+																nextLocale,
+															),
+														}),
 												});
 											}}
 										/>
@@ -1403,7 +1492,7 @@ export function OrderDetail({
 
 				{tab === 2 &&
 					(refunds === null ? (
-						<Unavailable text={REFUNDS_UNAVAILABLE} />
+						<Unavailable text={copy.REFUNDS_UNAVAILABLE} />
 					) : (
 						<RefundsPanel
 							refunds={refunds}
@@ -1426,17 +1515,17 @@ export function OrderDetail({
 				{tab === 3 && (
 					<>
 						{detail.timeline === null ? (
-							<Unavailable text={TIMELINE_UNAVAILABLE} />
+							<Unavailable text={copy.TIMELINE_UNAVAILABLE} />
 						) : (
 							<Table
 								testId="detail-timeline"
-								caption="Timeline"
-								headers={["When", "Event", "Who", "Detail"]}
+								caption={t("Timeline")}
+								headers={[t("When"), t("Event"), t("Who"), t("Detail")]}
 							>
 								{detail.timeline.entries.map((entry, index) => (
 									<tr key={`${entry.kind}:${entry.at}:${String(index)}`}>
-										<td className="otta-td otta-num">{formatTimestamp(entry.at)}</td>
-										<td className="otta-td">{timelineWhat(entry)}</td>
+										<td className="otta-td otta-num">{copy.formatTimestamp(entry.at)}</td>
+										<td className="otta-td">{timelineWhat(entry, locale)}</td>
 										<td className="otta-td">{timelineWho(entry)}</td>
 										<td className="otta-td">{timelineDetail(entry)}</td>
 									</tr>
@@ -1444,13 +1533,16 @@ export function OrderDetail({
 							</Table>
 						)}
 						{detail.timeline !== null && detail.timeline.entries.length === 0 && (
-							<p style={{ fontSize: 13, opacity: 0.75 }}>{TIMELINE_EMPTY}</p>
+							<p style={{ fontSize: 13, opacity: 0.75 }}>{copy.TIMELINE_EMPTY}</p>
 						)}
 
 						<div style={{ marginBlockStart: 16 }}>
-							<Group testId="detail-notes" label={`Notes (${String(detail.notes.length)})`}>
+							<Group
+								testId="detail-notes"
+								label={t("Notes ({count})", { count: detail.notes.length })}
+							>
 								<div style={{ display: "grid", gap: 10, maxInlineSize: 420 }}>
-									<Field label="Note">
+									<Field label={t("Note")}>
 										<textarea
 											className="otta-focusable"
 											data-testid="note-body"
@@ -1460,7 +1552,7 @@ export function OrderDetail({
 											onChange={(event) => setNoteBody(event.target.value)}
 										/>
 									</Field>
-									<Field label="Author">
+									<Field label={t("Author")}>
 										<input
 											className="otta-focusable"
 											data-testid="note-author"
@@ -1472,7 +1564,7 @@ export function OrderDetail({
 									<div>
 										<Button
 											testId="note-add"
-											label="Add note"
+											label={t("Add note")}
 											disabled={busy || noteBody.trim().length === 0}
 											onClick={() => {
 												dispatch({
@@ -1496,10 +1588,10 @@ export function OrderDetail({
 
 			<ConfirmDialog
 				open={pending !== null}
-				title={pending?.title ?? ""}
-				text={pending?.text ?? ""}
-				confirmLabel={pending?.confirmLabel ?? ""}
-				denyLabel={pending?.denyLabel ?? ""}
+				title={confirmation?.title ?? ""}
+				text={confirmation?.text ?? ""}
+				confirmLabel={confirmation?.confirmLabel ?? ""}
+				denyLabel={confirmation?.denyLabel ?? ""}
 				onDeny={() => setPending(null)}
 				onConfirm={() => {
 					if (pending !== null) dispatch(pending);
@@ -1518,12 +1610,14 @@ function ResolveForm({
 	busy: boolean;
 	onSubmit: (values: Record<string, string>) => void;
 }): React.ReactElement {
+	const { t, a } = useAdminLocale();
+
 	const [outcome, setOutcome] = React.useState(outcomes[0]?.value ?? "");
 	const [reason, setReason] = React.useState("");
 	const [resolvedBy, setResolvedBy] = React.useState("");
 	return (
 		<div style={{ display: "grid", gap: 10, maxInlineSize: 460 }}>
-			<Field label="Outcome">
+			<Field label={t("Outcome")}>
 				<select
 					className="otta-focusable"
 					data-testid="resolve-outcome"
@@ -1533,12 +1627,12 @@ function ResolveForm({
 				>
 					{outcomes.map((option) => (
 						<option key={option.value} value={option.value}>
-							{option.label}
+							{a(option.label)}
 						</option>
 					))}
 				</select>
 			</Field>
-			<Field label="Reason">
+			<Field label={t("Reason")}>
 				<input
 					className="otta-focusable"
 					data-testid="resolve-reason"
@@ -1547,7 +1641,7 @@ function ResolveForm({
 					onChange={(event) => setReason(event.target.value)}
 				/>
 			</Field>
-			<Field label="Resolved by">
+			<Field label={t("Resolved by")}>
 				<input
 					className="otta-focusable"
 					data-testid="resolve-by"
@@ -1559,7 +1653,7 @@ function ResolveForm({
 			<div>
 				<Button
 					testId="resolve-submit"
-					label="Record resolution"
+					label={t("Record resolution")}
 					disabled={busy}
 					onClick={() => onSubmit({ outcome, reason, resolvedBy })}
 				/>
@@ -1575,6 +1669,9 @@ function FulfilmentForm({
 	busy: boolean;
 	onSubmit: (values: Record<string, string>) => void;
 }): React.ReactElement {
+	const copy = useAdminPresentation();
+	const { t } = useAdminLocale();
+
 	const [carrier, setCarrier] = React.useState("");
 	const [trackingNumber, setTrackingNumber] = React.useState("");
 	const [trackingUrl, setTrackingUrl] = React.useState("");
@@ -1582,17 +1679,17 @@ function FulfilmentForm({
 	const [recordedBy, setRecordedBy] = React.useState("");
 	return (
 		<div style={{ display: "grid", gap: 10, maxInlineSize: 460 }}>
-			<Field label={FULFILMENT_LABELS.carrier}>
+			<Field label={copy.FULFILMENT_LABELS.carrier}>
 				<input
 					className="otta-focusable"
 					data-testid="fulfil-carrier"
 					style={inputStyle}
-					placeholder="e.g. UPS"
+					placeholder={t("e.g. UPS")}
 					value={carrier}
 					onChange={(event) => setCarrier(event.target.value)}
 				/>
 			</Field>
-			<Field label={FULFILMENT_LABELS.trackingNumber}>
+			<Field label={copy.FULFILMENT_LABELS.trackingNumber}>
 				<input
 					className="otta-focusable"
 					data-testid="fulfil-tracking"
@@ -1601,7 +1698,7 @@ function FulfilmentForm({
 					onChange={(event) => setTrackingNumber(event.target.value)}
 				/>
 			</Field>
-			<Field label={FULFILMENT_LABELS.trackingUrl}>
+			<Field label={copy.FULFILMENT_LABELS.trackingUrl}>
 				<input
 					className="otta-focusable"
 					data-testid="fulfil-url"
@@ -1611,7 +1708,7 @@ function FulfilmentForm({
 					onChange={(event) => setTrackingUrl(event.target.value)}
 				/>
 			</Field>
-			<Field label={FULFILMENT_LABELS.shippedAt}>
+			<Field label={copy.FULFILMENT_LABELS.shippedAt}>
 				<input
 					type="date"
 					className="otta-focusable"
@@ -1621,12 +1718,12 @@ function FulfilmentForm({
 					onChange={(event) => setShippedAt(event.target.value)}
 				/>
 			</Field>
-			<Field label={FULFILMENT_LABELS.recordedBy}>
+			<Field label={copy.FULFILMENT_LABELS.recordedBy}>
 				<input
 					className="otta-focusable"
 					data-testid="fulfil-by"
 					style={inputStyle}
-					placeholder="your name"
+					placeholder={t("your name")}
 					value={recordedBy}
 					onChange={(event) => setRecordedBy(event.target.value)}
 				/>
@@ -1634,7 +1731,7 @@ function FulfilmentForm({
 			<div>
 				<Button
 					testId="fulfil-submit"
-					label={FULFILMENT_LABELS.submit}
+					label={copy.FULFILMENT_LABELS.submit}
 					disabled={busy}
 					onClick={() => onSubmit({ carrier, trackingNumber, trackingUrl, shippedAt, recordedBy })}
 				/>

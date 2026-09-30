@@ -26,7 +26,11 @@
  * increment; {@link readFailure} is where it lands, built on EmDash's own
  * `getErrorMessage` so the server's message is what the operator reads.
  */
-import { PRODUCTS_UNAVAILABLE_TITLE } from "@otta-sh/admin-presentation";
+import {
+	adminMessage,
+	translateAdminAuthored,
+	PRODUCTS_UNAVAILABLE_TITLE,
+} from "@otta-sh/admin-presentation";
 import { apiFetch, getErrorMessage } from "emdash/plugin-utils";
 
 /** The Block Kit plugin's single admin dispatch route — `otta`, not
@@ -463,6 +467,48 @@ export interface Failure {
 	readonly description: string;
 }
 
+type LocalFailureCopy =
+	| {
+			readonly kind: "http";
+			readonly subject: string;
+			readonly status: number;
+			readonly diagnostic: string;
+			readonly remediation: string;
+	  }
+	| { readonly kind: "transport"; readonly detail: string };
+
+// Only failures composed in this client receive metadata. JSON responses cannot
+// supply it, and the native/default failure object keeps its original shape.
+const LOCAL_FAILURE_COPY = new WeakMap<Failure, LocalFailureCopy>();
+
+export function failurePresentation(
+	failure: Pick<Failure, "title" | "description">,
+	locale: unknown = "en",
+) {
+	const copy = LOCAL_FAILURE_COPY.get(failure as Failure);
+	if (copy?.kind === "http") {
+		const remediation = translateAdminAuthored(locale, copy.remediation);
+		return {
+			title: adminMessage(locale, "{subject} (HTTP {status})", {
+				subject: translateAdminAuthored(locale, copy.subject),
+				status: copy.status,
+			}),
+			description: copy.diagnostic.length > 0 ? `${copy.diagnostic} ${remediation}` : remediation,
+		};
+	}
+	return {
+		title: translateAdminAuthored(locale, failure.title),
+		description:
+			copy?.kind === "transport"
+				? adminMessage(
+						locale,
+						"The request never completed{detail}. Check that you are online, then reload.",
+						{ detail: copy.detail },
+					)
+				: translateAdminAuthored(locale, failure.description),
+	};
+}
+
 export type Result<T> = T | Failure;
 
 export function isFailure<T extends { ok: true }>(result: Result<T>): result is Failure {
@@ -496,7 +542,7 @@ async function readFailure(response: Response, subject: string): Promise<Failure
 					? "The admin service answered with an error. Reload to try again; if it persists this is a fault in the console or the commerce service, not your data."
 					: "The console sent a request this admin would not accept. Reload the page; if it happens again, this is a fault in the console itself.";
 	const served = await getErrorMessage(response, "");
-	return {
+	const failure: Failure = {
 		ok: false,
 		// THE SUBJECT IS THE CALLER'S, and it is not decoration: a console with two
 		// migrated screens can refuse on either, and "Orders are unavailable" on
@@ -506,6 +552,14 @@ async function readFailure(response: Response, subject: string): Promise<Failure
 		title: `${subject} (HTTP ${String(response.status)})`,
 		description: served.length > 0 ? `${served} ${remediation}` : remediation,
 	};
+	LOCAL_FAILURE_COPY.set(failure, {
+		kind: "http",
+		subject,
+		status: response.status,
+		diagnostic: served,
+		remediation,
+	});
+	return failure;
 }
 
 /** The two migrated screens' failure subjects. The products one is the SHARED
@@ -519,13 +573,14 @@ const PRODUCTS_UNAVAILABLE = PRODUCTS_UNAVAILABLE_TITLE;
  *  a no" are different problems with different fixes, and INC-19's probe panel
  *  made the same distinction for the same reason. */
 function transportFailure(error: unknown): Failure {
-	return {
+	const detail = error instanceof Error ? ` — ${error.message}` : "";
+	const failure: Failure = {
 		ok: false,
 		title: "The admin could not be reached",
-		description: `The request never completed${
-			error instanceof Error ? ` — ${error.message}` : ""
-		}. Check that you are online, then reload.`,
+		description: `The request never completed${detail}. Check that you are online, then reload.`,
 	};
+	LOCAL_FAILURE_COPY.set(failure, { kind: "transport", detail });
+	return failure;
 }
 
 async function post<T extends { ok: true }>(body: unknown, subject: string): Promise<Result<T>> {

@@ -1,3 +1,4 @@
+import { useAdminLocale, useAdminPresentation } from "../locale.js";
 /**
  * The React product detail (INC-21).
  *
@@ -37,78 +38,18 @@
  * than going negative.
  */
 import {
-	ADD_STOCK_FIELD_LABEL,
-	ADD_STOCK_INVALID_QTY,
-	ADD_STOCK_LABEL,
-	BACKORDERS_CONTEXT,
-	IDENTITY_FORM_CONTEXT,
-	LOW_STOCK_BAND_UNAVAILABLE_CONTEXT,
-	NO_INVENTORY_RECORD_CONTEXT,
-	NO_SKU_CONTEXT,
-	ABSENT,
-	ADD_STOCK_PLACEHOLDER,
-	COMPARE_AT_PLACEHOLDER,
-	CURRENCY_FIELD_LABEL,
-	CURRENCY_PLACEHOLDER,
-	DISCARD_LABEL,
-	NO_CHANGES_TO_SAVE,
 	NO_TAX_CLASS,
-	PRICE_FORM_CONTEXT,
-	PRICE_PENDING_CONTEXT,
-	PRICE_PLACEHOLDER,
-	PRODUCTS_BACK_LABEL,
-	PRODUCT_FIELD_LABELS,
-	PRODUCT_KIND_LABELS,
-	PRODUCT_MEASUREMENT_LABELS,
 	PRODUCT_TAB_LABELS,
-	REMOVE_STOCK_BANNER,
-	REMOVE_STOCK_CONTEXT,
-	REMOVE_STOCK_FIELD_LABEL,
-	REMOVE_STOCK_GROUP_LABEL,
-	REMOVE_STOCK_INVALID_QTY,
-	REMOVE_STOCK_PLACEHOLDER,
-	RETRYING_LABEL,
-	RETRY_LABEL,
-	SAVE_IDENTITY_LABEL,
-	SAVE_PRICE_LABEL,
-	SAVE_SHIPPING_LABEL,
-	SAVING_LABEL,
-	SHIPPING_FORM_CONTEXT,
-	SPLIT_DISCARD_CONTEXT,
-	STATUS_FIELD_LABEL,
-	STOCK_ON_HAND_CONTEXT,
-	TOMBSTONE_BANNER_TITLE,
-	TOMBSTONE_CONTEXT,
-	UNIT_COST_PLACEHOLDER,
 	addStockConfirm,
 	canonicalMoneyInput,
-	compareAtFieldLabel,
 	dimensionsSummary,
-	dirtyGroupLabel,
-	dirtySectionLabels,
 	formatMinorUnitsInput,
-	formatOptionalAmount,
-	formatTimestamp,
-	identityGroupLabel,
-	inventoryPolicyLabel,
-	leaveWithoutSavingConfirm,
-	onHandCell,
 	parseMinorUnitsInput,
 	parseStockQty,
-	priceChangeSummary,
-	priceFieldLabel,
-	priceGroupLabel,
-	pricePendingLine,
-	priceSavedNotice,
 	removeStockConfirm,
-	shippingGroupLabel,
-	statusLabel,
 	statusTone,
 	stockTone,
-	tabUnsavedLabel,
 	taxClassLabel,
-	taxClassOptions,
-	unitCostFieldLabel,
 	type ProductSection,
 } from "@otta-sh/admin-presentation";
 import * as React from "react";
@@ -116,6 +57,8 @@ import {
 	PRODUCTS_ACT_SUBJECT,
 	fetchProductDetail,
 	isFailure,
+	failurePresentation,
+	type Failure,
 	performAction,
 	type ActPayload,
 	type ProductDetailPayload,
@@ -157,6 +100,10 @@ interface PendingAction {
 	readonly text: string;
 	readonly confirmLabel: string;
 	readonly denyLabel: string;
+	/** Recompose display copy without replacing the queued mutation or command ID. */
+	readonly confirmationForLocale?: (
+		locale: unknown,
+	) => Pick<PendingAction, "title" | "text" | "confirmLabel" | "denyLabel">;
 	/** Where this write's RECEIPT belongs. A write that names a slot reports
 	 *  inside the group that caused it instead of at page top — see
 	 *  {@link ReceiptSlot}. Absent for the two saves increment 3 owns, which keep
@@ -167,6 +114,15 @@ interface PendingAction {
 	 *  save replaces the before — so the sentence cannot be composed on arrival.
 	 *  Everything else keeps the receipt the handler served. */
 	readonly receipt?: Receipt;
+}
+
+function stockDialogCopy(confirm: ReturnType<typeof addStockConfirm>) {
+	return {
+		title: confirm.title,
+		text: confirm.text,
+		confirmLabel: confirm.confirm,
+		denyLabel: confirm.deny,
+	};
 }
 
 /**
@@ -347,6 +303,7 @@ export function writeControls(phase: WritePhase): {
  * changing that one input, and it renders beside it.
  */
 export interface ScreenNotice {
+	readonly source?: Failure;
 	readonly variant: "default" | "error";
 	readonly title: string;
 	readonly description: string;
@@ -508,8 +465,11 @@ export function ProductDetail({
 	 *  stays here, composed from the sections that are actually dirty. */
 	leavePrompt?: number;
 }): React.ReactElement {
+	const copy = useAdminPresentation();
+	const { t, locale } = useAdminLocale();
+
 	const [detail, setDetail] = React.useState<ProductDetailPayload | null>(null);
-	const [failure, setFailure] = React.useState<{ title: string; description: string } | null>(null);
+	const [failure, setFailure] = React.useState<Failure | null>(null);
 	const [notice, setNotice] = React.useState<ScreenNotice | null>(null);
 	const [tab, setTab] = React.useState(initialTab);
 	const [pending, setPending] = React.useState<PendingAction | null>(null);
@@ -607,7 +567,7 @@ export function ProductDetail({
 			// before the failure check, so a failed re-read releases the controls too.
 			setWritePhase((phase) => nextWritePhase(phase, { type: "read-settled" }));
 			if (isFailure(result)) {
-				setFailure({ title: result.title, description: result.description });
+				setFailure(result);
 				return;
 			}
 			setFailure(null);
@@ -646,9 +606,10 @@ export function ProductDetail({
 				setPending(null);
 				setNotice({
 					variant: "error",
-					title: "Stock command not sent",
-					description:
+					title: t("Stock command not sent"),
+					description: t(
 						"Your browser could not retain this stock command for safe retry. Enable session storage, then confirm the movement again.",
+					),
 					field: null,
 				});
 				return;
@@ -673,6 +634,7 @@ export function ProductDetail({
 				setNotice({
 					variant: "error",
 					title: result.title,
+					source: result,
 					description: result.description,
 					field: null,
 				});
@@ -738,12 +700,14 @@ export function ProductDetail({
 			<div style={{ marginBlock: 16 }}>
 				<Notice
 					variant="alert"
-					title="Stock movement awaiting its result"
-					description="This command may already have changed stock. Retry it to recover its recorded outcome before starting another movement."
+					title={t("Stock movement awaiting its result")}
+					description={t(
+						"This command may already have changed stock. Retry it to recover its recorded outcome before starting another movement.",
+					)}
 					testId="pending-stock-notice"
 				/>
 				<Button
-					label="Retry stock movement"
+					label={t("Retry stock movement")}
 					disabled={writeBusy}
 					busy={writeBusy}
 					testId="retry-stock-movement"
@@ -765,9 +729,9 @@ export function ProductDetail({
 				  clear the failure on the click: the response clears it.
 				*/}
 				<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-					<Button label={PRODUCTS_BACK_LABEL} onClick={onBack} testId="products-back" />
+					<Button label={copy.PRODUCTS_BACK_LABEL} onClick={onBack} testId="products-back" />
 					<Button
-						label={retrying ? RETRYING_LABEL : RETRY_LABEL}
+						label={retrying ? copy.RETRYING_LABEL : copy.RETRY_LABEL}
 						onClick={() => {
 							setRetrying(true);
 							setGeneration((n) => n + 1);
@@ -781,8 +745,8 @@ export function ProductDetail({
 					{stockRetry}
 					<Notice
 						variant="error"
-						title={failure.title}
-						description={failure.description}
+						title={failurePresentation(failure, locale).title}
+						description={failurePresentation(failure, locale).description}
 						testId="detail-failure"
 					/>
 				</div>
@@ -793,11 +757,12 @@ export function ProductDetail({
 	if (detail === null) {
 		return (
 			<p style={{ fontSize: 13, opacity: 0.7 }} aria-live="polite">
-				Loading product…
+				{t("Loading product…")}
 			</p>
 		);
 	}
 
+	const confirmation = pending?.confirmationForLocale?.(locale) ?? pending;
 	const p = detail.product;
 	const threshold = detail.threshold;
 	const tombstoned = p.deletedAt !== null;
@@ -813,7 +778,7 @@ export function ProductDetail({
 				    now that a tab switch keeps it and a save re-seeds one section. It
 				    asks only when there is something to lose. */}
 				<Button
-					label={PRODUCTS_BACK_LABEL}
+					label={copy.PRODUCTS_BACK_LABEL}
 					disabled={busy}
 					onClick={() => {
 						if (holdsWork) setLeaving(true);
@@ -830,8 +795,8 @@ export function ProductDetail({
 			{notice !== null && notice.field === null && (
 				<Notice
 					variant={notice.variant}
-					title={notice.title}
-					description={notice.description}
+					title={failurePresentation(notice.source ?? notice, locale).title}
+					description={failurePresentation(notice.source ?? notice, locale).description}
 					testId="detail-notice"
 				/>
 			)}
@@ -840,8 +805,11 @@ export function ProductDetail({
 			{tombstoned && (
 				<Notice
 					variant="alert"
-					title={TOMBSTONE_BANNER_TITLE}
-					description={`Deleted on ${formatTimestamp(p.deletedAt ?? "")}. It cannot be edited or restocked from here; existing orders that included it are unaffected.`}
+					title={copy.TOMBSTONE_BANNER_TITLE}
+					description={t(
+						"Deleted on {date}. It cannot be edited or restocked from here; existing orders that included it are unaffected.",
+						{ date: copy.formatTimestamp(p.deletedAt ?? "") },
+					)}
 					testId="detail-tombstone"
 				/>
 			)}
@@ -859,9 +827,9 @@ export function ProductDetail({
 					testId="detail-identity"
 					entries={[
 						[
-							PRODUCT_FIELD_LABELS.sku,
+							copy.PRODUCT_FIELD_LABELS.sku,
 							p.sku === null ? (
-								ABSENT
+								copy.ABSENT
 							) : (
 								<span key="sku" style={{ display: "inline-flex", alignItems: "center" }}>
 									<code data-testid="detail-sku">{p.sku}</code>
@@ -869,18 +837,21 @@ export function ProductDetail({
 								</span>
 							),
 						],
-						[PRODUCT_FIELD_LABELS.price, formatOptionalAmount(p.priceCents, p.currency)],
+						[copy.PRODUCT_FIELD_LABELS.price, copy.formatOptionalAmount(p.priceCents, p.currency)],
 						// D1, and the SAME two cells the list rings, from the same
 						// derivations — a product that wears a ring in the table must not
 						// lose it on the way to its own record. Nothing else on this
 						// screen is pilled, and an unknown count is not an exception: it
 						// stays the bare em dash `onHandCell` returns.
-						[STATUS_FIELD_LABEL, toned(statusTone(p), statusLabel(p), "detail-status-pill")],
 						[
-							PRODUCT_FIELD_LABELS.stockOnHand,
+							copy.STATUS_FIELD_LABEL,
+							toned(statusTone(p), copy.statusLabel(p), "detail-status-pill"),
+						],
+						[
+							copy.PRODUCT_FIELD_LABELS.stockOnHand,
 							toned(
 								stockTone(p.onHand, threshold),
-								onHandCell(p.onHand, threshold),
+								copy.onHandCell(p.onHand, threshold),
 								"detail-stock-pill",
 							),
 						],
@@ -940,7 +911,7 @@ export function ProductDetail({
 							// record is its own line), so the absent case is not a branch to
 							// default to `0` — absent is not zero — nor one to swallow the
 							// click over. It is unrepresentable.
-							const confirm = addStockConfirm(qty, sku, onHand);
+							const confirm = copy.addStockConfirm(qty, sku, onHand);
 							setPending({
 								actionId: "products:restock",
 								value: {
@@ -953,11 +924,13 @@ export function ProductDetail({
 								text: confirm.text,
 								confirmLabel: confirm.confirm,
 								denyLabel: confirm.deny,
+								confirmationForLocale: (nextLocale) =>
+									stockDialogCopy(addStockConfirm(qty, sku, onHand, nextLocale)),
 								slot: "stock-add",
 							});
 						}}
 						onRemove={(qty) => {
-							const confirm = removeStockConfirm(qty);
+							const confirm = copy.removeStockConfirm(qty);
 							setPending({
 								actionId: "products:remove-stock",
 								value: {
@@ -974,6 +947,8 @@ export function ProductDetail({
 								text: confirm.text,
 								confirmLabel: confirm.confirm,
 								denyLabel: confirm.deny,
+								confirmationForLocale: (nextLocale) =>
+									stockDialogCopy(removeStockConfirm(qty, nextLocale)),
 								slot: "stock-remove",
 							});
 						}}
@@ -999,8 +974,8 @@ export function ProductDetail({
 				onStock={({ variant, direction, qty, onHand }) => {
 					const confirm =
 						direction === "restock"
-							? addStockConfirm(qty, variant.sku ?? "", onHand)
-							: removeStockConfirm(qty);
+							? copy.addStockConfirm(qty, variant.sku ?? "", onHand)
+							: copy.removeStockConfirm(qty);
 					setPending({
 						actionId:
 							direction === "restock"
@@ -1016,6 +991,16 @@ export function ProductDetail({
 						},
 						title: confirm.title,
 						text: `${variant.title ?? variant.variantKey}: ${confirm.text}`,
+						confirmationForLocale: (nextLocale) => {
+							const nextCopy =
+								direction === "restock"
+									? addStockConfirm(qty, variant.sku ?? "", onHand, nextLocale)
+									: removeStockConfirm(qty, nextLocale);
+							return {
+								...stockDialogCopy(nextCopy),
+								text: `${variant.title ?? variant.variantKey}: ${nextCopy.text}`,
+							};
+						},
 						confirmLabel: confirm.confirm,
 						denyLabel: confirm.deny,
 					});
@@ -1039,10 +1024,10 @@ export function ProductDetail({
 
 			<ConfirmDialog
 				open={pending !== null}
-				title={pending?.title ?? ""}
-				text={pending?.text ?? ""}
-				confirmLabel={pending?.confirmLabel ?? ""}
-				denyLabel={pending?.denyLabel ?? ""}
+				title={confirmation?.title ?? ""}
+				text={confirmation?.text ?? ""}
+				confirmLabel={confirmation?.confirmLabel ?? ""}
+				denyLabel={confirmation?.denyLabel ?? ""}
 				confirmTone={
 					pending?.slot === "stock-add" || pending?.actionId === "products:variant-restock"
 						? "neutral"
@@ -1081,9 +1066,11 @@ export function LeaveConfirm({
 	onStay: () => void;
 	onLeave: () => void;
 }): React.ReactElement {
+	const copy = useAdminPresentation();
+
 	const confirm = open
-		? leaveWithoutSavingConfirm([
-				...dirtySectionLabels(dirty),
+		? copy.leaveWithoutSavingConfirm([
+				...copy.dirtySectionLabels(dirty),
 				...(variantsDirty ? ["Variants"] : []),
 			])
 		: null;
@@ -1140,11 +1127,14 @@ export function ProductTabs({
 	/** One node per label, all of them rendered. */
 	panels: readonly React.ReactNode[];
 }): React.ReactElement {
+	const copy = useAdminPresentation();
+	const { t, a } = useAdminLocale();
+
 	return (
 		<>
 			<div
 				role="tablist"
-				aria-label="Product sections"
+				aria-label={t("Product sections")}
 				style={{ display: "flex", gap: 4, marginBlockEnd: 12 }}
 			>
 				{labels.map((label, index) => {
@@ -1159,7 +1149,7 @@ export function ProductTabs({
 							aria-controls={`otta-panel-${String(index)}`}
 							// The dot is a shape, and "bullet" is not a fact. The name it
 							// stands for is the accessible name, composed by the copy module.
-							aria-label={holdsWork ? tabUnsavedLabel(label) : undefined}
+							aria-label={holdsWork ? copy.tabUnsavedLabel(a(label)) : undefined}
 							className="otta-focusable otta-btn"
 							data-testid={`tab-${label.toLowerCase()}`}
 							onClick={() => {
@@ -1172,7 +1162,7 @@ export function ProductTabs({
 								opacity: tab === index ? 1 : 0.7,
 							}}
 						>
-							{label}
+							{a(label)}
 							{holdsWork && (
 								<span
 									aria-hidden="true"
@@ -1243,6 +1233,9 @@ function ProductPanel({
 		report?: { slot: ReceiptSlot; receipt: Receipt },
 	) => void;
 }): React.ReactElement {
+	const { a } = useAdminLocale();
+	const copy = useAdminPresentation();
+
 	const carrier = { productId: p.productId, expectedUpdatedAt: p.updatedAt };
 	return (
 		<>
@@ -1251,19 +1244,25 @@ function ProductPanel({
 					testId="detail-more"
 					entries={[
 						[
-							PRODUCT_FIELD_LABELS.compareAt,
-							formatOptionalAmount(p.compareAtCents, p.compareAtCurrency),
+							copy.PRODUCT_FIELD_LABELS.compareAt,
+							copy.formatOptionalAmount(p.compareAtCents, p.compareAtCurrency),
 						],
 						[
-							PRODUCT_FIELD_LABELS.unitCost,
-							formatOptionalAmount(p.unitCostCents, p.unitCostCurrency),
+							copy.PRODUCT_FIELD_LABELS.unitCost,
+							copy.formatOptionalAmount(p.unitCostCents, p.unitCostCurrency),
 						],
-						[PRODUCT_FIELD_LABELS.taxClass, taxClassLabel(p.taxClass, taxClasses)],
-						[PRODUCT_FIELD_LABELS.kind, p.productKind],
-						[PRODUCT_FIELD_LABELS.weight, p.weightGrams === null ? ABSENT : String(p.weightGrams)],
-						[PRODUCT_FIELD_LABELS.dimensions, dimensionsSummary(p.lengthMm, p.widthMm, p.heightMm)],
-						[PRODUCT_FIELD_LABELS.created, formatTimestamp(p.createdAt)],
-						[PRODUCT_FIELD_LABELS.updated, formatTimestamp(p.updatedAt)],
+						[copy.PRODUCT_FIELD_LABELS.taxClass, taxClassLabel(p.taxClass, taxClasses)],
+						[copy.PRODUCT_FIELD_LABELS.kind, a(p.productKind)],
+						[
+							copy.PRODUCT_FIELD_LABELS.weight,
+							p.weightGrams === null ? copy.ABSENT : String(p.weightGrams),
+						],
+						[
+							copy.PRODUCT_FIELD_LABELS.dimensions,
+							dimensionsSummary(p.lengthMm, p.widthMm, p.heightMm),
+						],
+						[copy.PRODUCT_FIELD_LABELS.created, copy.formatTimestamp(p.createdAt)],
+						[copy.PRODUCT_FIELD_LABELS.updated, copy.formatTimestamp(p.updatedAt)],
 					]}
 				/>
 			</section>
@@ -1272,7 +1271,7 @@ function ProductPanel({
 			    rendered and then refused. The panel itself keeps rendering (D-3). */}
 			{p.deletedAt !== null ? (
 				<p style={{ fontSize: 13, opacity: 0.8 }} data-testid="detail-tombstone-context">
-					{TOMBSTONE_CONTEXT}
+					{copy.TOMBSTONE_CONTEXT}
 				</p>
 			) : (
 				<>
@@ -1283,7 +1282,7 @@ function ProductPanel({
 					  `expectedUpdatedAt`.
 					*/}
 					<p style={{ fontSize: 12, opacity: 0.75 }} data-testid="detail-split-discard">
-						{SPLIT_DISCARD_CONTEXT}
+						{copy.SPLIT_DISCARD_CONTEXT}
 					</p>
 
 					{/*
@@ -1313,7 +1312,7 @@ function ProductPanel({
 								// COMPOSED AT SUBMIT TIME, on purpose: the save is followed by a
 								// re-read that replaces the BEFORE amount, so a receipt composed
 								// on arrival could only ever state the after.
-								{ slot: "price", receipt: priceSavedNotice(change) },
+								{ slot: "price", receipt: copy.priceSavedNotice(change) },
 							)
 						}
 					/>
@@ -1330,7 +1329,7 @@ function ProductPanel({
 					{/* X-20-safe: the mechanism sentence, in place of the deleted
 					    single-option "When out of stock" select. */}
 					<p style={{ fontSize: 12, opacity: 0.7 }} data-testid="detail-backorders">
-						{BACKORDERS_CONTEXT}
+						{copy.BACKORDERS_CONTEXT}
 					</p>
 				</>
 			)}
@@ -1425,6 +1424,9 @@ export function IdentityFields({
 	onChange: (next: (prev: Record<string, string>) => Record<string, string>) => void;
 	onSubmit: (values: Record<string, string>) => void;
 }): React.ReactElement {
+	const { locale } = useAdminLocale();
+	const copy = useAdminPresentation();
+
 	const changed = changedFields(committed, values);
 	const dirty = changed.length > 0;
 	useReportDirty("identity", dirty, report);
@@ -1463,11 +1465,13 @@ export function IdentityFields({
 		<Group
 			testId="edit-identity"
 			defaultOpen={open}
-			label={dirtyGroupLabel(identityGroupLabel(p.sku), dirty)}
+			label={copy.dirtyGroupLabel(copy.identityGroupLabel(p.sku), dirty)}
 		>
-			<p style={{ fontSize: 12, opacity: 0.75, marginBlockStart: 0 }}>{IDENTITY_FORM_CONTEXT}</p>
+			<p style={{ fontSize: 12, opacity: 0.75, marginBlockStart: 0 }}>
+				{copy.IDENTITY_FORM_CONTEXT}
+			</p>
 			<div ref={form} style={{ display: "grid", gap: 10, maxInlineSize: 420 }}>
-				<Field label={PRODUCT_FIELD_LABELS.sku}>
+				<Field label={copy.PRODUCT_FIELD_LABELS.sku}>
 					<input
 						className="otta-focusable"
 						data-testid="edit-sku"
@@ -1495,15 +1499,15 @@ export function IdentityFields({
 					<div className="otta-focusable" id={refusalId} ref={region} tabIndex={-1}>
 						<Notice
 							variant={refusal.variant}
-							title={refusal.title}
-							description={refusal.description}
+							title={failurePresentation(refusal.source ?? refusal, locale).title}
+							description={failurePresentation(refusal.source ?? refusal, locale).description}
 							testId="edit-sku-refusal"
 						/>
 					</div>
 				)}
 				<div>
 					<Button
-						label={SAVE_IDENTITY_LABEL}
+						label={copy.SAVE_IDENTITY_LABEL}
 						testId="save-identity"
 						disabled={busy}
 						onClick={() => onSubmit(values)}
@@ -1565,6 +1569,9 @@ export function PriceGroup({
 	onDirtyChange?: DirtyReporter;
 	onSubmit: (values: Record<string, string>, change: string | null) => void;
 }): React.ReactElement {
+	const copy = useAdminPresentation();
+	const { t, a } = useAdminLocale();
+
 	const priced = p.priceCents !== null && p.currency !== null;
 	// The last-committed values, re-derived from the product on every render. A
 	// save is followed by a re-read, so this is what makes the form clean again
@@ -1587,12 +1594,12 @@ export function PriceGroup({
 	// The pending AFTER, through the same exact-integer parse the write uses.
 	// `null` for a blank field (which leaves the price unchanged) and for
 	// anything unparseable — neither has an amount to name.
-	const change = priceChangeSummary(
+	const change = copy.priceChangeSummary(
 		p.priceCents,
 		parseMinorUnitsInput(values["price"] ?? "", { allowZero: false }),
 		p.currency,
 	);
-	const pendingLine = pricePendingLine(change);
+	const pendingLine = copy.pricePendingLine(change);
 
 	const set = (key: string) => (event: React.ChangeEvent<HTMLInputElement>) => {
 		const next = event.target.value;
@@ -1606,33 +1613,33 @@ export function PriceGroup({
 		<Group
 			testId="edit-price"
 			defaultOpen
-			label={dirtyGroupLabel(priceGroupLabel(p.priceCents, p.currency), dirty)}
+			label={copy.dirtyGroupLabel(copy.priceGroupLabel(p.priceCents, p.currency), dirty)}
 		>
-			<p style={{ fontSize: 12, opacity: 0.75, marginBlockStart: 0 }}>{PRICE_FORM_CONTEXT}</p>
+			<p style={{ fontSize: 12, opacity: 0.75, marginBlockStart: 0 }}>{copy.PRICE_FORM_CONTEXT}</p>
 			<div style={{ display: "grid", gap: 10, maxInlineSize: 460 }}>
-				<Field label={priceFieldLabel(p.currency)}>
+				<Field label={copy.priceFieldLabel(p.currency)}>
 					<input
 						className="otta-focusable"
 						data-testid="edit-price"
 						style={fieldStyle(changed, "price")}
-						placeholder={PRICE_PLACEHOLDER}
+						placeholder={copy.PRICE_PLACEHOLDER}
 						value={values["price"] ?? ""}
 						onChange={set("price")}
 					/>
 				</Field>
 				{!priced && (
-					<Field label={CURRENCY_FIELD_LABEL}>
+					<Field label={copy.CURRENCY_FIELD_LABEL}>
 						<input
 							className="otta-focusable"
 							data-testid="edit-currency"
 							style={fieldStyle(changed, "currency")}
-							placeholder={CURRENCY_PLACEHOLDER}
+							placeholder={copy.CURRENCY_PLACEHOLDER}
 							value={values["currency"] ?? ""}
 							onChange={set("currency")}
 						/>
 					</Field>
 				)}
-				<Field label="Price tax mode">
+				<Field label={t("Price tax mode")}>
 					<select
 						className="otta-focusable"
 						data-testid="edit-price-tax-mode"
@@ -1642,27 +1649,27 @@ export function PriceGroup({
 							setValues((prev) => ({ ...prev, priceTaxMode: event.target.value }))
 						}
 					>
-						<option value="exclusive">Tax added at checkout</option>
-						<option value="inclusive">Price includes tax</option>
+						<option value="exclusive">{t("Tax added at checkout")}</option>
+						<option value="inclusive">{t("Price includes tax")}</option>
 					</select>
 				</Field>
 
-				<Field label={compareAtFieldLabel(p.currency)}>
+				<Field label={copy.compareAtFieldLabel(p.currency)}>
 					<input
 						className="otta-focusable"
 						data-testid="edit-compare-at"
 						style={fieldStyle(changed, "compareAt")}
-						placeholder={COMPARE_AT_PLACEHOLDER}
+						placeholder={copy.COMPARE_AT_PLACEHOLDER}
 						value={values["compareAt"] ?? ""}
 						onChange={set("compareAt")}
 					/>
 				</Field>
-				<Field label={unitCostFieldLabel(p.currency)}>
+				<Field label={copy.unitCostFieldLabel(p.currency)}>
 					<input
 						className="otta-focusable"
 						data-testid="edit-unit-cost"
 						style={fieldStyle(changed, "unitCost")}
-						placeholder={UNIT_COST_PLACEHOLDER}
+						placeholder={copy.UNIT_COST_PLACEHOLDER}
 						value={values["unitCost"] ?? ""}
 						onChange={set("unitCost")}
 					/>
@@ -1683,13 +1690,15 @@ export function PriceGroup({
 								{pendingLine}
 							</p>
 						)}
-						<p style={{ fontSize: 12, opacity: 0.8, margin: "4px 0 0" }}>{PRICE_PENDING_CONTEXT}</p>
+						<p style={{ fontSize: 12, opacity: 0.8, margin: "4px 0 0" }}>
+							{copy.PRICE_PENDING_CONTEXT}
+						</p>
 					</div>
 				)}
 
 				<div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
 					<Button
-						label={saving ? SAVING_LABEL : SAVE_PRICE_LABEL}
+						label={saving ? copy.SAVING_LABEL : copy.SAVE_PRICE_LABEL}
 						testId="save-price"
 						disabled={busy || !dirty}
 						busy={saving}
@@ -1697,7 +1706,7 @@ export function PriceGroup({
 					/>
 					{dirty && (
 						<Button
-							label={DISCARD_LABEL}
+							label={copy.DISCARD_LABEL}
 							testId="discard-price"
 							disabled={busy}
 							onClick={() => setValues(committed)}
@@ -1705,7 +1714,7 @@ export function PriceGroup({
 					)}
 					{!dirty && (
 						<span data-testid="price-clean-hint" style={{ fontSize: 12, opacity: 0.75 }}>
-							{NO_CHANGES_TO_SAVE}
+							{copy.NO_CHANGES_TO_SAVE}
 						</span>
 					)}
 				</div>
@@ -1714,8 +1723,8 @@ export function PriceGroup({
 				{receipt !== null && (
 					<Notice
 						variant="default"
-						title={receipt.title}
-						description={receipt.description}
+						title={a(receipt.title)}
+						description={a(receipt.description)}
 						testId="price-receipt"
 					/>
 				)}
@@ -1794,6 +1803,8 @@ export function ShippingFields({
 	onChange: (next: (prev: Record<string, string>) => Record<string, string>) => void;
 	onSubmit: (values: Record<string, string>) => void;
 }): React.ReactElement {
+	const copy = useAdminPresentation();
+
 	const changed = changedFields(committed, values);
 	const dirty = changed.length > 0;
 	useReportDirty("shipping", dirty, report);
@@ -1803,11 +1814,13 @@ export function ShippingFields({
 	return (
 		<Group
 			testId="edit-shipping"
-			label={dirtyGroupLabel(shippingGroupLabel(p.taxClass, p.weightGrams), dirty)}
+			label={copy.dirtyGroupLabel(copy.shippingGroupLabel(p.taxClass, p.weightGrams), dirty)}
 		>
-			<p style={{ fontSize: 12, opacity: 0.75, marginBlockStart: 0 }}>{SHIPPING_FORM_CONTEXT}</p>
+			<p style={{ fontSize: 12, opacity: 0.75, marginBlockStart: 0 }}>
+				{copy.SHIPPING_FORM_CONTEXT}
+			</p>
 			<div style={{ display: "grid", gap: 10, maxInlineSize: 460 }}>
-				<Field label={PRODUCT_FIELD_LABELS.kind}>
+				<Field label={copy.PRODUCT_FIELD_LABELS.kind}>
 					<select
 						className="otta-focusable"
 						data-testid="edit-kind"
@@ -1817,11 +1830,11 @@ export function ShippingFields({
 							set("productKind")(event.target.value);
 						}}
 					>
-						<option value="physical">{PRODUCT_KIND_LABELS.physical}</option>
-						<option value="digital">{PRODUCT_KIND_LABELS.digital}</option>
+						<option value="physical">{copy.PRODUCT_KIND_LABELS.physical}</option>
+						<option value="digital">{copy.PRODUCT_KIND_LABELS.digital}</option>
 					</select>
 				</Field>
-				<Field label={PRODUCT_FIELD_LABELS.taxClass}>
+				<Field label={copy.PRODUCT_FIELD_LABELS.taxClass}>
 					<select
 						className="otta-focusable"
 						data-testid="edit-tax-class"
@@ -1831,7 +1844,7 @@ export function ShippingFields({
 							set("taxClass")(event.target.value);
 						}}
 					>
-						{taxClassOptions(p.taxClass, taxClasses).map((option) => (
+						{copy.taxClassOptions(p.taxClass, taxClasses).map((option) => (
 							<option key={option.value} value={option.value}>
 								{option.label}
 							</option>
@@ -1840,10 +1853,10 @@ export function ShippingFields({
 				</Field>
 				{(
 					[
-						[PRODUCT_MEASUREMENT_LABELS.weightGrams, "edit-weight", "weightGrams"],
-						[PRODUCT_MEASUREMENT_LABELS.lengthMm, "edit-length", "lengthMm"],
-						[PRODUCT_MEASUREMENT_LABELS.widthMm, "edit-width", "widthMm"],
-						[PRODUCT_MEASUREMENT_LABELS.heightMm, "edit-height", "heightMm"],
+						[copy.PRODUCT_MEASUREMENT_LABELS.weightGrams, "edit-weight", "weightGrams"],
+						[copy.PRODUCT_MEASUREMENT_LABELS.lengthMm, "edit-length", "lengthMm"],
+						[copy.PRODUCT_MEASUREMENT_LABELS.widthMm, "edit-width", "widthMm"],
+						[copy.PRODUCT_MEASUREMENT_LABELS.heightMm, "edit-height", "heightMm"],
 					] as const
 				).map(([label, testId, key]) => (
 					<Field key={testId} label={label}>
@@ -1860,7 +1873,7 @@ export function ShippingFields({
 				))}
 				<div>
 					<Button
-						label={SAVE_SHIPPING_LABEL}
+						label={copy.SAVE_SHIPPING_LABEL}
 						testId="save-shipping"
 						disabled={busy}
 						onClick={() => onSubmit(values)}
@@ -1919,6 +1932,9 @@ function StockPanel({
 	onRestock: (qty: number, sku: string, onHand: number) => void;
 	onRemove: (qty: number) => void;
 }): React.ReactElement {
+	const { a } = useAdminLocale();
+	const copy = useAdminPresentation();
+
 	const sku = p.sku;
 	const onHand = p.onHand;
 	return (
@@ -1927,75 +1943,78 @@ function StockPanel({
 				<Fields
 					testId="detail-stock"
 					entries={[
-						[PRODUCT_FIELD_LABELS.onHand, onHandCell(p.onHand, threshold)],
-						[PRODUCT_FIELD_LABELS.inventoryPolicy, inventoryPolicyLabel(p.inventoryPolicy)],
+						[copy.PRODUCT_FIELD_LABELS.onHand, copy.onHandCell(p.onHand, threshold)],
+						[
+							copy.PRODUCT_FIELD_LABELS.inventoryPolicy,
+							copy.inventoryPolicyLabel(p.inventoryPolicy),
+						],
 					]}
 				/>
 			</section>
 
 			{threshold === null && (
 				<p style={{ fontSize: 12, opacity: 0.75 }} data-testid="stock-no-threshold">
-					{LOW_STOCK_BAND_UNAVAILABLE_CONTEXT}
+					{copy.LOW_STOCK_BAND_UNAVAILABLE_CONTEXT}
 				</p>
 			)}
 
 			{p.deletedAt !== null ? (
 				<p style={{ fontSize: 13, opacity: 0.8 }} data-testid="stock-tombstone-context">
-					{TOMBSTONE_CONTEXT}
+					{copy.TOMBSTONE_CONTEXT}
 				</p>
 			) : (
 				<>
 					<p style={{ fontSize: 12, opacity: 0.75 }} data-testid="stock-context">
-						{STOCK_ON_HAND_CONTEXT}
+						{copy.STOCK_ON_HAND_CONTEXT}
 					</p>
 					{sku === null ? (
 						// D-7: nothing to move stock against, so no forms at all.
 						<p style={{ fontSize: 13, opacity: 0.8 }} data-testid="stock-no-sku">
-							{NO_SKU_CONTEXT}
+							{copy.NO_SKU_CONTEXT}
 						</p>
 					) : onHand === null ? (
 						// The sku exists but carries NO inventory record: both movements
 						// would 409, and their idempotency keys derive from a watermark
 						// that does not exist. One line naming the state and the way out.
 						<p style={{ fontSize: 13, opacity: 0.8 }} data-testid="stock-no-record">
-							{NO_INVENTORY_RECORD_CONTEXT}
+							{copy.NO_INVENTORY_RECORD_CONTEXT}
 						</p>
 					) : (
 						<>
-							<Group testId="stock-add" label={ADD_STOCK_LABEL}>
+							<Group testId="stock-add" label={copy.ADD_STOCK_LABEL}>
 								<QuantityForm
-									fieldLabel={ADD_STOCK_FIELD_LABEL}
-									placeholder={ADD_STOCK_PLACEHOLDER}
-									submitLabel={ADD_STOCK_LABEL}
+									fieldLabel={copy.ADD_STOCK_FIELD_LABEL}
+									placeholder={copy.ADD_STOCK_PLACEHOLDER}
+									submitLabel={copy.ADD_STOCK_LABEL}
 									testIdPrefix="restock"
-									invalid={ADD_STOCK_INVALID_QTY}
+									invalid={copy.ADD_STOCK_INVALID_QTY}
 									busy={busy}
 									onSubmit={(qty) => onRestock(qty, sku, onHand)}
 								/>
 								{addReceipt !== null && (
 									<Notice
 										variant="default"
-										title={addReceipt.title}
-										description={addReceipt.description}
+										title={a(addReceipt.title)}
+										description={a(addReceipt.description)}
 										testId="stock-add-receipt"
 									/>
 								)}
 							</Group>
 
-							<Group testId="stock-remove" label={REMOVE_STOCK_GROUP_LABEL}>
+							<Group testId="stock-remove" label={copy.REMOVE_STOCK_GROUP_LABEL}>
 								<Notice
 									variant="alert"
-									title={REMOVE_STOCK_BANNER.title}
-									description={REMOVE_STOCK_BANNER.description}
+									title={copy.REMOVE_STOCK_BANNER.title}
+									description={copy.REMOVE_STOCK_BANNER.description}
 									testId="remove-stock-banner"
 								/>
-								<p style={{ fontSize: 12, opacity: 0.75 }}>{REMOVE_STOCK_CONTEXT}</p>
+								<p style={{ fontSize: 12, opacity: 0.75 }}>{copy.REMOVE_STOCK_CONTEXT}</p>
 								<QuantityForm
-									fieldLabel={REMOVE_STOCK_FIELD_LABEL}
-									placeholder={REMOVE_STOCK_PLACEHOLDER}
+									fieldLabel={copy.REMOVE_STOCK_FIELD_LABEL}
+									placeholder={copy.REMOVE_STOCK_PLACEHOLDER}
 									submitLabel="Remove stock"
 									testIdPrefix="remove"
-									invalid={REMOVE_STOCK_INVALID_QTY}
+									invalid={copy.REMOVE_STOCK_INVALID_QTY}
 									danger
 									busy={busy}
 									onSubmit={onRemove}
@@ -2003,8 +2022,8 @@ function StockPanel({
 								{removeReceipt !== null && (
 									<Notice
 										variant="default"
-										title={removeReceipt.title}
-										description={removeReceipt.description}
+										title={a(removeReceipt.title)}
+										description={a(removeReceipt.description)}
 										testId="stock-remove-receipt"
 									/>
 								)}

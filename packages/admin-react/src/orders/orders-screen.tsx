@@ -43,6 +43,7 @@ import {
 	type PageTrail,
 } from "../accumulate.js";
 import { ConsoleStyles } from "../ui.js";
+import { AdminLanguageChoice, AdminLocaleProvider } from "../locale.js";
 import { OrderDetail } from "./order-detail.js";
 import { OrdersList } from "./orders-list.js";
 
@@ -302,6 +303,14 @@ function popSelectedOrder(pushed: boolean): void {
 }
 
 export function OrdersScreen(): React.ReactElement {
+	return (
+		<AdminLocaleProvider>
+			<OrdersScreenContent />
+		</AdminLocaleProvider>
+	);
+}
+
+function OrdersScreenContent(): React.ReactElement {
 	const [selected, setSelected] = React.useState<string | null>(() => readSelectedOrder());
 	/** Seeded from the query string so a shared link lands FILTERED, with the
 	 *  panel showing why (F22), and re-derived on `popstate` so Back out of a
@@ -402,6 +411,7 @@ export function OrdersScreen(): React.ReactElement {
 	return (
 		<div style={{ padding: 24, maxInlineSize: 1100, textAlign: "start" }}>
 			<ConsoleStyles />
+			<AdminLanguageChoice />
 			{selected === null ? (
 				<OrdersList
 					key={restore}

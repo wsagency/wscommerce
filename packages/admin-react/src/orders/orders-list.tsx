@@ -1,3 +1,4 @@
+import { useAdminLocale, useAdminPresentation } from "../locale.js";
 /**
  * The React Orders list — the screen the whole migration exists for.
  *
@@ -33,25 +34,13 @@
  *    does today.
  */
 import {
-	ACCUMULATED_SUFFIX,
-	APPLY_FILTERS_LABEL,
-	CLEAR_FILTERS_LABEL,
-	LOAD_MORE_LABEL,
-	ORDERS_EMPTY,
-	ORDERS_LIST_INTRO,
+	translateAdminAuthored,
+	orderStateLabel,
 	ORDERS_PAGE_FAILED_TITLE,
-	ORDERS_NOUN,
-	ORDERS_NO_MATCH,
-	ORDERS_SEARCH_LABEL,
 	ORDERS_STALE_CLEARED_NOTE,
-	PAGER_LABEL,
 	RETRYING_LABEL,
 	RETRY_LABEL,
 	buyerReferenceText,
-	formatAmount,
-	formatTimestamp,
-	listOutcome,
-	orderStateCell,
 	shortIdFixed,
 	shortIdsFor,
 } from "@otta-sh/admin-presentation";
@@ -88,6 +77,8 @@ import {
 import {
 	fetchOrders,
 	isFailure,
+	failurePresentation,
+	type Failure,
 	type OrderSummary,
 	type OrdersFilter,
 	type Vocabulary,
@@ -169,14 +160,25 @@ const orderLinkStyle: React.CSSProperties = {
 
 /** One string per authored filter that is not at its default — the same parts
  *  the Block Kit panel counts as `(N active)` and summarises beneath itself. */
-export function activeFilterParts(filter: OrdersFilter, periodLabel: string): string[] {
+export function activeFilterParts(
+	filter: OrdersFilter,
+	periodLabel: string,
+	locale: unknown = "en",
+): string[] {
 	const parts: string[] = [];
-	if (filter.status !== undefined) parts.push(`status: ${filter.status}`);
+	if (filter.status !== undefined)
+		parts.push(
+			`${translateAdminAuthored(locale, "Status").toLowerCase()}: ${orderStateLabel(filter.status, locale)}`,
+		);
 	if (filter.period === "custom") {
-		if (filter.from !== undefined) parts.push(`from: ${filter.from}`);
-		if (filter.to !== undefined) parts.push(`to: ${filter.to}`);
+		if (filter.from !== undefined)
+			parts.push(`${translateAdminAuthored(locale, "From").toLowerCase()}: ${filter.from}`);
+		if (filter.to !== undefined)
+			parts.push(`${translateAdminAuthored(locale, "To").toLowerCase()}: ${filter.to}`);
 	} else if (filter.period !== undefined) {
-		parts.push(`period: ${periodLabel}`);
+		parts.push(
+			`${translateAdminAuthored(locale, "Period").toLowerCase()}: ${translateAdminAuthored(locale, periodLabel)}`,
+		);
 	}
 	if (filter.search !== undefined) parts.push(`search: ${filter.search}`);
 	return parts;
@@ -273,6 +275,8 @@ export function nextPage(
  * {@link askedForPage}.
  */
 export interface OrdersFailure {
+	readonly source?: Failure;
+	readonly descriptionParts?: readonly string[];
 	readonly title: string;
 	readonly description: string;
 	readonly paging: boolean;
@@ -522,6 +526,9 @@ export function OrdersList({
 	 */
 	onCursorChange?: (change: PageChange) => void;
 }): React.ReactElement {
+	const copy = useAdminPresentation();
+	const { t, a, locale } = useAdminLocale();
+
 	const [applied, setApplied] = React.useState<OrdersFilter>(initialFilter);
 	const [draft, setDraft] = React.useState<OrdersFilter>(initialFilter);
 	const [page, setPage] = React.useState<LoadedPage | null>(null);
@@ -733,6 +740,7 @@ export function OrdersList({
 					setFailure({
 						title: REFRESH_FAILED_TITLE,
 						description: `${outcome.stopped?.description ?? ""} ${REFRESH_UNCHANGED_NOTE}`.trim(),
+						descriptionParts: [outcome.stopped?.description ?? "", REFRESH_UNCHANGED_NOTE],
 						paging: true,
 						refresh: true,
 					});
@@ -810,7 +818,12 @@ export function OrdersList({
 				 * and everything else arrives here — as a failure that leaves the cursor
 				 * exactly where it was, in state and in the address.
 				 */
-				setFailure({ title: result.title, description: result.description, paging });
+				setFailure({
+					title: result.title,
+					description: result.description,
+					paging,
+					source: result,
+				});
 				// A FRESH LOAD THAT FAILED DISPROVES WHAT IS ON SCREEN; a page the
 				// operator moved to does not — in either direction. Only the first
 				// case clears.
@@ -978,7 +991,7 @@ export function OrdersList({
 	const statusAny = vocabulary?.statusAny ?? "any";
 	const periodLabel =
 		vocabulary?.periods.find((p) => p.key === applied.period)?.label ?? "Any time";
-	const parts = activeFilterParts(applied, periodLabel);
+	const parts = activeFilterParts(applied, periodLabel, locale);
 	const filtered = parts.length > 0;
 	const hasNext = page?.nextCursor != null;
 
@@ -993,7 +1006,7 @@ export function OrdersList({
 	// where the header would state one and the rows below it would carry others.
 	// `formatAmount` puts the currency in every cell, which is where a
 	// heterogeneous column has to carry it.
-	const outcome = listOutcome({
+	const outcome = copy.listOutcome({
 		count: orders.length,
 		filtered,
 		firstPage: page?.firstPage ?? true,
@@ -1005,14 +1018,14 @@ export function OrdersList({
 		// is complete". `countScope` is required on every `listOutcome` call, so
 		// a future narrowing here cannot omit stating it.
 		countScope: "service-filtered",
-		noun: ORDERS_NOUN,
-		empty: ORDERS_EMPTY,
-		noMatch: ORDERS_NO_MATCH,
+		noun: copy.ORDERS_NOUN,
+		empty: copy.ORDERS_EMPTY,
+		noMatch: copy.ORDERS_NO_MATCH,
 		// F24. Once two responses are on screen at once, "25 orders on this page"
 		// is the wrong sentence for 50 rows — they are what has been loaded so
 		// far. The Block Kit tier still replaces rather than accumulates, so it
 		// keeps the shared phrasing and the divergence is deliberate.
-		...((page?.pages ?? 1) > 1 ? { scopeSuffix: ACCUMULATED_SUFFIX } : {}),
+		...((page?.pages ?? 1) > 1 ? { scopeSuffix: copy.ACCUMULATED_SUFFIX } : {}),
 		// INC-23. The React list states the SAME exact figure the Block Kit list
 		// states, because both hand it to the same `rowCountLine`. Threading it
 		// here is the whole of what "honour total on the React side" costs, and
@@ -1127,7 +1140,16 @@ export function OrdersList({
 	// is "a page has landed", not "there are rows now": by the time this is read
 	// the rows are already gone.
 	const { card, answerVisible, filtersVisible, retry } = ordersChrome({
-		failure,
+		failure:
+			failure === null
+				? null
+				: {
+						...failure,
+						...failurePresentation(failure.source ?? failure, locale),
+						...(failure.descriptionParts === undefined
+							? {}
+							: { description: failure.descriptionParts.map(a).filter(Boolean).join(" ") }),
+					},
 		everLoaded: page !== null,
 		retrying,
 	});
@@ -1142,26 +1164,29 @@ export function OrdersList({
 	 * disowned one line above. Both states leave the rows exactly where they are;
 	 * it is only the paging that goes.
 	 */
-	const pager = pagerView({
-		trail,
-		hasNext,
-		rows: orders.length,
-		// THE COUNT LINE'S OWN FIGURE, not the payload's. `listOutcome` is the one
-		// place a `total` is validated and, on some scopes, withheld; feeding the
-		// raw one here would let a page count appear under a caption that refused
-		// the very number it was derived from.
-		...(outcome.statedTotal !== undefined ? { total: outcome.statedTotal } : {}),
-		// HOW MANY PAGES ARE ON SCREEN AT ONCE. Above one the position states the
-		// window (`Pages 2–3 of 6`) rather than only where it ends, which is all
-		// "Page 3" would say about fifty rows beginning at page two.
-		span: page?.pages ?? 1,
-		// THE PAGE SIZE IS ON THE WIRE ALREADY — the plugin sends the keyset limit
-		// it pages by, so `M` costs no request. A service that omits it leaves the
-		// page count an em dash rather than a guess.
-		...(vocabulary !== undefined ? { pageSize: vocabulary.pageLimit } : {}),
-		busy,
-		withdrawn: page === null || !answerVisible || failure !== null || pagingStopped,
-	});
+	const pager = pagerView(
+		{
+			trail,
+			hasNext,
+			rows: orders.length,
+			// THE COUNT LINE'S OWN FIGURE, not the payload's. `listOutcome` is the one
+			// place a `total` is validated and, on some scopes, withheld; feeding the
+			// raw one here would let a page count appear under a caption that refused
+			// the very number it was derived from.
+			...(outcome.statedTotal !== undefined ? { total: outcome.statedTotal } : {}),
+			// HOW MANY PAGES ARE ON SCREEN AT ONCE. Above one the position states the
+			// window (`Pages 2–3 of 6`) rather than only where it ends, which is all
+			// "Page 3" would say about fifty rows beginning at page two.
+			span: page?.pages ?? 1,
+			// THE PAGE SIZE IS ON THE WIRE ALREADY — the plugin sends the keyset limit
+			// it pages by, so `M` costs no request. A service that omits it leaves the
+			// page count an em dash rather than a guess.
+			...(vocabulary !== undefined ? { pageSize: vocabulary.pageLimit } : {}),
+			busy,
+			withdrawn: page === null || !answerVisible || failure !== null || pagingStopped,
+		},
+		locale,
+	);
 	/** The same withdrawal, on the control that was already gated this way. */
 	const loadMoreVisible = page?.nextCursor != null && failure === null && !pagingStopped;
 
@@ -1251,6 +1276,7 @@ export function OrdersList({
 	// request — the exact defect being fixed. The response clears it.
 	const retryAction = {
 		...retry,
+		label: a(retry.label),
 		onClick: () => {
 			setRetrying(true);
 			// A RETRY OF A REFRESH IS A REFRESH — it replays the walk carried on the
@@ -1264,7 +1290,7 @@ export function OrdersList({
 
 	return (
 		<div>
-			<h1 style={{ fontSize: 24, fontWeight: 700, marginBlockEnd: 4 }}>Orders</h1>
+			<h1 style={{ fontSize: 24, fontWeight: 700, marginBlockEnd: 4 }}>{t("Orders")}</h1>
 			{/*
 			  REFRESH SITS WITH THE COUNT LINE, not in the paging bar, and the two
 			  places answer different questions: the bar is about WHERE the operator
@@ -1290,15 +1316,15 @@ export function OrdersList({
 			>
 				<p style={{ fontSize: 13, opacity: 0.75 }} data-testid="orders-intro">
 					{outcome.countLine === undefined || !answerVisible
-						? ORDERS_LIST_INTRO
-						: `${outcome.countLine} · ${ORDERS_LIST_INTRO}`}
+						? copy.ORDERS_LIST_INTRO
+						: `${outcome.countLine} · ${copy.ORDERS_LIST_INTRO}`}
 				</p>
 				{/* THERE HAS TO BE AN ANSWER TO RECONCILE. A cold or stale failure has
 				  taken the rows off the screen and put a Retry on the card, which is
 				  the same act by the only name that is true there. */}
 				{page !== null && answerVisible && (
 					<PagerButton
-						control={refreshControl({ busy, refreshing })}
+						control={refreshControl({ busy, refreshing }, locale)}
 						testId="orders-refresh"
 						onClick={refresh}
 					/>
@@ -1308,8 +1334,8 @@ export function OrdersList({
 			{card !== null && !card.inline && (
 				<Notice
 					variant="error"
-					title={card.title}
-					description={card.description}
+					title={a(card.title)}
+					description={a(card.description)}
 					action={retryAction}
 					testId="orders-failure"
 				/>
@@ -1328,8 +1354,8 @@ export function OrdersList({
 				<div ref={resetRegion}>
 					<Notice
 						variant="alert"
-						title={CURSOR_RESET_TITLE}
-						description={CURSOR_RESET_DESCRIPTION}
+						title={a(CURSOR_RESET_TITLE)}
+						description={a(CURSOR_RESET_DESCRIPTION)}
 						testId="orders-cursor-reset"
 					/>
 				</div>
@@ -1351,9 +1377,11 @@ export function OrdersList({
 				<div ref={refreshStopRegion}>
 					<Notice
 						variant="alert"
-						title={refreshStop === "refused" ? REFRESH_HALTED_TITLE : REFRESH_STOPPED_TITLE}
+						title={refreshStop === "refused" ? a(REFRESH_HALTED_TITLE) : a(REFRESH_STOPPED_TITLE)}
 						description={
-							refreshStop === "refused" ? REFRESH_HALTED_DESCRIPTION : REFRESH_STOPPED_DESCRIPTION
+							refreshStop === "refused"
+								? a(REFRESH_HALTED_DESCRIPTION)
+								: a(REFRESH_STOPPED_DESCRIPTION)
 						}
 						testId={refreshStop === "refused" ? "orders-refresh-halted" : "orders-refresh-stopped"}
 					/>
@@ -1362,7 +1390,9 @@ export function OrdersList({
 
 			{filtersVisible && (
 				<Group
-					label={`Filters${parts.length > 0 ? ` (${String(parts.length)} active)` : ""}`}
+					label={
+						parts.length > 0 ? t("Filters ({count} active)", { count: parts.length }) : t("Filters")
+					}
 					testId="orders-filters"
 				>
 					<div
@@ -1373,7 +1403,7 @@ export function OrdersList({
 							alignItems: "end",
 						}}
 					>
-						<Field label="Status">
+						<Field label={t("Status")}>
 							<select
 								className="otta-focusable"
 								data-testid="filter-status"
@@ -1381,10 +1411,10 @@ export function OrdersList({
 								value={draft.status ?? statusAny}
 								onChange={(event) => setDraft({ ...draft, status: event.target.value })}
 							>
-								<option value={statusAny}>All statuses</option>
+								<option value={statusAny}>{t("All statuses")}</option>
 								{(vocabulary?.statuses ?? []).map((state) => (
 									<option key={state} value={state}>
-										{state}
+										{copy.orderStateLabel(state)}
 									</option>
 								))}
 							</select>
@@ -1392,7 +1422,7 @@ export function OrdersList({
 
 						{draft.period === "custom" ? (
 							<>
-								<Field label="From">
+								<Field label={t("From")}>
 									<input
 										type="date"
 										className="otta-focusable"
@@ -1402,7 +1432,7 @@ export function OrdersList({
 										onChange={(event) => setDraft({ ...draft, from: event.target.value })}
 									/>
 								</Field>
-								<Field label="To">
+								<Field label={t("To")}>
 									<input
 										type="date"
 										className="otta-focusable"
@@ -1414,7 +1444,7 @@ export function OrdersList({
 								</Field>
 							</>
 						) : (
-							<Field label="Period">
+							<Field label={t("Period")}>
 								<select
 									className="otta-focusable"
 									data-testid="filter-period"
@@ -1424,14 +1454,14 @@ export function OrdersList({
 								>
 									{(vocabulary?.periods ?? []).map((period) => (
 										<option key={period.key} value={period.key}>
-											{period.label}
+											{a(period.label)}
 										</option>
 									))}
 								</select>
 							</Field>
 						)}
 
-						<Field label={ORDERS_SEARCH_LABEL}>
+						<Field label={copy.ORDERS_SEARCH_LABEL}>
 							<input
 								type="search"
 								className="otta-focusable"
@@ -1456,7 +1486,7 @@ export function OrdersList({
 					*/}
 					<div ref={applyRegion} tabIndex={-1} style={{ marginBlockStart: 12 }}>
 						<Button
-							label={APPLY_FILTERS_LABEL}
+							label={copy.APPLY_FILTERS_LABEL}
 							testId="apply-filters"
 							disabled={busy}
 							handOffFocusTo={applyRegion}
@@ -1479,13 +1509,17 @@ export function OrdersList({
 					}}
 				>
 					<span style={{ fontSize: 13 }}>{parts.join(" · ")}</span>
-					<Button label={CLEAR_FILTERS_LABEL} testId="clear-filters" onClick={() => apply({})} />
+					<Button
+						label={copy.CLEAR_FILTERS_LABEL}
+						testId="clear-filters"
+						onClick={() => apply({})}
+					/>
 				</section>
 			)}
 
 			{busy && page === null && failure === null && (
 				<p style={{ fontSize: 13, opacity: 0.7 }} aria-live="polite">
-					Loading orders…
+					{t("Loading orders…")}
 				</p>
 			)}
 
@@ -1509,7 +1543,7 @@ export function OrdersList({
 					title={outcome.title}
 					description={outcome.description}
 					{...(outcome.offer === "clear-filters"
-						? { action: { label: CLEAR_FILTERS_LABEL, onClick: () => apply({}) } }
+						? { action: { label: copy.CLEAR_FILTERS_LABEL, onClick: () => apply({}) } }
 						: {})}
 				/>
 			)}
@@ -1543,9 +1577,15 @@ export function OrdersList({
 			{outcome.kind === "rows" && answerVisible && (
 				<Table
 					testId="orders-table"
-					caption="Orders"
+					caption={t("Orders")}
 					card
-					headers={["Placed", "Customer", "Status", "Order #", <EndHeader label="Total" />]}
+					headers={[
+						t("Placed"),
+						t("Customer"),
+						t("Status"),
+						t("Order #"),
+						<EndHeader label={t("Total")} />,
+					]}
 					onActivateRow={onOpen}
 				>
 					{orders.map((order) => {
@@ -1565,7 +1605,7 @@ export function OrdersList({
 								  operator scanning forty rows wants a stable grid, not a ramp.
 								*/}
 								<td className="otta-td otta-num" style={{ opacity: 0.72 }}>
-									{formatTimestamp(order.createdAt)}
+									{copy.formatTimestamp(order.createdAt)}
 								</td>
 								<td
 									className="otta-td"
@@ -1627,10 +1667,10 @@ export function OrdersList({
 								<td className="otta-td">
 									{order.state === PILLED_ORDER_STATE ? (
 										<StatusPill tone="fail" testId="order-state-pill">
-											{orderStateCell(order.state)}
+											{copy.orderStateCell(order.state)}
 										</StatusPill>
 									) : (
-										orderStateCell(order.state)
+										copy.orderStateCell(order.state)
 									)}
 								</td>
 								<td className="otta-td" style={{ whiteSpace: "nowrap" }}>
@@ -1668,7 +1708,7 @@ export function OrdersList({
 									<CopyIdButton id={order.id} testId="copy-order-id" revealOnRowHover />
 								</td>
 								<td className="otta-td otta-num" style={{ ...endCellStyle, fontWeight: 600 }}>
-									{formatAmount(order.totalCents, order.currency)}
+									{copy.formatAmount(order.totalCents, order.currency)}
 								</td>
 							</tr>
 						);
@@ -1687,8 +1727,8 @@ export function OrdersList({
 				<div style={{ marginBlockStart: 12 }}>
 					<Notice
 						variant="error"
-						title={card.title}
-						description={card.description}
+						title={a(card.title)}
+						description={a(card.description)}
 						action={retryAction}
 						testId="orders-load-more-failure"
 					/>
@@ -1707,8 +1747,8 @@ export function OrdersList({
 				<div style={{ marginBlockStart: 12 }}>
 					<Notice
 						variant="alert"
-						title={PAGING_STOPPED_TITLE}
-						description={PAGING_STOPPED_DESCRIPTION}
+						title={a(PAGING_STOPPED_TITLE)}
+						description={a(PAGING_STOPPED_DESCRIPTION)}
 						testId="orders-paging-stopped"
 					/>
 				</div>
@@ -1735,7 +1775,7 @@ export function OrdersList({
 				>
 					{pager.visible && (
 						<nav
-							aria-label={PAGER_LABEL}
+							aria-label={copy.PAGER_LABEL}
 							data-testid="orders-pager"
 							style={{ display: "flex", gap: 8, alignItems: "center" }}
 						>
@@ -1769,7 +1809,7 @@ export function OrdersList({
 							style={buttonStyle}
 							onClick={() => goForward(true)}
 						>
-							{busy ? "Loading…" : LOAD_MORE_LABEL}
+							{busy ? t("Loading…") : copy.LOAD_MORE_LABEL}
 						</button>
 					)}
 				</div>

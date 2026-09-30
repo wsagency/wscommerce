@@ -46,7 +46,9 @@
  * WHEN THE BLOCK KIT SCREEN IS RETIRED, this module goes back to
  * `@otta-sh/admin-react` and stops being shared.
  */
-import { LABEL_BUDGET, fit, unitWord, valueLabel } from "./copy.js";
+import { adminMessage, translateAdminAuthored } from "./admin-messages.js";
+import { adminUnitWord, formatAdminQuantity, normalizeAdminLocale } from "./locale.js";
+import { LABEL_BUDGET, fit, valueLabel } from "./copy.js";
 import { UNFORMATTABLE, formatOptionalAmount } from "./format-money.js";
 import type { RowNoun, ZeroStateCopy } from "./list-outcome.js";
 
@@ -200,25 +202,33 @@ export interface StockDegradation {
  */
 export function stockDegradation(
 	facts: StockDegradation,
+	locale: unknown = "en",
 ): { readonly title: string; readonly description: string } | undefined {
 	const symptoms: string[] = [];
 	const remedies: string[] = [];
 	if (facts.unreadable) {
-		symptoms.push("Stock levels are unavailable");
-		remedies.push("On hand reads — for every row here; open a product to read its stock.");
+		symptoms.push(adminMessage(locale, "Stock levels are unavailable"));
+		remedies.push(
+			adminMessage(locale, "On hand reads — for every row here; open a product to read its stock."),
+		);
 	}
 	if (facts.thresholdUnreadable) {
-		symptoms.push("low-stock highlighting is unavailable");
+		symptoms.push(adminMessage(locale, "low-stock highlighting is unavailable"));
 		remedies.push(
-			"The store's low-stock threshold could not be read — set it under Checkout & holds on Settings.",
+			adminMessage(
+				locale,
+				"The store's low-stock threshold could not be read — set it under Checkout & holds on Settings.",
+			),
 		);
 	}
 	if (facts.filterUnavailable) {
-		symptoms.push("the Low stock only filter was not applied");
+		symptoms.push(adminMessage(locale, "the Low stock only filter was not applied"));
 		// NOT "on this page": the React list accumulates, and this fact LATCHES
 		// across a scan (`nextPage`), so the sentence can sit over rows merged
 		// from several responses. "The rows below" is true of one page and of six.
-		remedies.push("The rows below are every product, not just the low-stock ones.");
+		remedies.push(
+			adminMessage(locale, "The rows below are every product, not just the low-stock ones."),
+		);
 	}
 	if (symptoms.length === 0) return undefined;
 	const joined = symptoms.join("; ");
@@ -355,18 +365,26 @@ export const REMOVE_STOCK_INVALID_QTY = {
  * The title is trimmed to the label budget for the same reason a group label
  * is (X-11); at any realistic quantity it is nowhere near it.
  */
-export function removeStockConfirm(qty: number): {
+export function removeStockConfirm(
+	qty: number,
+	locale: unknown = "en",
+): {
 	readonly title: string;
 	readonly text: string;
 	readonly confirm: string;
 	readonly deny: string;
 } {
-	const unit = unitWord(qty);
+	const unit = adminUnitWord(qty, locale);
+	const quantity = formatAdminQuantity(qty, locale);
 	return {
-		title: fit(`Remove ${String(qty)} ${unit}?`, LABEL_BUDGET),
-		text: `Remove ${String(qty)} ${unit} from stock? This records a removal and cannot be undone by restocking.`,
-		confirm: `Yes, remove ${String(qty)}`,
-		deny: "Keep as is",
+		title: fit(adminMessage(locale, "Remove {qty} {unit}?", { qty: quantity, unit }), LABEL_BUDGET),
+		text: adminMessage(
+			locale,
+			"Remove {qty} {unit} from stock? This records a removal and cannot be undone by restocking.",
+			{ qty: quantity, unit },
+		),
+		confirm: adminMessage(locale, "Yes, remove {qty}", { qty: quantity }),
+		deny: adminMessage(locale, "Keep as is"),
 	};
 }
 
@@ -398,18 +416,30 @@ export function addStockConfirm(
 	qty: number,
 	sku: string,
 	onHand: number,
+	locale: unknown = "en",
 ): {
 	readonly title: string;
 	readonly text: string;
 	readonly confirm: string;
 	readonly deny: string;
 } {
-	const unit = unitWord(qty);
+	const unit = adminUnitWord(qty, locale);
+	const quantity = formatAdminQuantity(qty, locale);
 	return {
-		title: fit(`Add ${String(qty)} ${unit}?`, LABEL_BUDGET),
-		text: `Add ${String(qty)} ${unit} to ${sku}? On hand goes from ${String(onHand)} to ${String(onHand + qty)} and the store can sell them immediately.`,
-		confirm: `Yes, add ${String(qty)}`,
-		deny: "Keep as is",
+		title: fit(adminMessage(locale, "Add {qty} {unit}?", { qty: quantity, unit }), LABEL_BUDGET),
+		text: adminMessage(
+			locale,
+			"Add {qty} {unit} to {sku}? On hand goes from {before} to {after} and the store can sell them immediately.",
+			{
+				qty: quantity,
+				unit,
+				sku,
+				before: formatAdminQuantity(onHand, locale),
+				after: formatAdminQuantity(onHand + qty, locale),
+			},
+		),
+		confirm: adminMessage(locale, "Yes, add {qty}", { qty: quantity }),
+		deny: adminMessage(locale, "Keep as is"),
 	};
 }
 
@@ -443,8 +473,8 @@ export const PRICE_PENDING_CONTEXT = "Saving publishes this price to the storefr
 
 /** A group label with its unsaved marker. Per-section by construction — every
  *  editable group on the screen composes its label this way. */
-export function dirtyGroupLabel(label: string, dirty: boolean): string {
-	return dirty ? `${label}${UNSAVED_SUFFIX}` : label;
+export function dirtyGroupLabel(label: string, dirty: boolean, locale: unknown = "en"): string {
+	return dirty ? `${label}${adminMessage(locale, " · unsaved")}` : label;
 }
 
 /** The three editable sections of the Product tab, named. Each group's own
@@ -466,9 +496,10 @@ export const PRODUCT_SECTION_ORDER: readonly ProductSection[] = ["identity", "pr
 /** Which sections hold unsaved work, named and in screen order. */
 export function dirtySectionLabels(
 	dirty: Readonly<Record<ProductSection, boolean>>,
+	locale: unknown = "en",
 ): readonly string[] {
-	return PRODUCT_SECTION_ORDER.filter((section) => dirty[section]).map(
-		(section) => PRODUCT_SECTION_LABELS[section],
+	return PRODUCT_SECTION_ORDER.filter((section) => dirty[section]).map((section) =>
+		translateAdminAuthored(locale, PRODUCT_SECTION_LABELS[section]),
 	);
 }
 
@@ -476,8 +507,8 @@ export function dirtySectionLabels(
  *  work. The dot itself is a shape and is hidden from assistive technology —
  *  "•" announced as "bullet" says nothing — so the fact it carries has to be in
  *  the name. */
-export function tabUnsavedLabel(label: string): string {
-	return `${label} — unsaved changes`;
+export function tabUnsavedLabel(label: string, locale: unknown = "en"): string {
+	return adminMessage(locale, "{label} — unsaved changes", { label });
 }
 
 /**
@@ -496,29 +527,33 @@ export function tabUnsavedLabel(label: string): string {
  * dirty — but an empty list degrades to the generic sentence rather than to
  * "The  sections have…".
  */
-export function leaveWithoutSavingConfirm(sections: readonly string[]): {
+export function leaveWithoutSavingConfirm(
+	sections: readonly string[],
+	locale: unknown = "en",
+): {
 	readonly title: string;
 	readonly text: string;
 	readonly confirm: string;
 	readonly deny: string;
 } {
 	return {
-		title: "Leave without saving?",
-		text: `${namedSections(sections)} Leaving this product discards them.`,
-		confirm: "Leave and discard",
-		deny: "Stay",
+		title: adminMessage(locale, "Leave without saving?"),
+		text: `${namedSections(sections, locale)} ${adminMessage(locale, "Leaving this product discards them.")}`,
+		confirm: adminMessage(locale, "Leave and discard"),
+		deny: adminMessage(locale, "Stay"),
 	};
 }
 
 /** `The Price section has unsaved changes.` — or the two- and three-section
  *  forms of the same sentence. */
-function namedSections(sections: readonly string[]): string {
-	if (sections.length === 0) return "This product has unsaved changes.";
+function namedSections(sections: readonly string[], locale: unknown): string {
+	if (sections.length === 0) return adminMessage(locale, "This product has unsaved changes.");
 	const first = sections[0] ?? "";
-	if (sections.length === 1) return `The ${first} section has unsaved changes.`;
+	if (sections.length === 1)
+		return adminMessage(locale, "The {section} section has unsaved changes.", { section: first });
 	const last = sections[sections.length - 1] ?? "";
-	const list = `${sections.slice(0, -1).join(", ")} and ${last}`;
-	return `The ${list} sections have unsaved changes.`;
+	const list = `${sections.slice(0, -1).join(", ")} ${adminMessage(locale, "and")} ${last}`;
+	return adminMessage(locale, "The {sections} sections have unsaved changes.", { sections: list });
 }
 
 /**
@@ -539,11 +574,12 @@ export function priceChangeSummary(
 	fromCents: number | null,
 	toCents: number | null,
 	currencyCode: string | null,
+	locale: unknown = "en",
 ): string | null {
 	if (fromCents === null || toCents === null || currencyCode === null) return null;
 	if (fromCents === toCents) return null;
-	const from = formatOptionalAmount(fromCents, currencyCode);
-	const to = formatOptionalAmount(toCents, currencyCode);
+	const from = formatOptionalAmount(fromCents, currencyCode, locale);
+	const to = formatOptionalAmount(toCents, currencyCode, locale);
 	if (from === UNFORMATTABLE || to === UNFORMATTABLE) return null;
 	return `${from} → ${to}`;
 }
@@ -551,8 +587,8 @@ export function priceChangeSummary(
 /** The pending block's first line. The second is {@link PRICE_PENDING_CONTEXT},
  *  which stands alone when there is no amount change to name — a compare-at
  *  edit is still an edit, and still publishes. */
-export function pricePendingLine(change: string | null): string | null {
-	return change === null ? null : `Price ${change}`;
+export function pricePendingLine(change: string | null, locale: unknown = "en"): string | null {
+	return change === null ? null : adminMessage(locale, "Price {change}", { change });
 }
 
 /**
@@ -565,14 +601,19 @@ export function pricePendingLine(change: string | null): string | null {
  * actually raises: whether it reaches orders that were already placed. It does
  * not.
  */
-export function priceSavedNotice(change: string | null): {
+export function priceSavedNotice(
+	change: string | null,
+	locale: unknown = "en",
+): {
 	readonly title: string;
 	readonly description: string;
 } {
-	const consequence =
-		"Shoppers see the new price now; orders already placed keep the price they were charged.";
+	const consequence = adminMessage(
+		locale,
+		"Shoppers see the new price now; orders already placed keep the price they were charged.",
+	);
 	return {
-		title: "Price updated — live on the storefront",
+		title: adminMessage(locale, "Price updated — live on the storefront"),
 		description: change === null ? consequence : `${change}. ${consequence}`,
 	};
 }
@@ -590,15 +631,22 @@ export function priceSavedNotice(change: string | null): {
  *  the CMS before anyone set one has none yet; that is a real state with a real
  *  consequence (no stock movements, D-7), so it is NAMED rather than rendered
  *  as an empty tail. */
-export function identityGroupLabel(sku: string | null): string {
-	return valueLabel("Identity", [sku ?? "no SKU"]);
+export function identityGroupLabel(sku: string | null, locale: unknown = "en"): string {
+	return valueLabel(adminMessage(locale, "Identity"), [sku ?? adminMessage(locale, "no SKU")]);
 }
 
 /** The Price group's answer. An unpriced product says so; it never reads
  *  `$0.00`, which is a price nobody set. */
-export function priceGroupLabel(priceCents: number | null, currencyCode: string | null): string {
-	if (priceCents === null || currencyCode === null) return valueLabel("Price", ["not priced yet"]);
-	return valueLabel("Price", [`${formatOptionalAmount(priceCents, currencyCode)} ${currencyCode}`]);
+export function priceGroupLabel(
+	priceCents: number | null,
+	currencyCode: string | null,
+	locale: unknown = "en",
+): string {
+	if (priceCents === null || currencyCode === null)
+		return valueLabel(adminMessage(locale, "Price"), [adminMessage(locale, "not priced yet")]);
+	return valueLabel(adminMessage(locale, "Price"), [
+		`${formatOptionalAmount(priceCents, currencyCode, locale)} ${currencyCode}`,
+	]);
 }
 
 /** The two values an operator opens `Classification & shipping` to check.
@@ -608,10 +656,14 @@ export function priceGroupLabel(priceCents: number | null, currencyCode: string 
  *  `eu-standard-vat`), never uuids, so §1.3 leaves them in full — and the full
  *  pair would consume the whole label budget on its own, leaving no room for the
  *  weight. Neither value is invented when absent: an unset one says so. */
-export function shippingGroupLabel(taxClass: string | null, weightGrams: number | null): string {
-	return valueLabel("Classification & shipping", [
-		taxClass ?? "no tax class",
-		weightGrams === null ? "no weight" : `${String(weightGrams)} g`,
+export function shippingGroupLabel(
+	taxClass: string | null,
+	weightGrams: number | null,
+	locale: unknown = "en",
+): string {
+	return valueLabel(adminMessage(locale, "Classification & shipping"), [
+		taxClass ?? adminMessage(locale, "no tax class"),
+		weightGrams === null ? adminMessage(locale, "no weight") : `${String(weightGrams)} g`,
 	]);
 }
 
@@ -644,8 +696,9 @@ export const NO_TAX_CLASS = "none";
 export function taxClassOptions(
 	current: string | null,
 	taxClasses: readonly TaxClassRef[],
+	locale: unknown = "en",
 ): Array<{ value: string; label: string }> {
-	const options = [{ value: NO_TAX_CLASS, label: "— None (standard) —" }];
+	const options = [{ value: NO_TAX_CLASS, label: adminMessage(locale, "— None (standard) —") }];
 	for (const c of taxClasses) options.push({ value: c.id, label: `${c.name} (${c.id})` });
 	if (current !== null && !taxClasses.some((c) => c.id === current)) {
 		options.push({ value: current, label: current });
@@ -791,8 +844,11 @@ export const REMOVE_STOCK_PLACEHOLDER = "e.g. 3";
  * never been priced has no currency to name, so each label says where the
  * currency is coming from instead of leaving a gap.
  */
-export function priceFieldLabel(currencyCode: string | null): string {
-	return `Price (${currencyCode ?? "set currency below"}, e.g. ${PRICE_PLACEHOLDER})`;
+export function priceFieldLabel(currencyCode: string | null, locale: unknown = "en"): string {
+	return adminMessage(locale, "Price ({currency}, e.g. {example})", {
+		currency: currencyCode ?? adminMessage(locale, "set currency below"),
+		example: PRICE_PLACEHOLDER,
+	});
 }
 
 /** Rendered ONLY on a first pricing — for an already-priced product the
@@ -800,14 +856,25 @@ export function priceFieldLabel(currencyCode: string | null): string {
  *  offered (F-3: never a fixed single-option select). */
 export const CURRENCY_FIELD_LABEL = "Currency (ISO-4217, e.g. USD) — set once when first pricing";
 
-export function compareAtFieldLabel(currencyCode: string | null): string {
-	return `Compare-at / was price (${currencyCode ?? "same as price"}, e.g. ${COMPARE_AT_PLACEHOLDER}) — blank to clear`;
+export function compareAtFieldLabel(currencyCode: string | null, locale: unknown = "en"): string {
+	return adminMessage(
+		locale,
+		"Compare-at / was price ({currency}, e.g. {example}) — blank to clear",
+		{
+			currency: currencyCode ?? adminMessage(locale, "same as price"),
+			example: COMPARE_AT_PLACEHOLDER,
+		},
+	);
 }
 
 /** "admin only, never shown to buyers" is load-bearing: unit cost is the one
  *  number on this screen a merchant would be alarmed to see on a product page. */
-export function unitCostFieldLabel(currencyCode: string | null): string {
-	return `Unit cost — admin only, never shown to buyers (${currencyCode ?? "same as price"}) — blank to clear`;
+export function unitCostFieldLabel(currencyCode: string | null, locale: unknown = "en"): string {
+	return adminMessage(
+		locale,
+		"Unit cost — admin only, never shown to buyers ({currency}) — blank to clear",
+		{ currency: currencyCode ?? adminMessage(locale, "same as price") },
+	);
 }
 
 /**
@@ -825,18 +892,30 @@ export function unitCostFieldLabel(currencyCode: string | null): string {
  * the summary sits directly beneath the control that produced them, and a
  * summary that renamed them would be unmatchable against it.
  */
-export function productFilterParts(filter: {
-	readonly status?: string | undefined;
-	readonly kind?: string | undefined;
-	readonly lowStock?: boolean | undefined;
-	readonly search?: string | undefined;
-}): string[] {
+export function productFilterParts(
+	filter: {
+		readonly status?: string | undefined;
+		readonly kind?: string | undefined;
+		readonly lowStock?: boolean | undefined;
+		readonly search?: string | undefined;
+	},
+	locale: unknown = "en",
+): string[] {
 	const parts: string[] = [];
-	if (filter.status !== undefined) parts.push(`status: ${filter.status}`);
-	if (filter.kind !== undefined) parts.push(`kind: ${filter.kind}`);
-	if (filter.lowStock === true) parts.push("stock: low only");
+	if (filter.status !== undefined)
+		parts.push(
+			`status: ${normalizeAdminLocale(locale) === "hr" ? (filter.status === "true" ? adminMessage(locale, "Active") : filter.status === "false" ? adminMessage(locale, "Inactive") : filter.status) : filter.status}`,
+		);
+	if (filter.kind !== undefined)
+		parts.push(
+			`${normalizeAdminLocale(locale) === "hr" ? "vrsta" : "kind"}: ${filter.kind === "physical" || filter.kind === "digital" ? translateAdminAuthored(locale, filter.kind) : filter.kind}`,
+		);
+	if (filter.lowStock === true)
+		parts.push(normalizeAdminLocale(locale) === "hr" ? "zaliha: samo mala" : "stock: low only");
 	if (filter.search !== undefined && filter.search.length > 0) {
-		parts.push(`search: ${filter.search}`);
+		parts.push(
+			`${normalizeAdminLocale(locale) === "hr" ? "pretraga" : "search"}: ${filter.search}`,
+		);
 	}
 	return parts;
 }

@@ -1,3 +1,4 @@
+import { useAdminLocale, useAdminPresentation } from "../locale.js";
 /**
  * The React Pricing & inventory list — INC-21, and the second and last screen
  * ADR-0014 migrates.
@@ -52,32 +53,9 @@
  *    says so via `stock.filterUnavailable` — see `narrowed` below.
  */
 import {
-	ABSENT,
-	ACCUMULATED_SUFFIX,
-	APPLY_FILTERS_LABEL,
-	CLEAR_FILTERS_LABEL,
-	LOAD_MORE_LABEL,
-	LOW_STOCK_FILTER_DESCRIPTION,
-	LOW_STOCK_FILTER_LABEL,
-	PAGER_LABEL,
-	PRODUCTS_EMPTY,
-	PRODUCTS_LIST_INTRO,
 	PRODUCTS_PAGE_FAILED_TITLE,
-	PRODUCTS_LOW_STOCK_NOUN,
-	PRODUCTS_LOW_STOCK_NO_MATCH,
-	PRODUCTS_NOUN,
-	PRODUCTS_NO_MATCH,
-	PRODUCTS_SCREEN_TITLE,
-	PRODUCT_COLUMN_LABELS,
-	PRODUCT_FILTER_LABELS,
-	RETRYING_LABEL,
-	RETRY_LABEL,
 	UNTITLED,
-	formatOptionalAmount,
-	listOutcome,
-	onHandCell,
 	productFilterParts,
-	statusLabel,
 	statusTone,
 	stockDegradation,
 	stockTone,
@@ -116,6 +94,8 @@ import {
 import {
 	fetchProducts,
 	isFailure,
+	failurePresentation,
+	type Failure,
 	type ProductSummary,
 	type ProductsFilter,
 	type ProductsVocabulary,
@@ -214,19 +194,26 @@ export function filtersVisible(page: LoadedPage | null, failed: boolean): boolea
  * is what the Block Kit summary renders — matching it is the point, and a
  * prettier rendering here would be a deviation the acceptance forbids.
  */
-export function activeFilterParts(filter: ProductsFilter, any: string): string[] {
+export function activeFilterParts(
+	filter: ProductsFilter,
+	any: string,
+	locale: unknown = "en",
+): string[] {
 	// The SENTINEL-STRIPPING is this surface's — it stores one token per select
 	// and `any` means "no constraint" — and the WORDING is the shared one, so
 	// this panel and the Block Kit panel count the same parts and spell them the
 	// same way.
 	const notAny = (value: string | undefined): string | undefined =>
 		value !== undefined && value !== any && value.length > 0 ? value : undefined;
-	return productFilterParts({
-		status: notAny(filter.status),
-		kind: notAny(filter.productKind),
-		...(filter.lowStock === true ? { lowStock: true } : {}),
-		...(filter.search !== undefined ? { search: filter.search } : {}),
-	});
+	return productFilterParts(
+		{
+			status: notAny(filter.status),
+			kind: notAny(filter.productKind),
+			...(filter.lowStock === true ? { lowStock: true } : {}),
+			...(filter.search !== undefined ? { search: filter.search } : {}),
+		},
+		locale,
+	);
 }
 
 /** Trim a submitted form down to the fields that are NOT at their default —
@@ -463,13 +450,17 @@ export function failureNotice(
 export function visibleDegradation(
 	page: LoadedPage | null,
 	failed: boolean,
+	locale: unknown = "en",
 ): { readonly title: string; readonly description: string } | undefined {
 	if (page === null || failed) return undefined;
-	return stockDegradation({
-		unreadable: page.stock.unreadable,
-		thresholdUnreadable: page.stock.threshold === null,
-		filterUnavailable: page.stock.filterUnavailable,
-	});
+	return stockDegradation(
+		{
+			unreadable: page.stock.unreadable,
+			thresholdUnreadable: page.stock.threshold === null,
+			filterUnavailable: page.stock.filterUnavailable,
+		},
+		locale,
+	);
 }
 
 export function ProductsList({
@@ -514,6 +505,9 @@ export function ProductsList({
 	 *  screens wrap it in `useCallback`. */
 	onCursorChange?: (change: PageChange) => void;
 }): React.ReactElement {
+	const copy = useAdminPresentation();
+	const { t, a, locale } = useAdminLocale();
+
 	const [applied, setApplied] = React.useState<ProductsFilter>(initialFilter);
 	const [draft, setDraft] = React.useState<ProductsFilter>(initialFilter);
 	const [page, setPage] = React.useState<LoadedPage | null>(null);
@@ -523,6 +517,8 @@ export function ProductsList({
 	 *  `Previous` onto page one sends none and is still a move. See
 	 *  {@link askedForPage}. */
 	const [failure, setFailure] = React.useState<{
+		source?: Failure;
+		descriptionParts?: readonly string[];
 		title: string;
 		description: string;
 		paging: boolean;
@@ -754,6 +750,7 @@ export function ProductsList({
 					setFailure({
 						title: REFRESH_FAILED_TITLE,
 						description: `${outcome.stopped?.description ?? ""} ${REFRESH_UNCHANGED_NOTE}`.trim(),
+						descriptionParts: [outcome.stopped?.description ?? "", REFRESH_UNCHANGED_NOTE],
 						paging: true,
 						refresh: true,
 					});
@@ -817,7 +814,12 @@ export function ProductsList({
 				 * A failure therefore leaves the cursor exactly where it was, in state
 				 * and in the address, so a reload after recovery still restores the page.
 				 */
-				setFailure({ title: result.title, description: result.description, paging });
+				setFailure({
+					title: result.title,
+					description: result.description,
+					paging,
+					source: result,
+				});
 				// F2: THE ANSWER GOES WITH THE FAILURE, in the same transition — for a
 				// FIRST page. A page behind one that succeeded takes only its own
 				// cursor with it (F24); see `pageAfterFailure`.
@@ -968,7 +970,7 @@ export function ProductsList({
 	const vocabulary = page?.vocabulary;
 	const any = vocabulary?.any ?? "any";
 	const threshold = page?.stock.threshold ?? null;
-	const parts = activeFilterParts(applied, any);
+	const parts = activeFilterParts(applied, any, locale);
 	const filtered = parts.length > 0;
 	const hasNext = page?.nextCursor != null;
 	// A "Low stock only" page reports on ITSELF, never on the catalog, in
@@ -996,7 +998,7 @@ export function ProductsList({
 	// THE SHARED DECISION. Same function, same inputs, as the Block Kit screen's
 	// `listResult` — so the count line, the wording, and which state renders at
 	// all cannot disagree between the two Pricing & inventory screens.
-	const outcome = listOutcome({
+	const outcome = copy.listOutcome({
 		count: products.length,
 		filtered,
 		firstPage: page?.firstPage ?? true,
@@ -1016,13 +1018,13 @@ export function ProductsList({
 		// on a `filterUnavailable` page: the rows there are every product, not a
 		// low-stock subset, and "low-stock products" would be the wrong word for
 		// them.
-		noun: narrowed ? PRODUCTS_LOW_STOCK_NOUN : PRODUCTS_NOUN,
+		noun: narrowed ? copy.PRODUCTS_LOW_STOCK_NOUN : copy.PRODUCTS_NOUN,
 		// F24. Once two responses are on screen at once, "on this page" is the
 		// wrong sentence for rows drawn from both. The Block Kit tier still
 		// replaces rather than accumulates, so it keeps the shared phrasing and
 		// the divergence is deliberate.
-		...((page?.pages ?? 1) > 1 ? { scopeSuffix: ACCUMULATED_SUFFIX } : {}),
-		empty: PRODUCTS_EMPTY,
+		...((page?.pages ?? 1) > 1 ? { scopeSuffix: copy.ACCUMULATED_SUFFIX } : {}),
+		empty: copy.PRODUCTS_EMPTY,
 		// THE LOW-STOCK ZERO STATE IS A WHOLE-CATALOG CLAIM, so it is earned only
 		// when the threshold is the ONLY thing that could have emptied the page.
 		// The predicates are ANDed: "low stock + Archived", "low stock + Digital"
@@ -1030,7 +1032,8 @@ export function ProductsList({
 		// of low-stock products, and blaming the threshold there sends the operator
 		// to Settings to fix a filter. `parts` is the same list the summary above
 		// the table is built from, so the sentence and the chips cannot disagree.
-		noMatch: narrowed && parts.length === 1 ? PRODUCTS_LOW_STOCK_NO_MATCH : PRODUCTS_NO_MATCH,
+		noMatch:
+			narrowed && parts.length === 1 ? copy.PRODUCTS_LOW_STOCK_NO_MATCH : copy.PRODUCTS_NO_MATCH,
 		// The plugin has already decided whether this render may state one
 		// (`resolveStockContext`: shown once the predicate is genuinely
 		// applied, withheld on `filterUnavailable`) — this is simply whatever
@@ -1046,12 +1049,22 @@ export function ProductsList({
 	// answer to a request that succeeded, so they, the count line and the alert
 	// that describes them all stand; only a FIRST-page failure takes them.
 	const answerVisible = failure === null || failure.paging;
-	const degraded = visibleDegradation(page, !answerVisible);
+	const degraded = visibleDegradation(page, !answerVisible, locale);
 	// F3: a cold failure has no vocabulary to build the two selects from, so the
 	// panel goes with the answer rather than standing there empty.
 	const showFilters = filtersVisible(page, failure !== null);
 	// WHICH OF THE TWO PLACES THE FAILURE IS DRAWN IN — see `failureNotice`.
-	const notice = failureNotice(failure);
+	const notice = failureNotice(
+		failure === null
+			? null
+			: {
+					...failure,
+					...failurePresentation(failure.source ?? failure, locale),
+					...(failure.descriptionParts === undefined
+						? {}
+						: { description: failure.descriptionParts.map(a).filter(Boolean).join(" ") }),
+				},
+	);
 
 	/**
 	 * THE PAGER, decided in `pagerView` and only drawn here.
@@ -1067,26 +1080,29 @@ export function ProductsList({
 	 * the count line reads, so a low-stock page whose predicate never ran (see
 	 * `nextPage`) withholds the page count exactly as it withholds the count.
 	 */
-	const pager = pagerView({
-		trail,
-		hasNext,
-		rows: products.length,
-		// THE COUNT LINE'S OWN FIGURE, not the payload's — `listOutcome` is the one
-		// place a `total` is validated and, on some scopes, withheld, and a page
-		// count derived from a number the caption refused would contradict it one
-		// line down. On this screen that is not hypothetical: a `filterUnavailable`
-		// page withholds its total by design.
-		...(outcome.statedTotal !== undefined ? { total: outcome.statedTotal } : {}),
-		// HOW MANY PAGES ARE ON SCREEN AT ONCE. Above one the position states the
-		// window (`Pages 2–3 of 6`) rather than only where it ends.
-		span: page?.pages ?? 1,
-		// THE PAGE SIZE IS ON THE WIRE ALREADY — the plugin sends the keyset limit
-		// it pages by, so `M` costs no request. A service that omits it leaves the
-		// page count an em dash rather than a guess.
-		...(vocabulary !== undefined ? { pageSize: vocabulary.pageLimit } : {}),
-		busy,
-		withdrawn: page === null || !answerVisible || failure !== null || pagingStopped,
-	});
+	const pager = pagerView(
+		{
+			trail,
+			hasNext,
+			rows: products.length,
+			// THE COUNT LINE'S OWN FIGURE, not the payload's — `listOutcome` is the one
+			// place a `total` is validated and, on some scopes, withheld, and a page
+			// count derived from a number the caption refused would contradict it one
+			// line down. On this screen that is not hypothetical: a `filterUnavailable`
+			// page withholds its total by design.
+			...(outcome.statedTotal !== undefined ? { total: outcome.statedTotal } : {}),
+			// HOW MANY PAGES ARE ON SCREEN AT ONCE. Above one the position states the
+			// window (`Pages 2–3 of 6`) rather than only where it ends.
+			span: page?.pages ?? 1,
+			// THE PAGE SIZE IS ON THE WIRE ALREADY — the plugin sends the keyset limit
+			// it pages by, so `M` costs no request. A service that omits it leaves the
+			// page count an em dash rather than a guess.
+			...(vocabulary !== undefined ? { pageSize: vocabulary.pageLimit } : {}),
+			busy,
+			withdrawn: page === null || !answerVisible || failure !== null || pagingStopped,
+		},
+		locale,
+	);
 	/** The same withdrawal, on the control that was already gated this way. */
 	const loadMoreVisible = page?.nextCursor != null && failure === null && !pagingStopped;
 
@@ -1174,7 +1190,7 @@ export function ProductsList({
 	// THE FAILURE IS NOT CLEARED ON THE CLICK. Clearing it here rather than on the
 	// response would flash the stale answer back for the length of the request.
 	const retryAction = {
-		label: retrying ? RETRYING_LABEL : RETRY_LABEL,
+		label: retrying ? copy.RETRYING_LABEL : copy.RETRY_LABEL,
 		onClick: () => {
 			setRetrying(true);
 			// A RETRY OF A REFRESH IS A REFRESH — it replays the walk carried on the
@@ -1294,7 +1310,9 @@ export function ProductsList({
 
 	return (
 		<div>
-			<h1 style={{ fontSize: 24, fontWeight: 700, marginBlockEnd: 4 }}>{PRODUCTS_SCREEN_TITLE}</h1>
+			<h1 style={{ fontSize: 24, fontWeight: 700, marginBlockEnd: 4 }}>
+				{copy.PRODUCTS_SCREEN_TITLE}
+			</h1>
 			{/*
 			  REFRESH SITS WITH THE COUNT LINE, not in the paging bar, and the two
 			  answer different questions: the bar is about WHERE the merchant is, and
@@ -1319,15 +1337,15 @@ export function ProductsList({
 			>
 				<p style={{ fontSize: 13, opacity: 0.75 }} data-testid="products-intro">
 					{outcome.countLine === undefined
-						? PRODUCTS_LIST_INTRO
-						: `${outcome.countLine} · ${PRODUCTS_LIST_INTRO}`}
+						? copy.PRODUCTS_LIST_INTRO
+						: `${outcome.countLine} · ${copy.PRODUCTS_LIST_INTRO}`}
 				</p>
 				{/* THERE HAS TO BE AN ANSWER TO RECONCILE. A cold or stale failure has
 				  taken the rows off the screen and put a Retry on the card, which is
 				  the same act by the only name that is true there. */}
 				{page !== null && answerVisible && (
 					<PagerButton
-						control={refreshControl({ busy, refreshing })}
+						control={refreshControl({ busy, refreshing }, locale)}
 						testId="products-refresh"
 						onClick={refresh}
 					/>
@@ -1337,8 +1355,8 @@ export function ProductsList({
 			{notice !== null && !notice.inline && (
 				<Notice
 					variant="error"
-					title={notice.title}
-					description={notice.description}
+					title={a(notice.title)}
+					description={a(notice.description)}
 					action={retryAction}
 					testId="products-failure"
 				/>
@@ -1366,8 +1384,8 @@ export function ProductsList({
 				<div ref={resetRegion}>
 					<Notice
 						variant="alert"
-						title={CURSOR_RESET_TITLE}
-						description={CURSOR_RESET_DESCRIPTION}
+						title={a(CURSOR_RESET_TITLE)}
+						description={a(CURSOR_RESET_DESCRIPTION)}
 						testId="products-cursor-reset"
 					/>
 				</div>
@@ -1387,9 +1405,11 @@ export function ProductsList({
 				<div ref={refreshStopRegion}>
 					<Notice
 						variant="alert"
-						title={refreshStop === "refused" ? REFRESH_HALTED_TITLE : REFRESH_STOPPED_TITLE}
+						title={refreshStop === "refused" ? a(REFRESH_HALTED_TITLE) : a(REFRESH_STOPPED_TITLE)}
 						description={
-							refreshStop === "refused" ? REFRESH_HALTED_DESCRIPTION : REFRESH_STOPPED_DESCRIPTION
+							refreshStop === "refused"
+								? a(REFRESH_HALTED_DESCRIPTION)
+								: a(REFRESH_STOPPED_DESCRIPTION)
 						}
 						testId={
 							refreshStop === "refused" ? "products-refresh-halted" : "products-refresh-stopped"
@@ -1400,7 +1420,9 @@ export function ProductsList({
 
 			{showFilters && (
 				<Group
-					label={`Filters${parts.length > 0 ? ` (${String(parts.length)} active)` : ""}`}
+					label={
+						parts.length > 0 ? t("Filters ({count} active)", { count: parts.length }) : t("Filters")
+					}
 					testId="products-filters"
 				>
 					<div
@@ -1411,7 +1433,7 @@ export function ProductsList({
 							alignItems: "end",
 						}}
 					>
-						<Field label={PRODUCT_FILTER_LABELS.status}>
+						<Field label={copy.PRODUCT_FILTER_LABELS.status}>
 							<select
 								className="otta-focusable"
 								data-testid="filter-status"
@@ -1421,13 +1443,13 @@ export function ProductsList({
 							>
 								{(vocabulary?.statuses ?? []).map((option) => (
 									<option key={option.value} value={option.value}>
-										{option.label}
+										{a(option.label)}
 									</option>
 								))}
 							</select>
 						</Field>
 
-						<Field label={PRODUCT_FILTER_LABELS.kind}>
+						<Field label={copy.PRODUCT_FILTER_LABELS.kind}>
 							<select
 								className="otta-focusable"
 								data-testid="filter-kind"
@@ -1437,13 +1459,13 @@ export function ProductsList({
 							>
 								{(vocabulary?.kinds ?? []).map((option) => (
 									<option key={option.value} value={option.value}>
-										{option.label}
+										{a(option.label)}
 									</option>
 								))}
 							</select>
 						</Field>
 
-						<Field label={PRODUCT_FILTER_LABELS.search}>
+						<Field label={copy.PRODUCT_FILTER_LABELS.search}>
 							<input
 								type="search"
 								className="otta-focusable"
@@ -1479,9 +1501,9 @@ export function ProductsList({
 							onChange={(event) => setDraft({ ...draft, lowStock: event.target.checked })}
 						/>
 						<span>
-							{LOW_STOCK_FILTER_LABEL}
+							{copy.LOW_STOCK_FILTER_LABEL}
 							<span style={{ display: "block", fontSize: 12, opacity: 0.7 }}>
-								{LOW_STOCK_FILTER_DESCRIPTION}
+								{copy.LOW_STOCK_FILTER_DESCRIPTION}
 							</span>
 						</span>
 					</label>
@@ -1497,7 +1519,7 @@ export function ProductsList({
 					*/}
 					<div ref={applyRegion} tabIndex={-1} style={{ marginBlockStart: 12 }}>
 						<Button
-							label={APPLY_FILTERS_LABEL}
+							label={copy.APPLY_FILTERS_LABEL}
 							testId="apply-filters"
 							disabled={busy}
 							handOffFocusTo={applyRegion}
@@ -1520,13 +1542,17 @@ export function ProductsList({
 					}}
 				>
 					<span style={{ fontSize: 13 }}>{parts.join(" · ")}</span>
-					<Button label={CLEAR_FILTERS_LABEL} testId="clear-filters" onClick={() => apply({})} />
+					<Button
+						label={copy.CLEAR_FILTERS_LABEL}
+						testId="clear-filters"
+						onClick={() => apply({})}
+					/>
 				</section>
 			)}
 
 			{busy && page === null && failure === null && (
 				<p style={{ fontSize: 13, opacity: 0.7 }} aria-live="polite">
-					Loading products…
+					{t("Loading products…")}
 				</p>
 			)}
 
@@ -1546,7 +1572,7 @@ export function ProductsList({
 					title={outcome.title}
 					description={outcome.description}
 					{...(outcome.offer === "clear-filters"
-						? { action: { label: CLEAR_FILTERS_LABEL, onClick: () => apply({}) } }
+						? { action: { label: copy.CLEAR_FILTERS_LABEL, onClick: () => apply({}) } }
 						: {})}
 				/>
 			)}
@@ -1593,19 +1619,19 @@ export function ProductsList({
 			{outcome.kind === "rows" && answerVisible && (
 				<Table
 					testId="products-table"
-					caption="Products"
+					caption={t("Products")}
 					headers={[
-						PRODUCT_COLUMN_LABELS.title,
-						PRODUCT_COLUMN_LABELS.sku,
-						PRODUCT_COLUMN_LABELS.status,
+						copy.PRODUCT_COLUMN_LABELS.title,
+						copy.PRODUCT_COLUMN_LABELS.sku,
+						copy.PRODUCT_COLUMN_LABELS.status,
 						// `On hand` is NOT end-aligned, and that is the one place this
 						// screen departs from the money treatment: its cells carry a
 						// trailing phrase (`0 · Out of stock`), so pushing them to the edge
 						// would line the WORDS up and leave the digits ragged — the
 						// opposite of what aligning a figure column is for. Price has no
 						// suffix and gets the treatment.
-						PRODUCT_COLUMN_LABELS.onHand,
-						<EndHeader label={PRODUCT_COLUMN_LABELS.price} />,
+						copy.PRODUCT_COLUMN_LABELS.onHand,
+						<EndHeader label={copy.PRODUCT_COLUMN_LABELS.price} />,
 					]}
 					onActivateRow={onOpen}
 				>
@@ -1648,7 +1674,7 @@ export function ProductsList({
 										}}
 										style={productLinkStyle}
 									>
-										{product.title ?? UNTITLED}
+										{product.title ?? copy.UNTITLED}
 									</a>
 								</td>
 								<td className="otta-td" style={{ whiteSpace: "nowrap" }}>
@@ -1660,7 +1686,7 @@ export function ProductsList({
 								  apply here.
 								*/}
 									{product.sku === null ? (
-										ABSENT
+										copy.ABSENT
 									) : (
 										<>
 											{/*
@@ -1694,7 +1720,7 @@ export function ProductsList({
 									// recession applies to the bare phrase only.
 									style={status === "plain" ? { opacity: 0.75 } : undefined}
 								>
-									{toned(status, statusLabel(product), "product-status-pill")}
+									{toned(status, copy.statusLabel(product), "product-status-pill")}
 								</td>
 								<td className="otta-td otta-num" data-testid="product-on-hand">
 									{/*
@@ -1704,7 +1730,7 @@ export function ProductsList({
 								  an exception state and a ring around it would claim the store
 								  had read something it never read.
 								*/}
-									{toned(stock, onHandCell(product.onHand, threshold), "product-stock-pill")}
+									{toned(stock, copy.onHandCell(product.onHand, threshold), "product-stock-pill")}
 								</td>
 								<td className="otta-td otta-num" style={endCellStyle}>
 									{/*
@@ -1715,7 +1741,7 @@ export function ProductsList({
 								  never been priced, and it reads as an em dash, never `$0.00`,
 								  which is a price nobody set.
 								*/}
-									{formatOptionalAmount(product.priceCents, product.currency)}
+									{copy.formatOptionalAmount(product.priceCents, product.currency)}
 								</td>
 							</tr>
 						);
@@ -1734,8 +1760,8 @@ export function ProductsList({
 				<div style={{ marginBlockStart: 12 }}>
 					<Notice
 						variant="error"
-						title={notice.title}
-						description={notice.description}
+						title={a(notice.title)}
+						description={a(notice.description)}
 						action={retryAction}
 						testId="products-load-more-failure"
 					/>
@@ -1754,8 +1780,8 @@ export function ProductsList({
 				<div style={{ marginBlockStart: 12 }}>
 					<Notice
 						variant="alert"
-						title={PAGING_STOPPED_TITLE}
-						description={PAGING_STOPPED_DESCRIPTION}
+						title={a(PAGING_STOPPED_TITLE)}
+						description={a(PAGING_STOPPED_DESCRIPTION)}
 						testId="products-paging-stopped"
 					/>
 				</div>
@@ -1782,7 +1808,7 @@ export function ProductsList({
 				>
 					{pager.visible && (
 						<nav
-							aria-label={PAGER_LABEL}
+							aria-label={copy.PAGER_LABEL}
 							data-testid="products-pager"
 							style={{ display: "flex", gap: 8, alignItems: "center" }}
 						>
@@ -1816,7 +1842,7 @@ export function ProductsList({
 							style={buttonStyle}
 							onClick={() => goForward(true)}
 						>
-							{busy ? "Loading…" : LOAD_MORE_LABEL}
+							{busy ? t("Loading…") : copy.LOAD_MORE_LABEL}
 						</button>
 					)}
 				</div>
