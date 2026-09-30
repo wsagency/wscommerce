@@ -85,6 +85,23 @@ describe("invoice provider HTTP contracts", () => {
 		expect(calls).toBe(0);
 		expect(result).toEqual({ status: "terminal", code: "SOLO_UNSUPPORTED_TAX" });
 	});
+	it("refuses an unsupported frozen Solo buyer tax number before egress", async () => {
+		let calls = 0;
+		const snapshot = invoiceFixture();
+		const result = await createSoloProvider({
+			token: "test-only-secret",
+			serviceType: 1,
+			invoiceType: 1,
+			buyerType: 1,
+			codPaymentType: 1,
+			transport: async () => {
+				calls++;
+				return response({});
+			},
+		}).issue({ ...snapshot, billing: { ...snapshot.billing, taxNumber: "TEST-ONLY-BUYER-ID" } });
+		expect(result).toEqual({ status: "terminal", code: "SOLO_UNSUPPORTED_BILLING_PROFILE" });
+		expect(calls).toBe(0);
+	});
 	it("uses the documented e-racuni method, frozen net amounts and apiTransactionId, and no automatic email", async () => {
 		let submitted: Record<string, unknown> | undefined;
 		const provider = createERacuniProvider({

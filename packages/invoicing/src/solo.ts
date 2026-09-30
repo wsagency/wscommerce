@@ -32,6 +32,7 @@ export function createSoloProvider(options: SoloOptions): InvoiceProvider {
 				snapshot.currency !== "EUR" ||
 				snapshot.billing.country !== "HR" ||
 				snapshot.billing.company ||
+				snapshot.billing.taxNumber ||
 				snapshot.billing.vatId
 			)
 				return { status: "terminal", code: "SOLO_UNSUPPORTED_BILLING_PROFILE" };
