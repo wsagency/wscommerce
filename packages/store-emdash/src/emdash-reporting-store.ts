@@ -935,7 +935,11 @@ export class EmdashReportingStore implements ReportingStore {
 			{ productId: string; title: string; qtySold: number; revenueCents: number }
 		>();
 		for (const order of orders) {
-			if (!REVENUE_STATES.has(order.state)) continue;
+			if (
+				!REVENUE_STATES.has(order.state) ||
+				(order.offlinePayment && order.offlinePayment.status !== "received")
+			)
+				continue;
 			for (const item of order.items) {
 				const key = `${item.productId}${KEY_SEP}${item.title}`;
 				const group = groups.get(key) ?? {
@@ -1197,6 +1201,13 @@ function reconstructEvents(orders: OrderDoc[]): ReportingOrderEvent[] {
 				currency: order.currency,
 				fromState: null,
 				toState: origin,
+				...(order.offlinePayment
+					? {
+							fromPaymentReceived: false,
+							toPaymentReceived:
+								order.events[0]?.fromPaymentReceived ?? order.offlinePayment.status === "received",
+						}
+					: {}),
 				orderTotalCents: order.totals.total,
 			});
 		}
@@ -1214,6 +1225,12 @@ function reconstructEvents(orders: OrderDoc[]): ReportingOrderEvent[] {
 				fromState: event.fromState,
 				toState: event.toState,
 				...(transitionRevision > 1 ? { transitionRevision } : {}),
+				...(event.fromPaymentReceived === undefined
+					? {}
+					: {
+							fromPaymentReceived: event.fromPaymentReceived,
+							toPaymentReceived: event.toPaymentReceived,
+						}),
 				// DIAGNOSTIC only here: a reconstructed event is used to identify a CLAIM, never
 				// to move a counter, so this is the order's total today rather than whatever it
 				// was when that transition happened — and nothing recomputes from it.
@@ -1313,13 +1330,13 @@ function planDelta(doc: CurrentReportingDailyDoc, event: ReportingOrderEvent): D
 	if (event.kind === "transition") {
 		if (event.fromState !== null) {
 			move(stateCountField(event.fromState), `stateCounts.${event.fromState}`, 1, 0);
-			if (REVENUE_STATES.has(event.fromState)) {
+			if (REVENUE_STATES.has(event.fromState) && event.fromPaymentReceived !== false) {
 				move("revenueOrders", "revenueOrders", 1, 0);
 				move("revenueCents", "revenueCents", event.orderTotalCents, 0);
 			}
 		}
 		move(stateCountField(event.toState), `stateCounts.${event.toState}`, 0, 1);
-		if (REVENUE_STATES.has(event.toState)) {
+		if (REVENUE_STATES.has(event.toState) && event.toPaymentReceived !== false) {
 			move("revenueOrders", "revenueOrders", 0, 1);
 			move("revenueCents", "revenueCents", 0, event.orderTotalCents);
 		}
@@ -1377,7 +1394,10 @@ function computeDay(day: string, orders: OrderDoc[], now: string): Map<string, R
 		const counts: Record<string, number> = { ...doc.stateCounts };
 		counts[order.state] = (counts[order.state] ?? 0) + 1;
 		doc.stateCounts = counts;
-		if (REVENUE_STATES.has(order.state)) {
+		if (
+			REVENUE_STATES.has(order.state) &&
+			(!order.offlinePayment || order.offlinePayment.status === "received")
+		) {
 			doc.revenueOrders += 1;
 			doc.revenueCents = addAggregate(doc.revenueCents, order.totals.total);
 		}

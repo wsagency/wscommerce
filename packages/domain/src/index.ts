@@ -148,6 +148,9 @@ export type {
 	CancelOrderStoreResult,
 	CapturedPayment,
 	CreateOrderInput,
+	AcceptCODOrderInput,
+	RecordOfflinePaymentInput,
+	OfflineOrderStoreResult,
 	CreateOrderLineInput,
 	CreateOrderResult,
 	CreateOrderTotalsInput,
@@ -269,6 +272,7 @@ export type {
 	Order,
 	OrderAddress,
 	OrderBillingAddress,
+	OfflinePayment,
 	OrderCancellation,
 	OrderFulfillment,
 	OrderLine,
@@ -286,6 +290,11 @@ export {
 	type OrderBillingAddressInput,
 } from "./orders/order-address.js";
 export type { CreateOrderFailure, SettleFailure } from "./orders/errors.js";
+export {
+	codAcceptanceOutcome,
+	offlineReceiptOutcome,
+	offlineProviderRef,
+} from "./orders/offline-payment-policy.js";
 export {
 	createOrderFromCart,
 	DEFAULT_CHECKOUT_TTL_MS,

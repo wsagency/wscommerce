@@ -1,4 +1,9 @@
 import { refundProviderUpdate } from "../orders/refund-provider-state.js";
+import {
+	codAcceptanceOutcome,
+	offlineReceiptOutcome,
+	offlineProviderRef,
+} from "../orders/offline-payment-policy.js";
 import { cents, currency as toCurrency } from "../money/cents.js";
 import {
 	type CustomerId,
@@ -16,6 +21,9 @@ import type {
 	CancelOrderStoreResult,
 	CapturedPayment,
 	CreateOrderInput,
+	AcceptCODOrderInput,
+	RecordOfflinePaymentInput,
+	OfflineOrderStoreResult,
 	CreateOrderResult,
 	FinalizeRefundInput,
 	FinalizeRefundStoreResult,
@@ -112,6 +120,7 @@ export class InMemoryOrderStore implements OrderStore {
 	#orders = new Map<string, StoredOrder>();
 	#byKey = new Map<string, string>();
 	#payments: StoredPayment[] = [];
+	#offlineClaims = new Map<string, RecordOfflinePaymentInput>();
 	/** Append-only refunds ledger — the fake analogue of the `refunds` table
 	 *  (ADR-0008). */
 	#refunds: RefundRecord[] = [];
@@ -176,6 +185,7 @@ export class InMemoryOrderStore implements OrderStore {
 			// pointer to the profile book), or null when none was captured.
 			shippingAddress: cloneAddress(input.shippingAddress ?? null),
 			billingAddress: input.billingAddress ? { ...input.billingAddress } : null,
+			offlinePayment: input.offlinePayment ? { ...input.offlinePayment } : null,
 			reconciliationFlag: null,
 			reconciliationResolution: null,
 			fulfillment: null,
@@ -199,6 +209,8 @@ export class InMemoryOrderStore implements OrderStore {
 	}
 
 	async markPaid(orderId: OrderId): Promise<boolean> {
+		const payment = this.#orders.get(orderId)?.order.offlinePayment;
+		if (payment && payment.status !== "received") return false;
 		return this.#guardedFlip(orderId, "pending", "paid");
 	}
 
@@ -235,6 +247,77 @@ export class InMemoryOrderStore implements OrderStore {
 			currency: input.currency,
 			status: input.status,
 		});
+	}
+
+	async acceptCODOrder(input: AcceptCODOrderInput): Promise<OfflineOrderStoreResult> {
+		const stored = this.#orders.get(input.orderId);
+		if (stored === undefined) return { outcome: "order_not_found", order: null };
+		const now = this.#clock.now().toISOString();
+		const outcome = codAcceptanceOutcome(stored.order, now);
+		if (outcome === "applied") {
+			stored.order.offlinePayment = {
+				...stored.order.offlinePayment!,
+				status: "accepted",
+				acceptedAt: now,
+				acceptedBy: input.acceptedBy,
+				acceptanceKey: input.idempotencyKey,
+			};
+			stored.order.state = "processing";
+			stored.order.updatedAt = now;
+			this.#appendEvent(input.orderId, "pending", "processing", input.acceptedBy);
+		}
+		return { outcome, order: this.#clone(stored.order) };
+	}
+
+	async recordOfflinePayment(input: RecordOfflinePaymentInput): Promise<OfflineOrderStoreResult> {
+		const stored = this.#orders.get(input.orderId);
+		if (stored === undefined) return { outcome: "order_not_found", order: null };
+		const now = this.#clock.now().toISOString();
+		let outcome = offlineReceiptOutcome(stored.order, input, now);
+		if (outcome === "applied") {
+			const refKey = offlineProviderRef(input.receiptRef);
+			const key = `offline-key:${input.idempotencyKey}`;
+			const ref = this.#offlineClaims.get(refKey);
+			const claimedKey = this.#offlineClaims.get(key);
+			if (
+				ref !== undefined &&
+				(ref.orderId !== input.orderId ||
+					ref.amount !== input.amount ||
+					ref.currency !== input.currency)
+			)
+				outcome = "receipt_conflict";
+			else if (
+				claimedKey !== undefined &&
+				(claimedKey.orderId !== input.orderId || claimedKey.receiptRef !== input.receiptRef)
+			)
+				outcome = "key_conflict";
+			else {
+				this.#offlineClaims.set(refKey, { ...input });
+				this.#offlineClaims.set(key, { ...input });
+				const from = stored.order.state;
+				stored.order.offlinePayment = {
+					...stored.order.offlinePayment!,
+					status: "received",
+					receivedAt: now,
+					recordedBy: input.recordedBy,
+					receiptRef: input.receiptRef,
+					confirmationKey: input.idempotencyKey,
+				};
+				stored.order.state = from === "pending" ? "paid" : from;
+				stored.order.updatedAt = now;
+				this.#payments.push({
+					orderId: input.orderId,
+					gateway: stored.order.paymentMethod!,
+					providerRef: refKey,
+					amount: input.amount,
+					currency: input.currency,
+					status: "succeeded",
+				});
+				this.#appendEvent(input.orderId, from, stored.order.state, input.recordedBy);
+				if (stored.order.state === "paid") this.#enqueue(input.orderId, "paid");
+			}
+		}
+		return { outcome, order: this.#clone(stored.order) };
 	}
 
 	// -- Refunds ledger (ADR-0008) --------------------------------------------
@@ -865,6 +948,12 @@ export class InMemoryOrderStore implements OrderStore {
 	#guardedFlip(orderId: OrderId, from: OrderState, to: OrderState, enqueue?: boolean): boolean {
 		const stored = this.#orders.get(orderId);
 		if (stored === undefined || stored.order.state !== from) return false;
+		if (
+			to === "paid" &&
+			stored.order.offlinePayment &&
+			stored.order.offlinePayment.status !== "received"
+		)
+			return false;
 		stored.order.state = to;
 		stored.order.updatedAt = this.#clock.now().toISOString();
 		// State-change audit rides the (won) flip, exactly like the real adapter's
@@ -917,6 +1006,7 @@ export class InMemoryOrderStore implements OrderStore {
 			// snapshot (mirrors the immutability the real adapter gets structurally).
 			shippingAddress: cloneAddress(order.shippingAddress),
 			billingAddress: order.billingAddress ? { ...order.billingAddress } : null,
+			offlinePayment: order.offlinePayment ? { ...order.offlinePayment } : null,
 			fulfillment: order.fulfillment === null ? null : { ...order.fulfillment },
 			cancellation: order.cancellation === null ? null : { ...order.cancellation },
 		};

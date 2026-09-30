@@ -359,6 +359,9 @@ export type ReportingOrderEvent =
 			readonly toState: string;
 			/** A provider correction can make this pair recur. Absent for its first occurrence. */
 			readonly transitionRevision?: number;
+			/** Offline fulfillment may precede payment. Legacy absent fields mean received. */
+			readonly fromPaymentReceived?: boolean;
+			readonly toPaymentReceived?: boolean;
 			/** The order's net total in minor units (`order_totals.total_cents`). */
 			readonly orderTotalCents: number;
 	  }

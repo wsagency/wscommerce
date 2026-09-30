@@ -14,6 +14,7 @@ import type {
 	Order,
 	OrderAddress,
 	OrderBillingAddress,
+	OfflinePayment,
 	OrderState,
 	PaymentMethod,
 	ReconciliationOutcome,
@@ -58,6 +59,11 @@ export interface OrderStore {
 	listExpirable(now: string): Promise<OrderId[]>;
 	/** Record the settled `payments` row (idempotent on `provider_ref`). */
 	recordPayment(input: RecordPaymentInput): Promise<void>;
+	/** Private COD acceptance: pending -> processing while unpaid; records a commit intent. */
+	acceptCODOrder(input: AcceptCODOrderInput): Promise<OfflineOrderStoreResult>;
+	/** Claim a globally unique receipt/key before atomically capturing the frozen amount.
+	 * Bank pending -> paid; accepted COD keeps its fulfillment state. Never public proof. */
+	recordOfflinePayment(input: RecordOfflinePaymentInput): Promise<OfflineOrderStoreResult>;
 
 	// -- Refunds ledger (ADR-0008) --------------------------------------------
 
@@ -519,6 +525,7 @@ export interface CreateOrderInput {
 	 */
 	shippingAddress?: OrderAddress | null;
 	billingAddress?: OrderBillingAddress | null;
+	offlinePayment?: OfflinePayment | null;
 	/**
 	 * The `order_totals` write. Phase 4 passed only `{ subtotal, total, currency }`
 	 * (the stub); Phase 6 passes the full computed breakdown. The extra fields are
@@ -542,6 +549,35 @@ export interface CreateOrderTotalsInput {
 }
 
 export type CreateOrderResult = { created: boolean; order: Order };
+
+export interface AcceptCODOrderInput {
+	orderId: OrderId;
+	acceptedBy: string;
+	idempotencyKey: IdempotencyKey;
+}
+
+export interface RecordOfflinePaymentInput {
+	orderId: OrderId;
+	receiptRef: string;
+	amount: Cents;
+	currency: Currency;
+	recordedBy: string;
+	idempotencyKey: IdempotencyKey;
+}
+
+export type OfflineOrderStoreResult = {
+	outcome:
+		| "applied"
+		| "duplicate"
+		| "order_not_found"
+		| "not_eligible"
+		| "expired"
+		| "not_payable"
+		| "amount_mismatch"
+		| "receipt_conflict"
+		| "key_conflict";
+	order: Order | null;
+};
 
 // -- Admin Orders console: view-only list (keyset pagination) -----------------
 

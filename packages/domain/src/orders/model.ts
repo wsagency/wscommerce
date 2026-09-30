@@ -33,7 +33,23 @@ export type OrderState =
 export type FulfillmentKind = "physical" | "digital";
 
 /** The two payment gateways (§5). */
-export type PaymentMethod = "stripe" | "x402";
+export type PaymentMethod = "stripe" | "x402" | "bank_transfer" | "cod";
+
+/** Payment and fulfillment are independent for COD. Receipt evidence is private. */
+export interface OfflinePayment {
+	readonly method: "bank_transfer" | "cod";
+	readonly instructions: string;
+	readonly paymentReference: string;
+	readonly paymentDueAt: string;
+	status: "awaiting" | "accepted" | "received";
+	acceptedAt: string | null;
+	acceptedBy: string | null;
+	acceptanceKey: string | null;
+	receivedAt: string | null;
+	recordedBy: string | null;
+	receiptRef: string | null;
+	confirmationKey: string | null;
+}
 
 /**
  * The admin's disposition when clearing a reconciliation flag (admin-UX
@@ -236,6 +252,8 @@ export interface Order {
 	shippingAddress: OrderAddress | null;
 	/** Captured once. Legacy orders without this field have no billing snapshot. */
 	billingAddress?: OrderBillingAddress | null;
+	/** Optional for legacy/provider-paid orders. Instructions and deadline are frozen. */
+	offlinePayment?: OfflinePayment | null;
 	/**
 	 * Set when settle could not commit an adopted hold that should have been
 	 * present (§5): the order is `paid` (money received) but stock was lost, so

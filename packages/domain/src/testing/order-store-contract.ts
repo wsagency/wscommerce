@@ -190,6 +190,163 @@ export function orderStoreContract(
 
 		// -- ADR-0009: immutable ship-to snapshot on the order --------------------
 
+		test("COD acceptance permits unpaid dispatch; a receipt preserves fulfillment and captures once", async () => {
+			const { store } = await makeHarness();
+			const { order } = await store.createFromCart(
+				physicalInput({
+					paymentMethod: "cod",
+					offlinePayment: offlineSnapshot("cod"),
+				}),
+			);
+			const acceptance = {
+				orderId: order.id,
+				acceptedBy: "staff",
+				idempotencyKey: idempotencyKey("accept-cod"),
+			};
+			expect((await store.acceptCODOrder(acceptance)).outcome).toBe("applied");
+			expect((await store.getById(order.id))?.offlinePayment?.status).toBe("accepted");
+			expect(await store.getCapturedPayments(order.id)).toEqual([]);
+			expect((await store.acceptCODOrder(acceptance)).outcome).toBe("duplicate");
+			expect(
+				(
+					await store.recordFulfillment({
+						orderId: order.id,
+						fromState: "processing",
+						carrier: "Post",
+						trackingNumber: "123",
+						trackingUrl: null,
+						shippedAt: null,
+						recordedBy: "staff",
+						enqueueEmail: true,
+						idempotencyKey: idempotencyKey("ship-cod"),
+					})
+				).recorded,
+			).toBe(true);
+			const receipt = {
+				orderId: order.id,
+				receiptRef: "delivery-123",
+				amount: cents(1500),
+				currency: USD,
+				recordedBy: "staff",
+				idempotencyKey: idempotencyKey("receipt-cod"),
+			};
+			expect((await store.recordOfflinePayment(receipt)).outcome).toBe("applied");
+			expect((await store.getById(order.id))?.state).toBe("shipped");
+			expect((await store.getById(order.id))?.offlinePayment?.status).toBe("received");
+			expect((await store.recordOfflinePayment(receipt)).outcome).toBe("duplicate");
+			expect(await store.getCapturedPayments(order.id)).toMatchObject([
+				{ amount: 1500, status: "succeeded", gateway: "cod" },
+			]);
+		});
+
+		test("offline receipt must match frozen money, is globally bound, and cannot capture twice", async () => {
+			const { store } = await makeHarness();
+			const { order } = await store.createFromCart(
+				physicalInput({
+					paymentMethod: "bank_transfer",
+					offlinePayment: offlineSnapshot("bank_transfer"),
+				}),
+			);
+			const receipt = {
+				orderId: order.id,
+				receiptRef: "bank-123",
+				amount: cents(1500),
+				currency: USD,
+				recordedBy: "staff",
+				idempotencyKey: idempotencyKey("receipt-bank"),
+			};
+			expect(await store.markPaid(order.id)).toBe(false);
+			expect(
+				(
+					await store.transition({
+						orderId: order.id,
+						fromState: "pending",
+						toState: "paid",
+						enqueueEmail: true,
+						idempotencyKey: idempotencyKey("bypass"),
+					})
+				).transitioned,
+			).toBe(false);
+			expect((await store.recordOfflinePayment({ ...receipt, amount: cents(1499) })).outcome).toBe(
+				"amount_mismatch",
+			);
+			expect((await store.recordOfflinePayment(receipt)).outcome).toBe("applied");
+			expect(
+				(
+					await store.recordOfflinePayment({
+						...receipt,
+						receiptRef: "bank-second",
+						idempotencyKey: idempotencyKey("receipt-second"),
+					})
+				).outcome,
+			).toBe("receipt_conflict");
+			const { order: other } = await store.createFromCart(
+				physicalInput({
+					orderId: orderId("ord-2"),
+					idempotencyKey: idempotencyKey("key-2"),
+					paymentMethod: "bank_transfer",
+					offlinePayment: offlineSnapshot("bank_transfer"),
+				}),
+			);
+			expect(
+				(
+					await store.recordOfflinePayment({
+						...receipt,
+						orderId: other.id,
+						idempotencyKey: idempotencyKey("other-receipt"),
+					})
+				).outcome,
+			).toBe("receipt_conflict");
+			expect((await store.getById(other.id))?.state).toBe("pending");
+			expect(await store.getCapturedPayments(other.id)).toEqual([]);
+		});
+
+		test("expired offline orders and non-COD orders cannot be accepted or paid", async () => {
+			const { store } = await makeHarness();
+			const { order } = await store.createFromCart(
+				physicalInput({
+					paymentMethod: "cod",
+					holdExpiresAt: "2026-07-09T00:00:00.000Z",
+					offlinePayment: offlineSnapshot("cod"),
+				}),
+			);
+			expect(
+				(
+					await store.acceptCODOrder({
+						orderId: order.id,
+						acceptedBy: "staff",
+						idempotencyKey: idempotencyKey("late-accept"),
+					})
+				).outcome,
+			).toBe("expired");
+			expect(
+				(
+					await store.recordOfflinePayment({
+						orderId: order.id,
+						receiptRef: "late-receipt",
+						amount: cents(1500),
+						currency: USD,
+						recordedBy: "staff",
+						idempotencyKey: idempotencyKey("late-receipt"),
+					})
+				).outcome,
+			).toBe("expired");
+			expect((await store.getById(order.id))?.state).toBe("pending");
+			expect(await store.getCapturedPayments(order.id)).toEqual([]);
+			const { order: stripe } = await store.createFromCart(
+				physicalInput({ orderId: orderId("stripe"), idempotencyKey: idempotencyKey("stripe-key") }),
+			);
+			expect(
+				(
+					await store.acceptCODOrder({
+						orderId: stripe.id,
+						acceptedBy: "staff",
+						idempotencyKey: idempotencyKey("stripe-accept"),
+					})
+				).outcome,
+			).toBe("not_eligible");
+		});
+
 		test("billing snapshot survives reload, caller mutations, and same-key replay", async () => {
 			const { store } = await makeHarness();
 			const billingAddress = {
@@ -1058,4 +1215,21 @@ export function orderStoreContract(
 			expect(after?.reconciliationResolution?.resolvedBy).toBe("alice");
 		});
 	});
+}
+
+function offlineSnapshot(method: "bank_transfer" | "cod") {
+	return {
+		method,
+		instructions: "Pay using the order reference.",
+		paymentReference: "ord-1",
+		paymentDueAt: "2026-07-10T00:15:00.000Z",
+		status: "awaiting" as const,
+		acceptedAt: null,
+		acceptedBy: null,
+		acceptanceKey: null,
+		receivedAt: null,
+		recordedBy: null,
+		receiptRef: null,
+		confirmationKey: null,
+	};
 }

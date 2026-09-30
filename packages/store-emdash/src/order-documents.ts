@@ -79,6 +79,7 @@ import type {
 	IdempotencyKey,
 	OrderAddress,
 	OrderBillingAddress,
+	OfflinePayment,
 	OrderCancellation,
 	OrderEventKind,
 	OrderFulfillment,
@@ -264,6 +265,8 @@ export interface OrderEventDoc {
 	toState: OrderState | null;
 	/** The recorder/canceller when the domain models one, else null. */
 	actor: string | null;
+	fromPaymentReceived?: boolean;
+	toPaymentReceived?: boolean;
 }
 
 /** An outbox entry's lifecycle, mirroring the `order_emails_outbox.status` set. */
@@ -461,6 +464,7 @@ export interface OrderDoc {
 	/** The ship-to snapshot (ADR-0009), or null when none was captured. */
 	shippingAddress: OrderAddress | null;
 	readonly billingAddress?: OrderBillingAddress | null;
+	offlinePayment?: OfflinePayment | null;
 	/** Append-only state-change audit; appended inside the guarded flip. */
 	events: OrderEventDoc[];
 	/** At most one entry per `toState`; first-wins. */
@@ -625,6 +629,7 @@ export function normalizeOrderDoc(doc: OrderDoc): OrderDoc {
 		buyerRefLower: doc.buyerRefLower ?? null,
 		items: doc.items ?? [],
 		billingAddress: doc.billingAddress ?? null,
+		offlinePayment: doc.offlinePayment ?? null,
 		events: doc.events ?? [],
 		emailOutbox: doc.emailOutbox ?? [],
 		payments: doc.payments ?? [],
@@ -669,6 +674,7 @@ export function physicalReservationIds(doc: OrderDoc): string[] {
 export interface PaymentRefDoc {
 	orderId: string;
 	recordedAt: string;
+	offlineReceipt?: { receiptRef: string; amount: number; currency: string };
 }
 
 /**

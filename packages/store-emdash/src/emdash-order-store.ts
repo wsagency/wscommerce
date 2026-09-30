@@ -118,6 +118,12 @@ import {
 	cents,
 	computeRefundCeiling,
 	refundProviderUpdate,
+	codAcceptanceOutcome,
+	offlineReceiptOutcome,
+	offlineProviderRef,
+	type AcceptCODOrderInput,
+	type RecordOfflinePaymentInput,
+	type OfflineOrderStoreResult,
 	type ApplyRefundProviderOutcomeInput,
 	type ApplyRefundProviderOutcomeStoreResult,
 	emailTemplateForState,
@@ -615,6 +621,121 @@ export class EmdashOrderStore implements OrderStore {
 		});
 	}
 
+	async acceptCODOrder(input: AcceptCODOrderInput): Promise<OfflineOrderStoreResult> {
+		return this.#casOrder<OfflineOrderStoreResult>("acceptCODOrder", async () => {
+			const current = await this.#orders.getVersioned(input.orderId);
+			if (current === null) return casDone({ outcome: "order_not_found", order: null });
+			const doc = normalizeOrderDoc(current.value);
+			const now = this.#clock.now().toISOString();
+			const outcome = codAcceptanceOutcome(toOrder(doc), now);
+			if (outcome !== "applied") return casDone({ outcome, order: toOrder(doc) });
+			let next: OrderDoc = this.#flipped(doc, {
+				fromState: "pending",
+				toState: "processing",
+				enqueueEmail: false,
+				actor: input.acceptedBy,
+				now,
+			});
+			next = {
+				...next,
+				offlinePayment: {
+					...doc.offlinePayment!,
+					status: "accepted",
+					acceptedAt: now,
+					acceptedBy: input.acceptedBy,
+					acceptanceKey: input.idempotencyKey,
+				},
+				holdsCommitted: newHoldIntent(physicalReservationIds(doc), now),
+			};
+			next.holdsPendingAt = computeHoldsPendingAt(next);
+			const written = await this.#orders.compareAndSet(input.orderId, current.revision, next);
+			if (!written.applied) return CAS_RETRY;
+			await this.#reportTransition(next, "pending", "processing");
+			return casDone({ outcome: "applied", order: toOrder(next) });
+		});
+	}
+
+	async recordOfflinePayment(input: RecordOfflinePaymentInput): Promise<OfflineOrderStoreResult> {
+		const loaded = await this.getById(input.orderId);
+		if (loaded === null) return { outcome: "order_not_found", order: null };
+		const initial = offlineReceiptOutcome(loaded, input, this.#clock.now().toISOString());
+		if (initial !== "applied") return { outcome: initial, order: loaded };
+		// Durable global claims precede payment. A crash leaves the same receipt/key
+		// bound to this order; a replay resumes the one guarded order write.
+		for (const [key, conflict] of [
+			[offlineProviderRef(input.receiptRef), "receipt_conflict"],
+			[`offline-key:${input.idempotencyKey}`, "key_conflict"],
+		] as const) {
+			const value: PaymentRefDoc = {
+				orderId: input.orderId,
+				recordedAt: this.#clock.now().toISOString(),
+				offlineReceipt: {
+					receiptRef: input.receiptRef,
+					amount: input.amount,
+					currency: input.currency,
+				},
+			};
+			const claim = await this.#paymentRefs.compareAndSet(key, null, value);
+			if (!claim.applied) {
+				const held = await this.#paymentRefs.get(key);
+				if (
+					held === null ||
+					held.orderId !== input.orderId ||
+					held.offlineReceipt?.receiptRef !== input.receiptRef ||
+					held.offlineReceipt.amount !== input.amount ||
+					held.offlineReceipt.currency !== input.currency
+				)
+					return { outcome: conflict, order: await this.getById(input.orderId) };
+			}
+		}
+		return this.#casOrder<OfflineOrderStoreResult>("recordOfflinePayment", async () => {
+			const current = await this.#orders.getVersioned(input.orderId);
+			if (current === null) return casDone({ outcome: "order_not_found", order: null });
+			const doc = normalizeOrderDoc(current.value);
+			const now = this.#clock.now().toISOString();
+			const outcome = offlineReceiptOutcome(toOrder(doc), input, now);
+			if (outcome !== "applied") return casDone({ outcome, order: toOrder(doc) });
+			const toState = doc.state === "pending" ? "paid" : doc.state;
+			let next: OrderDoc = this.#flipped(doc, {
+				fromState: doc.state,
+				toState,
+				enqueueEmail: toState === "paid",
+				actor: input.recordedBy,
+				now,
+				paymentReceived: true,
+			});
+			next = {
+				...next,
+				offlinePayment: {
+					...doc.offlinePayment!,
+					status: "received",
+					receivedAt: now,
+					recordedBy: input.recordedBy,
+					receiptRef: input.receiptRef,
+					confirmationKey: input.idempotencyKey,
+				},
+				payments: [
+					...doc.payments,
+					{
+						gateway: doc.offlinePayment!.method,
+						providerRef: offlineProviderRef(input.receiptRef),
+						amount: input.amount,
+						currency: input.currency,
+						status: "succeeded",
+						recordedAt: now,
+					},
+				],
+				holdsCommitted: doc.holdsCommitted ?? newHoldIntent(physicalReservationIds(doc), now),
+			};
+			next.holdsPendingAt = computeHoldsPendingAt(next);
+			const written = await this.#orders.compareAndSet(input.orderId, current.revision, next);
+			if (!written.applied) return CAS_RETRY;
+			if (toState === "paid") await this.#recordOutboxLocator(next, "paid");
+			await this.#reportTransition(next, doc.state, toState);
+			return casDone({ outcome: "applied", order: toOrder(next) });
+		});
+	}
+
 	// -- the hold brackets' completions ---------------------------------------
 
 	/**
@@ -687,7 +808,13 @@ export class EmdashOrderStore implements OrderStore {
 			return { completed: false, lost: [] };
 		}
 		const lost: string[] = [];
-		if (doc.state === "paid") {
+		if (
+			doc.state === "paid" ||
+			(doc.offlinePayment !== null &&
+				doc.offlinePayment !== undefined &&
+				doc.offlinePayment.status !== "awaiting" &&
+				["processing", "shipped", "delivered", "completed"].includes(doc.state))
+		) {
 			for (const reservationId of intent.reservationIds) {
 				try {
 					await this.#inventory.commit(reservationId);
@@ -1343,6 +1470,7 @@ export class EmdashOrderStore implements OrderStore {
 			},
 			shippingAddress: input.shippingAddress ?? null,
 			billingAddress: input.billingAddress ? { ...input.billingAddress } : null,
+			offlinePayment: input.offlinePayment ? { ...input.offlinePayment } : null,
 			events: [],
 			emailOutbox: [],
 			payments: [],
@@ -1667,6 +1795,12 @@ export class EmdashOrderStore implements OrderStore {
 			// The guard, as the SQL's `WHERE id = :id AND state = :fromState` was: a
 			// mismatch is a 0-row no-op — no state change, NO event, no outbox entry.
 			if (doc.state !== input.fromState) return casDone<FlipOutcome>({ won: false, doc });
+			if (
+				input.toState === "paid" &&
+				doc.offlinePayment &&
+				doc.offlinePayment.status !== "received"
+			)
+				return casDone<FlipOutcome>({ won: false, doc });
 			if (input.holdExpiresBefore !== undefined && doc.holdExpiresAt > input.holdExpiresBefore) {
 				return casDone<FlipOutcome>({ won: false, doc });
 			}
@@ -1727,6 +1861,7 @@ export class EmdashOrderStore implements OrderStore {
 			enqueueEmail: boolean;
 			actor: string | null;
 			now: string;
+			paymentReceived?: boolean;
 		},
 	): OrderDoc {
 		const next: OrderDoc = {
@@ -1743,6 +1878,13 @@ export class EmdashOrderStore implements OrderStore {
 					fromState: input.fromState,
 					toState: input.toState,
 					actor: input.actor,
+					...(doc.offlinePayment
+						? {
+								fromPaymentReceived: doc.offlinePayment.status === "received",
+								toPaymentReceived:
+									input.paymentReceived ?? doc.offlinePayment.status === "received",
+							}
+						: {}),
 				},
 			],
 			// First-wins per `(orderId, toState)` — NOT per event.
@@ -2171,6 +2313,9 @@ export class EmdashOrderStore implements OrderStore {
 			const transitionRevision = doc.events.filter(
 				(event) => event.fromState === fromState && event.toState === toState,
 			).length;
+			const latestEvent = doc.events
+				.filter((event) => event.fromState === fromState && event.toState === toState)
+				.at(-1);
 			await this.#reporting.recordOrderEvent({
 				kind: "transition",
 				orderId: doc.orderId,
@@ -2179,6 +2324,13 @@ export class EmdashOrderStore implements OrderStore {
 				fromState,
 				toState,
 				...(transitionRevision > 1 ? { transitionRevision } : {}),
+				...(doc.offlinePayment
+					? {
+							fromPaymentReceived: latestEvent?.fromPaymentReceived ?? false,
+							toPaymentReceived:
+								latestEvent?.toPaymentReceived ?? doc.offlinePayment.status === "received",
+						}
+					: {}),
 				orderTotalCents: doc.totals.total,
 			});
 		} catch {
@@ -2631,6 +2783,7 @@ function toOrder(doc: OrderDoc): Order {
 		},
 		shippingAddress: doc.shippingAddress,
 		billingAddress: doc.billingAddress ? { ...doc.billingAddress } : null,
+		offlinePayment: doc.offlinePayment ? { ...doc.offlinePayment } : null,
 		reconciliationFlag: doc.reconciliationFlag,
 		reconciliationResolution: doc.reconciliationResolution,
 		fulfillment: doc.fulfillment,
