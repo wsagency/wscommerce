@@ -1,0 +1,38 @@
+{
+	"name": "@emdash-commerce/invoicing",
+	"version": "0.1.0",
+	"description": "Immutable commerce invoice snapshots, durable jobs, Solo and e-racuni adapters",
+	"license": "MIT",
+	"files": [
+		"dist"
+	],
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"publishConfig": {
+		"exports": {
+			".": {
+				"types": "./dist/index.d.mts",
+				"default": "./dist/index.mjs"
+			}
+		}
+	},
+	"scripts": {
+		"build": "tsdown"
+	},
+	"dependencies": {
+		"@otta-sh/domain": "workspace:*",
+		"@otta-sh/store-emdash": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/better-sqlite3": "catalog:",
+		"@types/node": "catalog:",
+		"better-sqlite3": "catalog:",
+		"emdash": "1.0.1",
+		"kysely": "catalog:",
+		"tsdown": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}

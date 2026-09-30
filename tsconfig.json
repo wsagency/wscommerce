@@ -6,6 +6,7 @@
 		{ "path": "packages/store-emdash" },
 		{ "path": "packages/payments-stripe" },
 		{ "path": "packages/payments-x402" },
+		{ "path": "packages/invoicing" },
 		{ "path": "packages/plugin" },
 		{ "path": "packages/admin-react" }
 	]
