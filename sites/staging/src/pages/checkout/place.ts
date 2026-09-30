@@ -106,6 +106,66 @@ function readShippingAddress(form: FormData, zoned: boolean): AddressResult {
 	return { ok: true, address };
 }
 
+function equivalentRegion(code: string, value: string | undefined): string {
+	return (value ?? "").toUpperCase().replace(new RegExp(`^${code}-`), "");
+}
+
+function readBillingAddress(
+	form: FormData,
+	shipping: Record<string, string> | undefined,
+): AddressResult {
+	const required = formString(form.get("billingRequired")) === "true";
+	const sameAsShipping = formString(form.get("billingSameAsShipping")) === "true";
+	const country = formString(form.get("billingCountry"))?.toUpperCase();
+	const region = formString(form.get("billingRegion"))?.toUpperCase();
+	const typed = TYPED_ADDRESS_FIELDS.map(
+		(field) =>
+			[field, formString(form.get(`billing${field[0]!.toUpperCase()}${field.slice(1)}`))] as const,
+	);
+	const extras = ["company", "taxNumber", "vatId"] as const;
+	const filled = typed.filter(([, value]) => value !== undefined);
+	if (
+		!sameAsShipping &&
+		!required &&
+		filled.length === 0 &&
+		country === undefined &&
+		extras.every(
+			(field) =>
+				formString(form.get(`billing${field[0]!.toUpperCase()}${field.slice(1)}`)) === undefined,
+		)
+	)
+		return { ok: true, address: undefined };
+	if (country === undefined || !COUNTRY_SHAPE.test(country))
+		return { ok: false, error: "INVALID_BILLING_ADDRESS", partial: true };
+	if (region !== undefined && !isCodeShapedRegion(region))
+		return { ok: false, error: "TAX_REGION_CODE_REQUIRED", partial: false };
+	let address: Record<string, string>;
+	if (sameAsShipping) {
+		if (
+			shipping === undefined ||
+			shipping["country"]?.toUpperCase() !== country ||
+			equivalentRegion(country, shipping["region"]) !== equivalentRegion(country, region)
+		)
+			return { ok: false, error: "INVALID_BILLING_ADDRESS", partial: true };
+		address = { ...shipping, country, ...(region ? { region } : {}) };
+	} else {
+		if (filled.length !== typed.length)
+			return { ok: false, error: "INVALID_BILLING_ADDRESS", partial: true };
+		address = Object.fromEntries(typed) as Record<string, string>;
+		address["country"] = country;
+		if (region !== undefined) address["region"] = region;
+		for (const field of OPTIONAL_ADDRESS_FIELDS) {
+			const value = formString(form.get(`billing${field[0]!.toUpperCase()}${field.slice(1)}`));
+			if (value !== undefined) address[field] = value;
+		}
+	}
+	for (const field of extras) {
+		const value = formString(form.get(`billing${field[0]!.toUpperCase()}${field.slice(1)}`));
+		if (value !== undefined) address[field] = value;
+	}
+	return { ok: true, address };
+}
+
 export const POST: APIRoute = async (context) => {
 	// CSRF FIRST — before the body is even read. emdash force-disables Astro's
 	// checkOrigin and its replacement covers only /_emdash/api/* (ADR-0006), so
@@ -142,13 +202,23 @@ export const POST: APIRoute = async (context) => {
 		...(zoned
 			? shapedDestination(formString(form.get("country")), formString(form.get("region")))
 			: {}),
+		...(() => {
+			const d = shapedDestination(
+				formString(form.get("billingCountry")),
+				formString(form.get("billingRegion")),
+			);
+			return { billingCountry: d.country, billingRegion: d.region };
+		})(),
 	};
+	const paymentMethod = formString(form.get("paymentMethod")) ?? "stripe";
+	if (!["stripe", "x402", "bank_transfer", "cod"].includes(paymentMethod))
+		return new Response("Bad request: unsupported payment method", { status: 400 });
 
 	// No publishable key ⇒ NO ORDER (§1.7). The review page already hides the
 	// button, but this is the server-side half of that promise: creating an
 	// order would hold stock for 15 minutes against a payment that structurally
 	// cannot happen. (A malformed key never reaches here — it fails the build.)
-	if (STRIPE_PUBLISHABLE_KEY === undefined) {
+	if (paymentMethod === "stripe" && STRIPE_PUBLISHABLE_KEY === undefined) {
 		return context.redirect(placeFailurePath(STRIPE_NOT_CONFIGURED, selection), 303);
 	}
 
@@ -190,6 +260,8 @@ export const POST: APIRoute = async (context) => {
 			303,
 		);
 	}
+	const billing = readBillingAddress(form, shipping.address);
+	if (!billing.ok) return context.redirect(placeFailurePath(billing.error, selection), 303);
 
 	const result = await dispatchOttaRoute<CheckoutPlaceRouteResult>(
 		routeDispatcher(context),
@@ -198,9 +270,11 @@ export const POST: APIRoute = async (context) => {
 			cartId,
 			buyerRef: email,
 			idempotencyKey,
+			...(formString(form.get("paymentMethod")) !== undefined ? { paymentMethod } : {}),
 			...(couponCode !== undefined ? { couponCode } : {}),
 			...(shippingMethodId !== undefined ? { shippingMethodId } : {}),
 			...(shipping.address !== undefined ? { shippingAddress: shipping.address } : {}),
+			...(billing.address !== undefined ? { billingAddress: billing.address } : {}),
 		},
 		context.url,
 	);

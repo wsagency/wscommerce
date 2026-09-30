@@ -13,10 +13,34 @@ import {
 	readCouponParam,
 	readDestinationParams,
 	readMethodParam,
+	readBillingDestinationParams,
 	shapedDestination,
 } from "../src/lib/checkout-selection.js";
 
 const at = (search: string) => new URL(`http://localhost:4321/checkout${search}`);
+
+test("billing review carries only shaped country/subdivision and tax refusal drops only that jurisdiction", () => {
+	expect(
+		readBillingDestinationParams(at("?billingCountry=us&billingRegion=ca&billingCompany=Private")),
+	).toEqual({ destination: { country: "US", region: "CA" } });
+	expect(
+		readBillingDestinationParams(at("?billingCountry=US&billingRegion=California")),
+	).toMatchObject({ rejected: { reason: "TAX_REGION_CODE_REQUIRED" } });
+	expect(readBillingDestinationParams(at("?billingCountry=street-address"))).toEqual({});
+	const selection = {
+		country: "HR",
+		shippingMethodId: "post",
+		billingCountry: "DE",
+		billingRegion: "BE",
+		couponCode: "SAVE",
+	};
+	expect(checkoutPath(selection)).toContain("billingCountry=DE&billingRegion=BE");
+	const retry = placeFailurePath("TAX_DESTINATION_NOT_MATCHED", selection);
+	expect(retry).not.toContain("billingCountry");
+	expect(retry).toContain("country=HR");
+	expect(retry).toContain("method=post");
+	expect(retry).toContain("coupon=SAVE");
+});
 
 describe("readCouponParam", () => {
 	test("trims the code and KEEPS its case — coupon lookup is case-sensitive", () => {

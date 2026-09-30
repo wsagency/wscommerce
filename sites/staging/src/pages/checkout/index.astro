@@ -52,6 +52,7 @@ import {
 	readCouponParam,
 	readDestinationParams,
 	readMethodParam,
+	readBillingDestinationParams,
 } from "../../lib/checkout-selection.js";
 import { countryOptions } from "../../lib/countries.js";
 import { SITE_LOCALE } from "../../lib/site-locale.js";
@@ -70,6 +71,10 @@ const coupon = readCouponParam(Astro.url);
  *  was rendered for drops the method chosen for the old one. */
 const destinationRead = readDestinationParams(Astro.url);
 const method = destinationRead.methodDropped ? undefined : readMethodParam(Astro.url);
+const billingRead = readBillingDestinationParams(Astro.url);
+const reviewedTaxDestination =
+	billingRead.destination ??
+	(billingRead.rejected === undefined ? destinationRead.destination : undefined);
 
 const result =
 	cartId !== undefined && cartId.length > 0
@@ -84,6 +89,7 @@ const result =
 						? { destination: destinationRead.destination }
 						: {}),
 					...(method !== undefined ? { shippingMethodId: method } : {}),
+					...(reviewedTaxDestination !== undefined ? { taxDestination: reviewedTaxDestination } : {}),
 				},
 				Astro.url,
 			)
@@ -106,10 +112,10 @@ if (redirect !== null) {
 const summary = result as Extract<CheckoutSummaryRouteResult, { ok: true }>;
 const { lines, totals } = summary;
 
-/** No key ⇒ no payment step, and NO order is created: creating one would hold
- *  stock for a payment the buyer cannot make. (A key that is present but
- *  malformed never reaches here — it fails the build; see stripe-config.ts.) */
-const paymentConfigured = STRIPE_PUBLISHABLE_KEY !== undefined;
+/** The plugin offers only store-enabled methods. Card also needs the site's key. */
+const paymentMethods = (summary.paymentMethods ?? [{ id: "stripe", label: "Card" }]).filter(
+	method => method.id !== "stripe" || STRIPE_PUBLISHABLE_KEY !== undefined,
+);
 
 /** The dead-cart trap's exit, offered only where it applies. */
 const checkedOut = error === "CART_CHECKED_OUT";
@@ -119,6 +125,8 @@ const checkedOut = error === "CART_CHECKED_OUT";
  *  `expireOrders` does not reopen the cart, so a pay button would lead nowhere. */
 const locked = summary.orderCreated ? summary.order : null;
 const ended = locked?.phase === "ended";
+const lockedOffline = locked?.paymentMethod === "bank_transfer" || locked?.paymentMethod === "cod";
+const paymentConfigured = paymentMethods.length > 0 || lockedOffline;
 
 /** The coupon refusal to explain, from the plugin or from the cap check above.
  *  Its code goes back into the field so a typo can be fixed. */
@@ -130,6 +138,14 @@ const destinationError = summary.selectionErrors.destination ?? destinationRead.
 
 /** The destination the totals were priced for, or null. */
 const destination = summary.selection.destination;
+const taxDestination = summary.selection.taxDestination ?? reviewedTaxDestination ?? null;
+const billingCountry = taxDestination?.country ?? billingRead.rejected?.country ?? "";
+const billingRegion = taxDestination?.region ?? billingRead.rejected?.region ?? "";
+const billingError = summary.selectionErrors.taxDestination ?? billingRead.rejected ?? null;
+const billingReady =
+	locked !== null ||
+	summary.billingRequired !== true ||
+	(billingCountry.length === 2 && billingError === null);
 /** What the delivery form's fields show: the priced destination, else what was
  *  typed and refused (so a typo can be fixed). */
 const countryValue = destination?.country ?? destinationRead.rejected?.country ?? "";
@@ -152,7 +168,9 @@ const chosenOption =
 	null;
 
 /** Why the place button is not offered yet (unlocked only). */
-const notReadyCopy = summary.shipping.noOptions
+const notReadyCopy = !billingReady
+	? "Choose your billing country and state or province above so we can calculate your total."
+	: summary.shipping.noOptions
 	? cartErrorMessage("SHIPPING_METHOD_REQUIRED")
 	: summary.shipping.status === "matched"
 		? "Choose a delivery option above to continue."
@@ -246,6 +264,8 @@ const sumRows = [
 			{
 				!summary.orderCreated && (
 					<form method="GET" action="/checkout" class="coupon">
+						{billingCountry && <input type="hidden" name="billingCountry" value={billingCountry} />}
+						{billingRegion && <input type="hidden" name="billingRegion" value={billingRegion} />}
 						{/* The delivery choice rides along, so applying a coupon keeps it. */}
 						{destination !== null && (
 							<input type="hidden" name="country" value={destination.country} />
@@ -299,6 +319,8 @@ const sumRows = [
 			{
 				showDelivery && (
 					<form method="GET" action="/checkout" class="delivery" id="delivery">
+						{billingCountry && <input type="hidden" name="billingCountry" value={billingCountry} />}
+						{billingRegion && <input type="hidden" name="billingRegion" value={billingRegion} />}
 						<fieldset class="group">
 							<legend class="u-label head-label">Delivery</legend>
 							{destinationError !== null && (
@@ -374,12 +396,50 @@ const sumRows = [
 			}
 
 			{
+				locked === null && summary.billingRequired && (
+				<form method="GET" action="/checkout" class="delivery" id="billing-destination">
+					<fieldset class="group">
+						<legend class="u-label head-label">Billing country</legend>
+						<p class="note group-note">
+							Choose this before entering your details. Tax is calculated for your billing address.
+						</p>
+						{billingError !== null && <Notice>{cartErrorMessage(billingError.reason)}</Notice>}
+						{destination !== null && <input type="hidden" name="country" value={destination.country} />}
+						{destination?.region && <input type="hidden" name="region" value={destination.region} />}
+						{summary.selection.shippingMethodId !== null && <input type="hidden" name="method" value={summary.selection.shippingMethodId} />}
+						{summary.selection.couponCode !== null && <input type="hidden" name="coupon" value={summary.selection.couponCode} />}
+						<div class="fields">
+							<label class="field">
+								<span class="u-label">Country</span>
+								<select name="billingCountry" autocomplete="billing country" required>
+									<option value="">Choose a country…</option>
+									{countries.map(option => (
+										<option value={option.code} selected={option.code === billingCountry}>
+											{option.label}
+										</option>
+									))}
+								</select>
+							</label>
+							<label class="field">
+								<span class="u-label">State / province code</span>
+								<input type="text" name="billingRegion" autocomplete="billing address-level1"
+									maxlength="6" pattern="([A-Za-z]{2}-)?[A-Za-z0-9]{1,3}" value={billingRegion} />
+							</label>
+						</div>
+						<div><button type="submit" class="u-btn u-btn-ghost">Review billing total</button></div>
+					</fieldset>
+				</form>
+				)
+			}
+
+			{
 				!ended && (
 					<form method="POST" action="/checkout/place" class="details">
 						{/* STABLE per cart (checkout:<cartId>), so a reload or a double-submit
 						    replays into the SAME order and the same PaymentIntent instead of
 						    minting a second order the CART_CHECKED_OUT fence would reject. */}
 						<input type="hidden" name="idempotencyKey" value={summary.idempotencyKey} />
+						{lockedOffline && <input type="hidden" name="paymentMethod" value={locked!.paymentMethod} />}
 						{/* Exactly the coupon the totals beside this form were priced with;
 						    the place re-checks it. Absent when none applied. */}
 						{summary.selection.couponCode !== null && (
@@ -512,6 +572,53 @@ const sumRows = [
 						}
 
 						{
+							locked === null && summary.billingRequired && billingReady && (
+								<fieldset class="group">
+									<legend class="u-label head-label">Billing address</legend>
+									<input type="hidden" name="billingRequired" value="true" />
+									<input type="hidden" name="billingCountry" value={billingCountry} />
+									{billingRegion && <input type="hidden" name="billingRegion" value={billingRegion} />}
+									<p class="note group-note">Billing in {countryName(billingCountry)}{billingRegion && <>, {billingRegion}</>} — <a href="#billing-destination">change</a>. These details are saved with your order.</p>
+									{summary.requiresShipping && <label class="method"><input type="checkbox" name="billingSameAsShipping" value="true" checked={billingCountry === destination?.country && billingRegion === (destination?.region ?? "")} /><span>Use my complete delivery address for billing. It must match the billing country and state reviewed above.</span></label>}
+									<p class="note group-note">Enter a separate billing address below if you are not using the delivery address.</p>
+									<div class="fields">
+										<label class="field span2"><span class="u-label">Full name</span><input type="text" name="billingName" autocomplete="billing name" maxlength="200" required={!summary.requiresShipping} /></label>
+										<label class="field span2"><span class="u-label">Address line 1</span><input type="text" name="billingLine1" autocomplete="billing address-line1" maxlength="200" required={!summary.requiresShipping} /></label>
+										<label class="field span2"><span class="u-label">Address line 2</span><input type="text" name="billingLine2" autocomplete="billing address-line2" maxlength="200" /></label>
+										<label class="field"><span class="u-label">City</span><input type="text" name="billingCity" autocomplete="billing address-level2" maxlength="120" required={!summary.requiresShipping} /></label>
+										<label class="field"><span class="u-label">Postal code</span><input type="text" name="billingPostalCode" autocomplete="billing postal-code" maxlength="32" required={!summary.requiresShipping} /></label>
+										<label class="field span2"><span class="u-label">Company (optional)</span><input type="text" name="billingCompany" autocomplete="billing organization" maxlength="200" /></label>
+										<label class="field"><span class="u-label">Tax number (optional)</span><input type="text" name="billingTaxNumber" maxlength="64" /></label>
+										<label class="field"><span class="u-label">VAT ID (optional)</span><input type="text" name="billingVatId" maxlength="64" /></label>
+									</div>
+								</fieldset>
+							)
+						}
+
+						{
+							locked === null && paymentMethods.length > 0 && (
+								<fieldset class="group">
+									<legend class="u-label head-label">Payment method</legend>
+									<div class="methods" role="radiogroup" aria-label="Payment methods">
+										{paymentMethods.map((method, index) => (
+											<label class="method">
+												<input type="radio" name="paymentMethod" value={method.id} checked={index === 0} required />
+												<span>{method.label}</span>
+											</label>
+										))}
+									</div>
+									{paymentMethods.some(method => method.id !== "stripe") && (
+										<p class="note group-note">
+											Bank transfer stays awaiting payment until the store records its receipt.
+											Cash on delivery is paid when collected; acceptance for dispatch does not
+											mean payment was received.
+										</p>
+									)}
+								</fieldset>
+							)
+						}
+
+						{
 							chosenOption !== null && locked === null && (
 								<p class="note delivery-line">
 									Delivery: {chosenOption.label} ({chosenOption.price})
@@ -521,10 +628,12 @@ const sumRows = [
 
 						{
 							paymentConfigured ? (
-								summary.readyToPlace ? (
+								lockedOffline ? (
+									<p><a class="u-btn" href={`/orders/${encodeURIComponent(locked!.id)}`}>View order instructions</a></p>
+								) : summary.readyToPlace && billingReady ? (
 									<div>
 										<button type="submit" class="u-btn">
-											Continue to payment
+											{locked !== null || paymentMethods.every(method => method.id === "stripe") ? "Continue to payment" : "Place order"}
 										</button>
 									</div>
 								) : (
@@ -538,9 +647,8 @@ const sumRows = [
 									Card payment isn't set up on this store, so this order can't be paid right now.
 								</Notice>
 							) : (
-								/* Lead QUOTED from error-messages.ts's STRIPE_NOT_CONFIGURED
-								   rather than restated here (§10). */
-								<Notice lead={cartErrorMessage("STRIPE_NOT_CONFIGURED")}>
+								/* No configured method is payable from this storefront. */
+								<Notice lead="Payment is not set up on this store.">
 									This order can't be placed. Nothing has been charged and your cart is unchanged.
 								</Notice>
 							)

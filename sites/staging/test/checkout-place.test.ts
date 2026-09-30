@@ -170,6 +170,115 @@ const VALID_FORM = {
 	idempotencyKey: "checkout:cart-existing",
 };
 
+describe("offline checkout and frozen billing", () => {
+	const billing = {
+		billingRequired: "true",
+		billingName: "Buyer",
+		billingLine1: "Billing street",
+		billingCity: "Zagreb",
+		billingPostalCode: "10000",
+		billingCountry: "HR",
+		billingCompany: "Acme",
+		billingTaxNumber: "TAX123",
+		billingVatId: "VAT123",
+	};
+	const offline = {
+		...PLACED,
+		clientAction: {
+			kind: "offline_instructions",
+			method: "bank_transfer",
+			instructions: "Local test instructions",
+			paymentReference: "order-1",
+			paymentDueAt: "2026-10-03T10:00:00.000Z",
+		},
+	};
+	test("bank transfer needs no Stripe key, forwards immutable billing and redirects to its pending instructions without a payment cookie", async () => {
+		stripeKey.value = undefined;
+		const { handler, calls } = makeHandler(offline);
+		const { context, cookieOps } = makeContext(
+			{ ...VALID_FORM, ...billing, paymentMethod: "bank_transfer" },
+			handler,
+		);
+		const response = await PLACE_POST(context);
+		expect(response.headers.get("location")).toBe("/orders/order-1");
+		expect(calls[0]?.body).toMatchObject({
+			paymentMethod: "bank_transfer",
+			billingAddress: {
+				name: "Buyer",
+				line1: "Billing street",
+				city: "Zagreb",
+				postalCode: "10000",
+				country: "HR",
+				company: "Acme",
+				taxNumber: "TAX123",
+				vatId: "VAT123",
+			},
+		});
+		expect(cookieOps.filter((op) => op.name === CHECKOUT_COOKIE_NAME)).toEqual([]);
+	});
+	test("billing marked required cannot silently lose a partial address and redirects only coarse jurisdiction", async () => {
+		const { handler, calls } = makeHandler(offline);
+		const { context } = makeContext(
+			{ ...VALID_FORM, ...billing, billingCity: "", paymentMethod: "bank_transfer" },
+			handler,
+		);
+		const response = await PLACE_POST(context);
+		expect(response.headers.get("location")).toContain("error=INVALID_BILLING_ADDRESS");
+		expect(response.headers.get("location")).toContain("billingCountry=HR");
+		expect(response.headers.get("location")).not.toMatch(/Buyer|Billing.street|TAX123|VAT123|Acme/);
+		expect(calls).toEqual([]);
+	});
+	test("same-as-shipping is an explicit buyer choice and copies the complete address only at the reviewed billing jurisdiction", async () => {
+		const { handler, calls } = makeHandler(offline);
+		const { context } = makeContext(
+			{
+				...VALID_FORM,
+				billingRequired: "true",
+				billingSameAsShipping: "true",
+				billingCountry: "HR",
+				billingCompany: "Acme",
+				name: "Buyer",
+				line1: "Shipping street",
+				city: "Zagreb",
+				postalCode: "10000",
+				country: "HR",
+				paymentMethod: "cod",
+			},
+			handler,
+		);
+		await PLACE_POST(context);
+		expect(calls[0]?.body).toMatchObject({
+			paymentMethod: "cod",
+			billingAddress: { name: "Buyer", line1: "Shipping street", country: "HR", company: "Acme" },
+		});
+		const other = makeContext(
+			{
+				...VALID_FORM,
+				billingRequired: "true",
+				billingSameAsShipping: "true",
+				billingCountry: "DE",
+				name: "Buyer",
+				line1: "Shipping street",
+				city: "Zagreb",
+				postalCode: "10000",
+				country: "HR",
+				paymentMethod: "cod",
+			},
+			handler,
+		);
+		const response = await PLACE_POST(other.context);
+		expect(response.headers.get("location")).toContain("error=INVALID_BILLING_ADDRESS");
+		expect(calls).toHaveLength(1);
+	});
+	test("an unknown payment method is refused before any order dispatch", async () => {
+		const { handler, calls } = makeHandler();
+		const { context } = makeContext({ ...VALID_FORM, paymentMethod: "paid" }, handler);
+		const response = await PLACE_POST(context);
+		expect(response.status).toBe(400);
+		expect(calls).toEqual([]);
+	});
+});
+
 describe("6a — CSRF: rejectCrossOrigin is the FIRST statement", () => {
 	test("a cross-origin POST /checkout/place is 403 and the plugin dispatcher is NEVER called", async () => {
 		const { handler, calls } = makeHandler();

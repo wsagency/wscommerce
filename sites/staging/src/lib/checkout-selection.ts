@@ -68,6 +68,8 @@ export interface CheckoutUrlSelection {
 	country?: string | undefined;
 	region?: string | undefined;
 	shippingMethodId?: string | undefined;
+	billingCountry?: string | undefined;
+	billingRegion?: string | undefined;
 }
 
 /**
@@ -86,6 +88,8 @@ export function checkoutPath(
 	put(COUNTRY_PARAM, options.country);
 	put(REGION_PARAM, options.region);
 	put(METHOD_PARAM, options.shippingMethodId);
+	put("billingCountry", options.billingCountry);
+	put("billingRegion", options.billingRegion);
 	put("error", options.error);
 	const query = params.toString();
 	return query.length > 0 ? `/checkout?${query}` : "/checkout";
@@ -159,6 +163,19 @@ export function readDestinationParams(url: URL): DestinationRead {
 	return { destination: { country, region: region.toUpperCase() }, methodDropped };
 }
 
+/** Billing country/subdivision are the only billing values allowed in review URLs. */
+export function readBillingDestinationParams(url: URL): {
+	destination?: { country: string; region?: string };
+	rejected?: { reason: "TAX_REGION_CODE_REQUIRED"; country: string; region: string };
+} {
+	const country = (url.searchParams.get("billingCountry") ?? "").trim().toUpperCase();
+	const region = (url.searchParams.get("billingRegion") ?? "").trim();
+	if (!COUNTRY_SHAPE.test(country)) return {};
+	if (region && !isCodeShapedRegion(region))
+		return { rejected: { reason: "TAX_REGION_CODE_REQUIRED", country, region } };
+	return { destination: { country, ...(region ? { region: region.toUpperCase() } : {}) } };
+}
+
 /** The plugin's own id bound: printable ASCII, no whitespace, 1–200. */
 const METHOD_ID = /^[\x21-\x7e]{1,200}$/;
 
@@ -205,11 +222,17 @@ export function isMethodFailure(token: string): boolean {
 export function placeFailurePath(token: string, selection: CheckoutUrlSelection): string {
 	const dropDestination = isDestinationFailure(token);
 	const dropMethod = dropDestination || isMethodFailure(token);
+	const dropBillingDestination =
+		token === "INVALID_TAX_DESTINATION" ||
+		token === "TAX_REGION_CODE_REQUIRED" ||
+		token === "TAX_DESTINATION_NOT_MATCHED";
 	return checkoutPath({
 		couponCode: isCouponFailure(token) ? undefined : selection.couponCode,
 		country: dropDestination ? undefined : selection.country,
 		region: dropDestination ? undefined : selection.region,
 		shippingMethodId: dropMethod ? undefined : selection.shippingMethodId,
+		billingCountry: dropBillingDestination ? undefined : selection.billingCountry,
+		billingRegion: dropBillingDestination ? undefined : selection.billingRegion,
 		error: token,
 	});
 }

@@ -40,6 +40,27 @@ const ORDER = read("pages/orders/[orderId].astro");
 const POLL_RIBBON = read("components/PollRibbon.astro");
 
 describe("the /checkout form contract", () => {
+	test("billing fields and explicit method selection keep the reviewed jurisdiction in the place form", () => {
+		for (const name of [
+			"billingCountry",
+			"billingRegion",
+			"billingRequired",
+			"billingName",
+			"billingLine1",
+			"billingCity",
+			"billingPostalCode",
+			"billingCompany",
+			"billingTaxNumber",
+			"billingVatId",
+			"billingSameAsShipping",
+			"paymentMethod",
+		])
+			expect(REVIEW).toContain(`name="${name}"`);
+		expect(REVIEW).toContain("taxDestination: reviewedTaxDestination");
+		expect(REVIEW).toContain("summary.paymentMethods");
+		expect(REVIEW).toContain("lockedOffline");
+		expect(REVIEW).toContain("View order instructions");
+	});
 	test("posts to the place endpoint, by POST", () => {
 		expect(REVIEW).toMatch(/<form[^>]*method="POST"[^>]*action="\/checkout\/place"/);
 	});
@@ -334,8 +355,8 @@ describe("/checkout — delivery (ADR-0021)", () => {
 		expect(PLACE).toMatch(/Delivery: \{chosenOption\.label\} \(\{chosenOption\.price\}\)/);
 	});
 
-	test("the submit is gated on readyToPlace — the plugin's one answer, locked or not", () => {
-		const gate = PLACE.indexOf("summary.readyToPlace ?");
+	test("the submit requires the plugin's readyToPlace answer and a reviewed billing destination", () => {
+		const gate = PLACE.indexOf("summary.readyToPlace && billingReady ?");
 		const button = PLACE.indexOf("Continue to payment");
 		expect(gate, "no readyToPlace gate").toBeGreaterThan(-1);
 		expect(gate).toBeLessThan(button);

@@ -56,6 +56,8 @@ const SELECTION_MESSAGES = {
 >;
 
 const MESSAGES: Record<string, string> = {
+	PAYMENT_METHOD_NOT_AVAILABLE:
+		"That payment method is not available for this order. Choose another method or contact the store.",
 	INVALID_VARIANT: "Choose an available variant of this product.",
 	INVALID_BILLING_ADDRESS: "Please check your billing address.",
 	MISSING_BILLING_ADDRESS: "Enter your billing address to continue.",

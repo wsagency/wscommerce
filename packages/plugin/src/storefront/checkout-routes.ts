@@ -177,6 +177,7 @@ export interface CheckoutLockedOrderView {
 	id: string;
 	state: string;
 	phase: LockedCheckoutPhase;
+	paymentMethod?: "bank_transfer" | "cod";
 }
 
 interface CheckoutSummaryViewBase {
@@ -377,11 +378,9 @@ export function createCheckoutSummaryRouteHandler(): RouteHandler<CheckoutSummar
 			// refusal drops the method with it (a method only means something in
 			// the zone it belongs to); a method on a cart that ships nothing is
 			// dropped silently (D10). Each round drops at least one field, so this
-			// ends — BOUNDED at three quotes because `computeQuote` (domain
-			// pricing/quote.ts) checks destination → method → coupon in that order,
-			// and a destination refusal drops the method too. Reordering those
-			// checks there would change this bound. The single-option preselect
-			// below may add a fourth.
+			// ends: each refusal removes a supplied selection field. Billing tax
+			// jurisdiction is independent of delivery. The single-option preselect
+			// below may add one final quote.
 			let selection = input.selection;
 			const selectionErrors: CheckoutSelectionErrors = {};
 			const quoteWith = (current: CheckoutSelection): Promise<QuoteResult> =>
@@ -580,7 +579,12 @@ function lockedSummary(
 		uncalculatedReason:
 			status === "matched" ? null : status === "no_zones" ? "no_zones" : "digital_only",
 		orderCreated: true,
-		order: { id: order.id, state: order.state, phase },
+		order: {
+			id: order.id,
+			state: order.state,
+			phase,
+			...(order.offlinePayment ? { paymentMethod: order.offlinePayment.method } : {}),
+		},
 	};
 }
 
