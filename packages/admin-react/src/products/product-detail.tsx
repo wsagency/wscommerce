@@ -8,16 +8,12 @@
  * not have to relearn where anything is, and §4's skeleton was argued out once
  * already.
  *
- * WRITES GO BACK TO THE BLOCK KIT HANDLERS, UNCHANGED. Every control here posts
- * the same `action_id` and the same payload its Block Kit counterpart posts;
- * the plugin re-assembles the `form_submit` carrier those handlers read and
- * forwards it. So `expectedUpdatedAt` still rides with a save and is still
- * enforced by the service's optimistic concurrency, the `onHand` watermark
- * still rides with a stock movement and is still re-read against live truth,
- * the idempotency keys are still content-derived and not nonces, and every
- * refusal message an operator can see here was authored, budgeted and
- * suite-covered for the Block Kit screen. This file decides nothing about stock
- * and nothing about money.
+ * WRITES USE THE PRIVATE STRUCTURED ACTIONS (ADR-0015). Saves carry their
+ * `expectedUpdatedAt` optimistic-concurrency guard. Each confirmed stock intent
+ * receives a command UUID, retained in this browser tab until its outcome is
+ * known. Retries reuse the same payload; new intents receive new identities,
+ * including when stock returns to a previous count. Native claims enforce
+ * once-only stock movement and validate the bound SKU, operation and quantity.
  *
  * G2 / ADR-0013 IS ASSERTED HERE, NOT ONLY INHERITED. There is no Title field
  * and no Status field on this screen, on EITHER surface: `product_commerce.title`
@@ -140,6 +136,13 @@ import {
 } from "../ui.js";
 import { UNTITLED, toned } from "./products-list.js";
 import { ProductVariants } from "./product-variants.js";
+import {
+	clearStockCommand,
+	isStockAction,
+	readStockCommand,
+	retainStockCommand,
+	type StockCommand,
+} from "./stock-command.js";
 
 const TAB_LABELS = PRODUCT_TAB_LABELS;
 
@@ -275,8 +278,8 @@ function numberInput(value: number | null): string {
  * its second leg, and `read-settled` is the only event that returns the screen
  * to idle.
  *
- * `refused` is the exception, and it is not an asymmetry: a refused write moved
- * nothing, so there is no re-read to wait for and nothing to be stale against.
+ * A transport failure ends the request's busy phase, but does not prove the
+ * write was refused. Unanswered stock commands retain a separate retry gate.
  */
 export type WritePhase =
 	| { readonly step: "idle" }
@@ -514,7 +517,14 @@ export function ProductDetail({
 	// screen reports events into `nextWritePhase` and reads both its guards back
 	// out of `writeControls`, so neither is set at a call site.
 	const [writePhase, setWritePhase] = React.useState<WritePhase>({ step: "idle" });
-	const { busy, acting } = writeControls(writePhase);
+	const [retryStock, setRetryStock] = React.useState<StockCommand | null>(() =>
+		readStockCommand(productId),
+	);
+	const { busy: writeBusy, acting } = writeControls(writePhase);
+	const busy = writeBusy || retryStock !== null;
+	React.useEffect(() => {
+		setRetryStock(readStockCommand(productId));
+	}, [productId]);
 	// Receipts persist until the same group is written again. No timer, no fade:
 	// a receipt the operator has to catch is the defect, not the feature.
 	const [receipts, setReceipts] = React.useState<Readonly<Record<ReceiptSlot, Receipt | null>>>({
@@ -624,6 +634,27 @@ export function ProductDetail({
 	}, [productId, generation]);
 
 	const dispatch = React.useCallback((action: PendingAction) => {
+		if (isStockAction(action.actionId)) {
+			const command: StockCommand = {
+				actionId: action.actionId,
+				value: action.value,
+				...(action.slot === "stock-add" || action.slot === "stock-remove"
+					? { slot: action.slot }
+					: {}),
+			};
+			if (!retainStockCommand(command)) {
+				setPending(null);
+				setNotice({
+					variant: "error",
+					title: "Stock command not sent",
+					description:
+						"Your browser could not retain this stock command for safe retry. Enable session storage, then confirm the movement again.",
+					field: null,
+				});
+				return;
+			}
+			setRetryStock(command);
+		}
 		setPending(null);
 		setWritePhase((phase) =>
 			nextWritePhase(phase, { type: "dispatched", actionId: action.actionId }),
@@ -634,9 +665,8 @@ export function ProductDetail({
 		if (slot !== undefined) setReceipts((prev) => ({ ...prev, [slot]: null }));
 		void performAction(action.actionId, action.value, PRODUCTS_ACT_SUBJECT).then((result) => {
 			if (isFailure(result)) {
-				// A REFUSAL still reports at page top, for both surfaces' reasons: it is
-				// not a receipt, and the group it came from may be shut. Nothing moved,
-				// so there is no re-read to wait for and the controls are released here.
+				// A transport failure does not prove that stock stayed unchanged.
+				// Retain the original command; only its retry can resolve the outcome.
 				setWritePhase((phase) =>
 					nextWritePhase(phase, { type: "refused", actionId: action.actionId }),
 				);
@@ -647,6 +677,10 @@ export function ProductDetail({
 					field: null,
 				});
 				return;
+			}
+			if (isStockAction(action.actionId)) {
+				clearStockCommand(action.value["productId"] ?? "");
+				setRetryStock(null);
 			}
 			// ACCEPTED IS NOT SETTLED — the re-read below is the second leg, and the
 			// controls stay disabled across it. Deliberately not a release.
@@ -699,6 +733,27 @@ export function ProductDetail({
 		});
 	}, []);
 
+	const stockRetry =
+		retryStock === null ? null : (
+			<div style={{ marginBlock: 16 }}>
+				<Notice
+					variant="alert"
+					title="Stock movement awaiting its result"
+					description="This command may already have changed stock. Retry it to recover its recorded outcome before starting another movement."
+					testId="pending-stock-notice"
+				/>
+				<Button
+					label="Retry stock movement"
+					disabled={writeBusy}
+					busy={writeBusy}
+					testId="retry-stock-movement"
+					onClick={() =>
+						dispatch({ ...retryStock, title: "", text: "", confirmLabel: "", denyLabel: "" })
+					}
+				/>
+			</div>
+		);
+
 	if (failure !== null) {
 		return (
 			<div>
@@ -723,6 +778,7 @@ export function ProductDetail({
 					/>
 				</div>
 				<div style={{ marginBlockStart: 16 }}>
+					{stockRetry}
 					<Notice
 						variant="error"
 						title={failure.title}
@@ -758,6 +814,7 @@ export function ProductDetail({
 				    asks only when there is something to lose. */}
 				<Button
 					label={PRODUCTS_BACK_LABEL}
+					disabled={busy}
 					onClick={() => {
 						if (holdsWork) setLeaving(true);
 						else onBack();
@@ -778,6 +835,7 @@ export function ProductDetail({
 					testId="detail-notice"
 				/>
 			)}
+			{stockRetry}
 
 			{tombstoned && (
 				<Notice
@@ -887,6 +945,7 @@ export function ProductDetail({
 								actionId: "products:restock",
 								value: {
 									productId: p.productId,
+									commandId: crypto.randomUUID(),
 									onHand: String(onHand),
 									qty: String(qty),
 								},
@@ -903,11 +962,12 @@ export function ProductDetail({
 								actionId: "products:remove-stock",
 								value: {
 									productId: p.productId,
+									commandId: crypto.randomUUID(),
 									qty: String(qty),
 									// THE WATERMARK AS THE OPERATOR SAW IT — the on-hand this
 									// render was built from. The handler re-reads live stock and
-									// refuses on a mismatch, and this is the third component of
-									// the idempotency key (F-2a).
+									// refuses a fresh movement on a mismatch. Retries retain
+									// this watermark and recover the original command's receipt.
 									onHand: String(p.onHand ?? 0),
 								},
 								title: confirm.title,
@@ -948,6 +1008,7 @@ export function ProductDetail({
 								: "products:variant-remove-stock",
 						value: {
 							productId: p.productId,
+							commandId: crypto.randomUUID(),
 							variantKey: variant.variantKey,
 							expectedUpdatedAt: variant.updatedAt,
 							onHand: String(onHand),

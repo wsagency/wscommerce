@@ -98,6 +98,7 @@ let mounted: Mounted | null = null;
 
 beforeEach(() => {
 	apiFetch.mockReset();
+	sessionStorage.clear();
 });
 
 afterEach(async () => {
@@ -303,9 +304,126 @@ test("variant stock movement confirms the quantity and sends the observed count 
 				expectedUpdatedAt: BASE.updatedAt,
 				onHand: "7",
 				qty: "2",
+				commandId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
 			},
 		}),
 	);
+});
+
+test("an uncertain variant stock result keeps its command for retry and a later confirmed intent gets a fresh identity", async () => {
+	const variant = {
+		productId: "p_base",
+		variantKey: "blue",
+		title: "Blue / large",
+		sku: "BLUE",
+		priceCents: 1000,
+		currency: "USD",
+		onHand: 4,
+		orphanedAt: null,
+		updatedAt: BASE.updatedAt,
+	};
+	let attempts = 0;
+	apiFetch.mockImplementation((_input, init) => {
+		const sent = JSON.parse(String(init?.body ?? "{}")) as { type?: string };
+		if (sent.type !== "otta_console_act")
+			return Promise.resolve(
+				payload({ variants: [{ ...variant, onHand: attempts === 0 ? 4 : 7 }] }),
+			);
+		attempts++;
+		if (attempts === 1) return Promise.reject(new Error("response lost after the movement"));
+		return Promise.resolve(
+			actPayload({
+				variant: "default",
+				title: "Variant stock added",
+				description: "Recorded count: 7.",
+			}),
+		);
+	});
+	mounted = await mount(NODE);
+	await mounted.rerender(NODE);
+	let container = mounted.container;
+	const quantity = container.querySelector<HTMLInputElement>('[data-testid="variant-qty-blue"]');
+	if (!quantity) throw new Error("missing quantity");
+	await type(quantity, "3");
+	const confirmMovement = async () => {
+		const add = container.querySelector('[data-testid="variant-restock-blue"]');
+		if (!add) throw new Error("missing Add stock");
+		await fire(add, "click");
+		const confirm = container.querySelector('dialog[open] [data-testid="otta-confirm-yes"]');
+		if (!confirm) throw new Error("missing movement confirmation");
+		await fire(confirm, "click");
+		await mounted?.rerender(NODE);
+		await mounted?.rerender(NODE);
+	};
+	await confirmMovement();
+	expect(
+		container.querySelector<HTMLButtonElement>('[data-testid="variant-restock-blue"]')?.disabled,
+	).toBe(true);
+	await mounted.unmount();
+	mounted = await mount(NODE);
+	await mounted.rerender(NODE);
+	container = mounted.container;
+	expect(
+		container.querySelector<HTMLButtonElement>('[data-testid="variant-restock-blue"]')?.disabled,
+	).toBe(true);
+	const retry = container.querySelector('[data-testid="retry-stock-movement"]');
+	if (!retry) throw new Error("uncertain movement has no safe retry control");
+	await fire(retry, "click");
+	await mounted.rerender(NODE);
+	await mounted.rerender(NODE);
+	const writes = () =>
+		apiFetch.mock.calls
+			.map(([, init]) => JSON.parse(String(init?.body ?? "{}")))
+			.filter((sent) => sent.type === "otta_console_act");
+	expect(writes()).toHaveLength(2);
+	expect(writes()[1]).toEqual(writes()[0]);
+	expect(writes()[0].value.commandId).toMatch(/^[0-9a-f-]{36}$/i);
+	expect(
+		container.querySelector<HTMLButtonElement>('[data-testid="variant-restock-blue"]')?.disabled,
+	).toBe(false);
+	const nextQuantity = container.querySelector<HTMLInputElement>(
+		'[data-testid="variant-qty-blue"]',
+	);
+	if (!nextQuantity) throw new Error("missing refreshed variant quantity");
+	await type(nextQuantity, "3");
+	await confirmMovement();
+	expect(writes()).toHaveLength(3);
+	expect(writes()[2].value.commandId).not.toBe(writes()[0].value.commandId);
+	expect(sessionStorage.getItem("otta:pending-stock:p_base")).toBeNull();
+});
+
+test("parent stock confirmations carry an explicit command identity", async () => {
+	apiFetch.mockImplementation((_input, init) => {
+		const sent = JSON.parse(String(init?.body ?? "{}")) as { type?: string };
+		return Promise.resolve(
+			sent.type === "otta_console_act"
+				? actPayload({ variant: "default", title: "Stock added", description: "Recorded." })
+				: payload({}),
+		);
+	});
+	const node = <ProductDetail productId="p_base" initialTab={1} onBack={() => undefined} />;
+	mounted = await mount(node);
+	await mounted.rerender(node);
+	const quantity = mounted.container.querySelector<HTMLInputElement>('[data-testid="restock-qty"]');
+	const add = mounted.container.querySelector('[data-testid="restock-submit"]');
+	if (!quantity || !add) throw new Error("missing parent stock controls");
+	await type(quantity, "2");
+	await fire(add, "click");
+	const confirm = mounted.container.querySelector('dialog[open] [data-testid="otta-confirm-yes"]');
+	if (!confirm) throw new Error("missing parent stock confirmation");
+	await fire(confirm, "click");
+	const writes = apiFetch.mock.calls
+		.map(([, init]) => JSON.parse(String(init?.body ?? "{}")))
+		.filter((sent) => sent.type === "otta_console_act");
+	expect(writes[0]).toMatchObject({
+		action_id: "products:restock",
+		value: {
+			productId: "p_base",
+			onHand: "104",
+			qty: "2",
+			commandId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+		},
+	});
 });
 
 /** The strip's value cell for one label, and only that one. */

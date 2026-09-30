@@ -41,7 +41,14 @@ async function seed() {
 	return { productId: id, variantKey: "blue", expectedUpdatedAt: variant.updatedAt.toISOString() };
 }
 async function act(action_id: string, value: Record<string, string>) {
-	const result = await boot.invokeRoute("admin", { type: "otta_console_act", action_id, value });
+	const command = ["products:variant-restock", "products:variant-remove-stock"].includes(action_id)
+		? { commandId: crypto.randomUUID(), ...value }
+		: value;
+	const result = await boot.invokeRoute("admin", {
+		type: "otta_console_act",
+		action_id,
+		value: command,
+	});
 	if (!("result" in result)) throw new Error(result.error);
 	return result.result as {
 		ok: boolean;
@@ -102,6 +109,7 @@ test("stock controls preserve held units, refuse stale counts and cannot rename 
 	if (!held.ok) throw new Error(held.reason);
 	const row = (await variants(seeded.productId))[0]!;
 	const movement = {
+		commandId: crypto.randomUUID(),
 		...seeded,
 		expectedUpdatedAt: row.updatedAt.toISOString(),
 		onHand: "3",
@@ -113,15 +121,33 @@ test("stock controls preserve held units, refuse stale counts and cannot rename 
 	expect(await inventory.getOnHand(variantSku)).toBe(7);
 	expect(await inventory.findOnHand(sku("FOREIGN"))).toBeNull();
 	expect(
-		(await act("products:variant-remove-stock", { ...movement, qty: "1" })).notice?.variant,
+		(
+			await act("products:variant-remove-stock", {
+				...movement,
+				commandId: crypto.randomUUID(),
+				qty: "1",
+			})
+		).notice?.variant,
 	).toBe("error");
 	expect(
-		(await act("products:variant-remove-stock", { ...movement, onHand: "7", qty: "8" })).notice
-			?.description,
+		(
+			await act("products:variant-remove-stock", {
+				...movement,
+				commandId: crypto.randomUUID(),
+				onHand: "7",
+				qty: "8",
+			})
+		).notice?.description,
 	).toContain("held units are protected");
 	expect(
-		(await act("products:variant-remove-stock", { ...movement, onHand: "7", qty: "1" })).notice
-			?.variant,
+		(
+			await act("products:variant-remove-stock", {
+				...movement,
+				commandId: crypto.randomUUID(),
+				onHand: "7",
+				qty: "1",
+			})
+		).notice?.variant,
 	).not.toBe("error");
 	expect(await inventory.getOnHand(variantSku)).toBe(6);
 	expect(
@@ -136,6 +162,51 @@ test("stock controls preserve held units, refuse stale counts and cannot rename 
 	expect(await inventory.getOnHand(variantSku)).toBe(6);
 	await inventory.release(held.reservationId);
 	expect(await inventory.getOnHand(variantSku)).toBe(8);
+});
+
+test("variant add-remove-add uses separate confirmed commands and retries recover the original movement", async () => {
+	const seeded = await seed();
+	const variantSku = `${seeded.productId}-BLUE`;
+	await act("products:save-variant", {
+		...seeded,
+		sku: variantSku,
+		priceCents: "2500",
+		currency: "EUR",
+	});
+	await inventory.restock(variantSku, 4, idempotencyKey(`stock:${variantSku}`));
+	const row = (await variants(seeded.productId))[0]!;
+	const first = {
+		...seeded,
+		expectedUpdatedAt: row.updatedAt.toISOString(),
+		onHand: "4",
+		qty: "3",
+		commandId: crypto.randomUUID(),
+	};
+	expect((await act("products:variant-restock", first)).notice?.variant).toBe("default");
+	expect(await inventory.getOnHand(variantSku)).toBe(7);
+	const remove = { ...first, onHand: "7", commandId: crypto.randomUUID() };
+	expect((await act("products:variant-remove-stock", remove)).notice?.variant).toBe("default");
+	expect(await inventory.getOnHand(variantSku)).toBe(4);
+	// A fresh identical movement is distinct even after stock returns to its old value.
+	const next = { ...first, commandId: crypto.randomUUID() };
+	expect((await act("products:variant-restock", next)).notice?.variant).toBe("default");
+	expect(await inventory.getOnHand(variantSku)).toBe(7);
+	// Retrying the exact command succeeds despite its old count, without adding again.
+	expect((await act("products:variant-restock", next)).notice?.variant).toBe("default");
+	expect(await inventory.getOnHand(variantSku)).toBe(7);
+	// A command's quantity and direction cannot be changed during retry.
+	expect(
+		(await act("products:variant-restock", { ...next, onHand: "7", qty: "1" })).notice?.variant,
+	).toBe("error");
+	expect(
+		(await act("products:variant-remove-stock", { ...next, onHand: "7" })).notice?.variant,
+	).toBe("error");
+	expect(await inventory.getOnHand(variantSku)).toBe(7);
+	expect(
+		(await act("products:variant-restock", { ...next, onHand: "7", commandId: "" })).notice
+			?.variant,
+	).toBe("error");
+	expect(await inventory.getOnHand(variantSku)).toBe(7);
 });
 
 test("orphan rows remain visible with retained stock but edits and foreign-parent commands are refused", async () => {

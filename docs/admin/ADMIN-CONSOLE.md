@@ -1240,24 +1240,26 @@ current forms, which lead with three lines of plumbing.
 - a currency the form cannot change;
 - **an idempotency key or nonce, in any form.**
 
-All of the first four move into `block_id` as carrier payload (§10). The last one **does not move —
-it is deleted.** See F-2a.
+All of the first four move into `block_id` as carrier payload (§10). Idempotency keys never become
+visible fields. Stock command identity travels only in the private React action payload; see F-2a.
 
-**F-2a — idempotency keys are derived, never carried and never minted per render.** Every admin
-write derives its key **deterministically from the content of the write, with the observed
-watermark as a key component**. No `crypto.randomUUID()` is minted at render time, put in a
-`block_id`, put in a `button.value`, or exposed as a field.
+**F-2a — idempotency keys are derived and never minted per render.** Saves and order actions derive
+their keys from the write and its observed watermark. **Amended 2026-09-30 for parent and variant
+stock movements:** each confirmed intent receives a UUID, created when its confirmation is opened,
+never during render. The server hashes the product/variant resource and that command identity.
+Native durable claims bind the SKU, direction and quantity and reject a changed command body.
+The identity travels in the private action payload and is never an operator-editable field.
 
 | Write | Key |
 |---|---|
 | Refund | `admin-refund:${orderId}:${amountCents}:${refundedSoFarCents}` — the third component is the watermark the operator *saw* |
-| Stock movement | `${productId}:${direction}:${onHandAtRender}:${qty}` |
+| Stock movement | hash of `stock-command`, `productId`, `variantKey` (null for parent), `commandId` |
 | Transition | `admin-transition:${orderId}:${toState}` |
 | Cancel | `admin-cancel:${orderId}` |
 | Note | `admin-note:${orderId}:${author}:${body}` |
 | Edit / save (sparse PATCH) | content hash of the submitted wire + `expectedUpdatedAt` (`deriveEditIdempotencyKey`, `products-actions.ts:307-324`) |
 
-Why the watermark is the crux — it delivers all three properties at once:
+For refunds, the cumulative watermark distinguishes deliberate subsequent refunds:
 
 - identical intent ⇒ identical key ⇒ replay dedupes (double-click protection);
 - different amount ⇒ different key ⇒ applies;
@@ -1277,15 +1279,18 @@ doctrine makes a form's React key deterministic and stable, removing the acciden
 remount that would otherwise refresh a nonce some of the time — a nonce in the carrier turns an
 intermittent bug into a reliable one.
 
-**There is no live violation.** The console's four were on the two retired screens — a rendered
-`nonce` carrier and a nonce-keyed refund on Orders, and the two stock movements on Pricing &
-inventory — and all four were deleted rather than relocated when those write paths were extracted:
-the shipped keys are `admin-refund:${orderId}:${amountCents}:${observedSoFar}`
-(`orders-actions.ts:642`) and `${productId}:${direction}:${onHand}:${qty}`
-(`stockMovementKey`, `products-actions.ts:430-437`), both watermarked and neither random. X-28 is a
-regression gate from here. This also keeps the document self-consistent: §2 already lists nonce
-fields under `form` → forbidden, and F-2 already says a key is never something a human can see, pick
-or alter — a render-time carried nonce satisfies neither half.
+Stock counts can cycle: add 3 from 4, remove 3 to 4, then add 3 again. A key derived from quantity
+and count would replay the first movement and falsely report 7 while leaving stock at 4. A fresh
+confirmed intent therefore gets a new identity even when all visible values match an earlier one.
+The observed count still guards fresh removals and variant movements. A retry first recovers its
+existing native claim, including an interrupted claim, before applying the stale-view check.
+
+An unanswered stock command is saved in the current tab's session storage before dispatch and
+retained across transport retries and reloads. The screen disables new edits and movements and
+offers **Retry stock movement** with the same body and identity until it receives an understood
+outcome. If the browser cannot retain the command, it sends no request. Receipts name the count
+recorded by that movement; the refreshed product shows the current count. Keys and identities
+remain internal, outside all operator fields and rendered Block Kit carrier/button values.
 
 **F-2b — a field ANOTHER system owns is displayed, never given an input.** F-2 forbids fields the
 operator must not *see*; this forbids inputs on values the operator must not *set*. Where a column

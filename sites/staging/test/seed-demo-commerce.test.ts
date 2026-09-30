@@ -222,11 +222,18 @@ describe("seed-demo-commerce", () => {
 		);
 	});
 
-	test("restock sends the OBSERVED count as the watermark and the demo quantity as qty", () => {
-		// `onHand` is not the target. The route re-reads live and refuses if the
-		// count moved, so sending `initialOnHand` here would either refuse or —
-		// worse — pass and double the stock.
-		expect(restockBody(TEE, 0)).toEqual({ productId: TEE.id, onHand: "0", qty: "25" });
+	test("restock sends the observed count, additive quantity and one identity per seed intent", () => {
+		const commandId = crypto.randomUUID();
+		expect(restockBody(TEE, 0, commandId)).toEqual({
+			productId: TEE.id,
+			onHand: "0",
+			qty: "25",
+			commandId,
+		});
+		const first = restockBody(TEE, 0);
+		const second = restockBody(TEE, 0);
+		expect(first["commandId"]).toMatch(/^[0-9a-f-]{36}$/i);
+		expect(second["commandId"]).not.toBe(first["commandId"]);
 	});
 
 	// -- THE RE-RUN GUARD ------------------------------------------------------

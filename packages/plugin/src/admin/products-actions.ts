@@ -24,16 +24,15 @@
  * THE STALE-WATERMARK REFUSAL IS CARRIED VERBATIM (ADR-0015 Decision 3). A
  * reworded check is a failed port, not a port. **DA-3a:** the `onHand` the
  * operator SAW is re-read against live truth before any stock moves and the
- * write REFUSES on a mismatch — including the case where the re-read comes back
+ * fresh write REFUSES on a mismatch — including the case where the re-read comes back
  * with NO inventory record at all, which gets its own sentence rather than being
  * reported as a count nobody took. An ABSENT or unparseable watermark refuses
  * fail-closed, with no re-read: see {@link parseOnHand}. The EDIT path carries
  * its own watermark, `expectedUpdatedAt`, guarded on the SAME terms — absent or
  * blank refuses here, before anything is sent — and re-checked by the service's
  * optimistic concurrency behind it. Both watermarks are guarded at THIS tier,
- * deliberately: two watermarks in one module guarded on two different tiers is a
- * trap for whoever changes either tier next, even while the looser of them
- * happens to fail closed downstream.
+ * deliberately. The native client compares live stock after checking whether
+ * this command already has a durable outcome; replay recovers that outcome.
  *
  * MONEY IS INTEGER MINOR UNITS. Nothing here parses money with a float:
  * {@link parsePriceMinorUnits} reads an exact decimal string into integer minor
@@ -42,12 +41,12 @@
  * A blank compare-at or unit cost is an explicit CLEAR (`null`), never a zero,
  * and a blank price is omitted from the wire rather than sent as one.
  *
- * NO NONCE, ANYWHERE (F-2a). A stock movement's idempotency key is
- * `${productId}:${direction}:${onHandAtRender}:${qty}` — content plus the
- * watermark the operator saw — and an edit's is a content hash of the submitted
- * wire plus `expectedUpdatedAt`. That is what lets a double-submit of the same
- * rendered form dedupe while two deliberate movements, taken against two
- * different observed counts, both apply.
+ * STOCK COMMANDS HAVE ONE IDENTITY PER CONFIRMED INTENT (F-2a's 2026-09-30
+ * amendment). A count may return to an earlier value, so content plus onHand
+ * cannot distinguish two deliberate movements. Stock keys hash the resource
+ * and a confirmed command UUID. Native claims bind SKU, operation and quantity;
+ * retries retain the same identity and body. Edit keys remain content hashes
+ * of the submitted wire plus `expectedUpdatedAt`.
  *
  * EVERY FIELD ARRIVING HERE IS UNTRUSTED operator-round-tripped input, exactly
  * as a decoded carrier was: closed sets are re-checked, watermarks are
@@ -512,15 +511,21 @@ function editOutcome(
 
 // -- merchant stock movements -------------------------------------------------
 
-/** F-2a: `${productId}:${direction}:${onHandAtRender}:${qty}` — content plus
- *  the watermark the operator saw. No nonce anywhere on this screen. */
+/** A confirmed intent owns one UUID. Native claims bind its SKU, operation and quantity. */
+function stockCommandId(payload: ProductsActionPayload): string | null {
+	const value = readString(payload["commandId"]);
+	return value !== undefined &&
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+		? value.toLowerCase()
+		: null;
+}
+
 function stockMovementKey(
 	productId: string,
-	direction: "restock" | "removal",
-	onHand: number,
-	qty: number,
-): string {
-	return `${productId}:${direction}:${onHand}:${qty}`;
+	variantKey: string | null,
+	commandId: string,
+): Promise<string> {
+	return variantCommandKey(["stock-command", productId, variantKey, commandId]);
 }
 
 /**
@@ -530,14 +535,15 @@ function stockMovementKey(
  */
 const restockAction: ProductsAction = async (client, payload) => {
 	const productId = readString(payload["productId"]);
-	if (productId === undefined) return applied(UNREADABLE);
+	const commandId = stockCommandId(payload);
+	if (productId === undefined || commandId === null) return applied(UNREADABLE);
 	const onHand = parseOnHand(payload["onHand"]);
 	if (onHand === null) return applied(UNREADABLE);
 	const qty = parseStockQty(readString(payload["qty"]));
 	if (qty === null) {
 		return applied({ variant: "error", ...ADD_STOCK_INVALID_QTY });
 	}
-	const key = stockMovementKey(productId, "restock", onHand, qty);
+	const key = await stockMovementKey(productId, null, commandId);
 	const result = await client.restock(productId, qty, key);
 	return applied(restockNotice(result, qty));
 };
@@ -571,8 +577,9 @@ function stockChangedNotice(liveOnHand: number | null): Notice {
  * `-review` step that used to precede it is not ported, so every guard a removal
  * gets is in this function or in the service behind it.
  *
- * DA-3a, MANDATORY: re-read the product and refuse on a watermark mismatch
- * before deriving the key and writing (F-2a). Operator A opens a confirm for 5
+ * DA-3a, MANDATORY: refuse a fresh movement on a live watermark mismatch.
+ * Native recovery precedes that comparison for an already dispatched command.
+ * Operator A opens a confirm for 5
  * units; operator B removes 12; A's dialog still says "Remove 5 units" against a
  * count that is already false.
  *
@@ -583,7 +590,8 @@ function stockChangedNotice(liveOnHand: number | null): Notice {
  */
 const removeStockAction: ProductsAction = async (client, payload) => {
 	const productId = readString(payload["productId"]);
-	if (productId === undefined) return applied(UNREADABLE);
+	const commandId = stockCommandId(payload);
+	if (productId === undefined || commandId === null) return applied(UNREADABLE);
 	const qty = parseStockQty(readString(payload["qty"]));
 	const observedOnHand = parseOnHand(payload["onHand"]);
 	// Both are re-checked for PRESENCE as well as for shape, and an absent
@@ -594,23 +602,8 @@ const removeStockAction: ProductsAction = async (client, payload) => {
 	// `parseStockQty` before it opens its confirm, so an unparseable one arriving
 	// here means the payload was hand-made rather than that someone mistyped.
 	if (qty === null || observedOnHand === null) return applied(UNREADABLE);
-	const live = await client.getProduct(productId).catch(() => null);
-	if (live === null) {
-		return applied({
-			variant: "error",
-			title: "Nothing was removed",
-			description: "Stock could not be re-checked, so nothing was applied. Reload and try again.",
-		});
-	}
-	// A `null` re-read (the inventory record itself is gone) takes the SAME
-	// branch and is not folded into a count — `observedOnHand` is always a number,
-	// so the inequality alone would already refuse; the explicit test is what
-	// gives the case its own words.
-	if (live.onHand === null || live.onHand !== observedOnHand) {
-		return applied(stockChangedNotice(live.onHand));
-	}
-	const key = stockMovementKey(productId, "removal", observedOnHand, qty);
-	const result = await client.removeStock(productId, qty, key);
+	const key = await stockMovementKey(productId, null, commandId);
+	const result = await client.removeStock(productId, qty, key, observedOnHand);
 	return applied(removeStockNotice(result, qty));
 };
 
@@ -620,7 +613,7 @@ function restockNotice(result: RestockResult, qty: number): Notice {
 		return {
 			variant: "default",
 			title: "Stock added",
-			description: `Added ${qty} ${unitWord(qty)}. Available is now ${result.onHand}.`,
+			description: `Added ${qty} ${unitWord(qty)}. This movement recorded available stock of ${result.onHand}; the refreshed product shows the current count.`,
 		};
 	}
 	return stockFailureNotice(result.reason);
@@ -632,7 +625,7 @@ function removeStockNotice(result: StockRemovalResult, qty: number): Notice {
 		return {
 			variant: "default",
 			title: "Stock removed",
-			description: `Removed ${qty} ${unitWord(qty)}. Available is now ${result.onHand}.`,
+			description: `Removed ${qty} ${unitWord(qty)}. This movement recorded available stock of ${result.onHand}; the refreshed product shows the current count.`,
 		};
 	}
 	if (result.reason === "insufficient_stock") {
@@ -642,6 +635,13 @@ function removeStockNotice(result: StockRemovalResult, qty: number): Notice {
 			description: `Only ${result.onHand} ${unitWord(result.onHand)} on hand — you cannot remove ${qty}.`,
 		};
 	}
+	if (result.reason === "stock_changed") return stockChangedNotice(result.onHand);
+	if (result.reason === "not_found")
+		return {
+			variant: "error",
+			title: "Nothing was removed",
+			description: "Stock could not be re-checked, so nothing was applied. Reload and try again.",
+		};
 	return stockFailureNotice(result.reason);
 }
 
@@ -768,12 +768,14 @@ function variantStockAction(direction: "restock" | "removal"): ProductsAction {
 		const productId = readString(payload["productId"]);
 		const variantKey = readString(payload["variantKey"]);
 		const expectedUpdatedAt = readString(payload["expectedUpdatedAt"]);
+		const commandId = stockCommandId(payload);
 		const qty = parseStockQty(readString(payload["qty"]) ?? "");
 		const onHand = parseOnHand(payload["onHand"]);
 		if (
 			!productId ||
 			!variantKey ||
 			!expectedUpdatedAt ||
+			commandId === null ||
 			qty === null ||
 			onHand === null ||
 			client.moveVariantStock === undefined
@@ -784,13 +786,13 @@ function variantStockAction(direction: "restock" | "removal"): ProductsAction {
 			productId,
 			variantKey,
 			body,
-			await variantCommandKey(["stock", productId, variantKey, body]),
+			await stockMovementKey(productId, variantKey, commandId),
 		);
 		if (result.ok)
 			return applied({
 				variant: "default",
 				title: direction === "restock" ? "Variant stock added" : "Variant stock removed",
-				description: `Available stock is now ${result.onHand}. Existing held units are preserved.`,
+				description: `This movement recorded available stock of ${result.onHand}. The refreshed variant shows the current count. Existing held units are preserved.`,
 			});
 		return applied({
 			variant: "error",
@@ -798,9 +800,11 @@ function variantStockAction(direction: "restock" | "removal"): ProductsAction {
 			description:
 				result.reason === "stale" || result.reason === "stock_changed"
 					? "The variant or available count changed. Reload and review before submitting another movement."
-					: result.reason === "insufficient_stock"
-						? "Only available units can be removed. The requested quantity exceeds available stock; held units are protected."
-						: "A live declared variant with a SKU and stock record is required. Missing, orphaned and deleted variants cannot be changed here.",
+					: result.reason === "command_reused"
+						? "That command identity already belongs to another SKU, quantity or stock operation. Retry the original command unchanged or start a new confirmed movement."
+						: result.reason === "insufficient_stock"
+							? "Only available units can be removed. The requested quantity exceeds available stock; held units are protected."
+							: "A live declared variant with a SKU and stock record is required. Missing, orphaned and deleted variants cannot be changed here.",
 		});
 	};
 }

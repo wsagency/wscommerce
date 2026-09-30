@@ -792,7 +792,7 @@ describe("the console's Pricing & inventory branch on the otta admin route", () 
 	});
 
 	test("a RESTOCK dispatched from the console really adds the units", async () => {
-		// F-2a lives in the action (`${productId}:restock:${onHand}:${qty}`), and
+		// Confirmed stock identity is scoped by the action to this product, and
 		// in-process the key is an ARGUMENT rather than a header — it is proven by
 		// what it buys, in `products-actions.sandbox.test.ts`. What this tier still
 		// owns is that the console's flat payload reaches the movement at all.
@@ -800,7 +800,12 @@ describe("the console's Pricing & inventory branch on the otta admin route", () 
 		const result = await invoke({
 			type: ACT,
 			action_id: "products:restock",
-			value: { productId: seeded.productId, onHand: "42", qty: "12" },
+			value: {
+				productId: seeded.productId,
+				onHand: "42",
+				qty: "12",
+				commandId: crypto.randomUUID(),
+			},
 		});
 		expect(result["ok"]).toBe(true);
 		expect(await inventory.findOnHand(toSku(seeded.sku))).toBe(54);
@@ -812,7 +817,12 @@ describe("the console's Pricing & inventory branch on the otta admin route", () 
 		const result = await invoke({
 			type: ACT,
 			action_id: "products:remove-stock",
-			value: { productId: seeded.productId, qty: "3", onHand: "42" },
+			value: {
+				productId: seeded.productId,
+				qty: "3",
+				onHand: "42",
+				commandId: crypto.randomUUID(),
+			},
 		});
 		expect(result["ok"]).toBe(true);
 		const notice = result["notice"] as Record<string, unknown>;
@@ -826,7 +836,12 @@ describe("the console's Pricing & inventory branch on the otta admin route", () 
 		const result = await invoke({
 			type: ACT,
 			action_id: "products:remove-stock",
-			value: { productId: seeded.productId, qty: "3", onHand: "42" },
+			value: {
+				productId: seeded.productId,
+				qty: "3",
+				onHand: "42",
+				commandId: crypto.randomUUID(),
+			},
 		});
 		expect(result["ok"]).toBe(true);
 		expect(await inventory.findOnHand(toSku(seeded.sku))).toBe(39);

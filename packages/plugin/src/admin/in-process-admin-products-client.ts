@@ -61,6 +61,7 @@ import {
 	SkuConflictError,
 	SkuHeldStockError,
 	SkuStockConflictError,
+	StockMovementMismatchError,
 	updateProductCommerceFields,
 	type ProductCommerce as DomainProductCommerce,
 	type ProductListCursor,
@@ -272,24 +273,48 @@ export class InProcessAdminProductsClient implements AdminProductsSurface {
 				variant.orphanedAt === null,
 		);
 		if (row === undefined) return { ok: false, reason: "not_found" };
+		if (row.sku === null) return { ok: false, reason: "no_sku" };
+		try {
+			const replay = await this.#stores.inventory.resumeStockMovement(
+				toSku(row.sku),
+				body.qty,
+				toIdempotencyKey(key),
+				body.direction,
+			);
+			if (replay !== null)
+				return replay.ok
+					? { ok: true, onHand: replay.onHand }
+					: replay.reason === "INSUFFICIENT_STOCK"
+						? { ok: false, reason: "insufficient_stock", onHand: replay.onHand }
+						: { ok: false, reason: "no_inventory_row" };
+		} catch (error) {
+			if (error instanceof StockMovementMismatchError)
+				return { ok: false, reason: "command_reused" };
+			throw error;
+		}
 		if (row.updatedAt.toISOString() !== body.expectedUpdatedAt)
 			return { ok: false, reason: "stale" };
-		if (row.sku === null) return { ok: false, reason: "no_sku" };
 		if (row.onHand === null) return { ok: false, reason: "no_inventory_row" };
 		if (row.onHand !== body.onHand) return { ok: false, reason: "stock_changed" };
-		const result =
-			body.direction === "restock"
-				? await restockUseCase(this.#stores.inventory, row.sku, body.qty, toIdempotencyKey(key))
-				: await removeStockUseCase(
-						this.#stores.inventory,
-						row.sku,
-						body.qty,
-						toIdempotencyKey(key),
-					);
-		if (result.ok) return { ok: true, onHand: result.onHand };
-		if (result.reason === "INSUFFICIENT_STOCK")
-			return { ok: false, reason: "insufficient_stock", onHand: result.onHand };
-		return { ok: false, reason: "no_inventory_row" };
+		try {
+			const result =
+				body.direction === "restock"
+					? await restockUseCase(this.#stores.inventory, row.sku, body.qty, toIdempotencyKey(key))
+					: await removeStockUseCase(
+							this.#stores.inventory,
+							row.sku,
+							body.qty,
+							toIdempotencyKey(key),
+						);
+			if (result.ok) return { ok: true, onHand: result.onHand };
+			if (result.reason === "INSUFFICIENT_STOCK")
+				return { ok: false, reason: "insufficient_stock", onHand: result.onHand };
+			return { ok: false, reason: "no_inventory_row" };
+		} catch (error) {
+			if (error instanceof StockMovementMismatchError)
+				return { ok: false, reason: "command_reused" };
+			throw error;
+		}
 	}
 
 	/**
@@ -383,12 +408,18 @@ export class InProcessAdminProductsClient implements AdminProductsSurface {
 	async restock(productId: string, qty: number, key: string): Promise<RestockResult> {
 		const resolved = await this.#resolveStockMovement(productId, qty, key);
 		if (resolved.status !== "ok") return { ok: false, reason: resolved.status };
-		const res = await restockUseCase(
-			this.#stores.inventory,
-			toSku(resolved.sku),
-			qty,
-			toIdempotencyKey(key),
-		);
+		let res;
+		try {
+			res = await restockUseCase(
+				this.#stores.inventory,
+				toSku(resolved.sku),
+				qty,
+				toIdempotencyKey(key),
+			);
+		} catch (error) {
+			if (error instanceof StockMovementMismatchError) return { ok: false, reason: "invalid" };
+			throw error;
+		}
 		if (res.ok) return { ok: true, onHand: res.onHand };
 		// UNKNOWN_SKU: the product exists but has no inventory row yet (priced but
 		// never seeded). A stock movement cannot create one.
@@ -398,15 +429,39 @@ export class InProcessAdminProductsClient implements AdminProductsSurface {
 	/** REMOVE `qty` damaged/shrinkage units. The domain applies a GUARDED
 	 *  decrement, so an over-removal is a clean `insufficient_stock` carrying the
 	 *  current count — never a negative stock and never a throw. */
-	async removeStock(productId: string, qty: number, key: string): Promise<StockRemovalResult> {
+	async removeStock(
+		productId: string,
+		qty: number,
+		key: string,
+		observedOnHand?: number,
+	): Promise<StockRemovalResult> {
 		const resolved = await this.#resolveStockMovement(productId, qty, key);
 		if (resolved.status !== "ok") return { ok: false, reason: resolved.status };
-		const res = await removeStockUseCase(
-			this.#stores.inventory,
-			toSku(resolved.sku),
-			qty,
-			toIdempotencyKey(key),
-		);
+		let res;
+		try {
+			res = await this.#stores.inventory.resumeStockMovement(
+				toSku(resolved.sku),
+				qty,
+				toIdempotencyKey(key),
+				"removal",
+			);
+			if (res === null) {
+				if (observedOnHand !== undefined) {
+					const live = await this.#stores.inventory.findOnHand(toSku(resolved.sku));
+					if (live === null || live !== observedOnHand)
+						return { ok: false, reason: "stock_changed", onHand: live };
+				}
+				res = await removeStockUseCase(
+					this.#stores.inventory,
+					toSku(resolved.sku),
+					qty,
+					toIdempotencyKey(key),
+				);
+			}
+		} catch (error) {
+			if (error instanceof StockMovementMismatchError) return { ok: false, reason: "invalid" };
+			throw error;
+		}
 		if (res.ok) return { ok: true, onHand: res.onHand };
 		if (res.reason === "INSUFFICIENT_STOCK") {
 			return { ok: false, reason: "insufficient_stock", onHand: res.onHand };

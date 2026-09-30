@@ -112,7 +112,14 @@ export type AdminVariantStockResult =
 	| { ok: true; onHand: number }
 	| {
 			ok: false;
-			reason: "not_found" | "no_sku" | "no_inventory_row" | "invalid" | "stale" | "stock_changed";
+			reason:
+				| "not_found"
+				| "no_sku"
+				| "no_inventory_row"
+				| "invalid"
+				| "stale"
+				| "stock_changed"
+				| "command_reused";
 	  }
 	| { ok: false; reason: "insufficient_stock"; onHand: number };
 
@@ -235,6 +242,7 @@ export type StockRemovalResult =
 	| { ok: false; reason: "no_sku" }
 	| { ok: false; reason: "no_inventory_row" }
 	| { ok: false; reason: "insufficient_stock"; onHand: number }
+	| { ok: false; reason: "stock_changed"; onHand: number | null }
 	| { ok: false; reason: "invalid" }
 	| { ok: false; reason: "error" };
 
@@ -295,7 +303,12 @@ export interface AdminProductsSurface {
 	 * GUARDED, so an over-removal is a clean `insufficient_stock` (carrying the
 	 * current count), never a negative stock or a throw.
 	 */
-	removeStock(productId: string, qty: number, key: string): Promise<StockRemovalResult>;
+	removeStock(
+		productId: string,
+		qty: number,
+		key: string,
+		observedOnHand?: number,
+	): Promise<StockRemovalResult>;
 
 	/**
 	 * THE FILTER TRAVELS BESIDE THE CURSOR, and it did not used to — the same

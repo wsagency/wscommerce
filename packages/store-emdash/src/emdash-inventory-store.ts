@@ -976,6 +976,23 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 		return this.#moveStock(sku, qty, key, "removal");
 	}
 
+	/** Resume an existing stock command before an admin's stale-view guard; never creates a claim. */
+	async resumeStockMovement(
+		sku: string,
+		qty: number,
+		key: IdempotencyKey,
+		direction: "restock" | "removal",
+	): Promise<StockRemovalResult | null> {
+		assertPositiveInt(qty, "resumeStockMovement", "qty");
+		const claimId = stockClaimId(key);
+		const existing = await this.#movements.get(claimId);
+		if (existing === null) return null;
+		const claim = this.#asStockClaim(key, existing, sku, direction, qty);
+		return claim.applied === undefined
+			? this.#applyStockClaim(key, claimId, claim)
+			: { ...claim.applied.result };
+	}
+
 	/**
 	 * The shared stock delta/absolute target body. Exactly-once by per-key claim
 	 * document: `inventory_movements/stock:{key}` carries the intent (sku,

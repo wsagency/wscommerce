@@ -5,6 +5,9 @@
   entries, their dispatcher branches and their two sandbox suites are gone, and five Block Kit
   screens remain.
 - Date: 2026-08-01
+- Amended: 2026-09-30 — stock command identity distinguishes separate confirmed intents even when
+  available counts cycle. A durable replay recovers its original outcome before the fresh-movement
+  stale-view guard. See the final amendment below.
 - Amended: 2026-08-03 — **Decision 3, and one clause of Decision 2 rendered moot.** THREE
   checks are deleted along with the unreached two-step `-review` pair they were the only
   implementation of: two of Decision 3's three refusals, and the `Refunded by` attribution
@@ -373,6 +376,29 @@ member.
   tests that drove the deleted ids, and each of those pinned behaviour that no longer exists
   rather than behaviour that moved somewhere else.
 - Reports and Coupons remain unruled; Tax, Shipping and Settings remain Block Kit permanently.
+
+## Amended 2026-09-30 — confirmed stock intent and durable replay
+
+Actual migrated SQLite dispatch reproduced add 3 from 4, remove 3 to 4, then add 3 again reporting
+7 while retaining 4. Stock changes do not change the commerce metadata's `updatedAt`, and an
+available count is not a monotonic revision. Neither value can distinguish those separate intents.
+
+Parent and variant stock actions now require a command UUID created for one confirmation. The
+server hashes that identity with the product and optional variant resource; native durable claims
+bind SKU, operation and quantity. Changed bodies under an existing command are refused. A later
+confirmed movement receives a new UUID even when its visible values match an earlier command.
+
+Decision 3's stale-view refusal applies to **fresh** movements. A retry with an existing native
+claim recovers or completes that claim before comparing its historical view with current stock.
+Otherwise a successful removal whose response was lost would be refused on its own resulting
+count and invite a second issuance. Resource ownership, live declaration and authoritative SKU
+guards remain in front of recovery. No stale view authorizes a new movement.
+
+The React screen saves an unanswered command in session storage before dispatch, reuses it for
+explicit retry after transport failure or reload, and blocks new edits and movements until the
+outcome is understood. It sends no request if the command cannot be retained. The UUID is never
+rendered as an operator field. Historical receipts name their recorded count; a fresh read supplies
+current stock. Edit keys, CMS ownership, authentication and the sandbox gate are unchanged.
 
 ## Amended 2026-08-03, second — Decision 3 again, for Pricing & inventory
 

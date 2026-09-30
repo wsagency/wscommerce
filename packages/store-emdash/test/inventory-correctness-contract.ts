@@ -182,6 +182,41 @@ export function inventoryCorrectnessContract(storage: () => StorageAccess): void
 		).toEqual({ ok: true, onHand: 17 });
 	}, 60_000);
 
+	test("resuming an existing stock command recovers its interrupted receipt without issuing another movement", async () => {
+		const access = storage();
+		const clean = make(access);
+		await clean.seedOnHand("BOOK", 10);
+		const missing = idempotencyKey("not-dispatched");
+		expect(await clean.resumeStockMovement("BOOK", 2, missing, "restock")).toBeNull();
+		expect(
+			await collectionOf<MovementClaimDoc>(access, INVENTORY_MOVEMENTS_COLLECTION).get(
+				stockClaimId(missing),
+			),
+		).toBeNull();
+		const key = await crashedRestock(access);
+		await clean.removeStock("BOOK", 3, idempotencyKey("later-removal"));
+		expect(await clean.getOnHand("BOOK")).toBe(14);
+		expect(await clean.resumeStockMovement("BOOK", 7, key, "restock")).toEqual({
+			ok: true,
+			onHand: 17,
+		});
+		expect(await clean.resumeStockMovement("BOOK", 7, key, "restock")).toEqual({
+			ok: true,
+			onHand: 17,
+		});
+		for (const [otherSku, qty, direction] of [
+			["OTHER", 7, "restock"],
+			["BOOK", 1, "restock"],
+			["BOOK", 7, "removal"],
+		] as const) {
+			await expect(clean.resumeStockMovement(otherSku, qty, key, direction)).rejects.toMatchObject({
+				name: "StockMovementMismatchError",
+			});
+		}
+		expect(await clean.getOnHand("BOOK")).toBe(14);
+		expect(await clean.findOnHand("OTHER")).toBeNull();
+	});
+
 	test("an eviction cannot discard its witness if promoting the claim fails", async () => {
 		const access = storage();
 		const clean = make(access);

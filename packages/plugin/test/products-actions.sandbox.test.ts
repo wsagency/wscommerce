@@ -42,8 +42,9 @@
  *     ABSENT watermark refuses fail-closed, with no re-read at all. A save carries
  *     `expectedUpdatedAt` and refuses without one rather than clobbering; with a
  *     stale one it is refused by the store's own compare-and-set.
- *  3. **Idempotency without a nonce, and the replay case.** Every key is derived
- *     from content plus the watermark the operator saw. THE KEY IS NO LONGER A
+ *  3. **Intent identity and replay.** Edit keys use content plus the observed
+ *     watermark. Stock commands use one UUID per confirmed intent, stable
+ *     across retries even if counts cycle back to an earlier value. THE KEY IS NO LONGER A
  *     STRING ANY TEST CAN SEE — it is an argument handed to a use-case in this
  *     process rather than a header on a wire — so it is proven by what it BUYS:
  *     a double-submit of one rendered form applies once and still reads `Saved`
@@ -205,7 +206,14 @@ async function readProduct(productId: string): Promise<ProductCommerce> {
 /** One console write, exactly as `performAction` sends it: a flat payload, no
  *  carrier. */
 async function act(actionId: string, value: Record<string, string>): Promise<ActOutcome> {
-	const outcome = await sandbox.invokeRoute("admin", { type: ACT, action_id: actionId, value });
+	const command = ["products:restock", "products:remove-stock"].includes(actionId)
+		? { commandId: crypto.randomUUID(), ...value }
+		: value;
+	const outcome = await sandbox.invokeRoute("admin", {
+		type: ACT,
+		action_id: actionId,
+		value: command,
+	});
 	expect(outcome, JSON.stringify(outcome)).toHaveProperty("result");
 	return (outcome as { result: ActOutcome }).result;
 }
@@ -760,12 +768,15 @@ describe("the Pricing & inventory write path (workerd sandbox)", () => {
 	});
 
 	test("THE REPLAY CASE, on stock: one rendered form submitted twice moves ONCE; a fresh watermark moves again", async () => {
-		// The whole reason the key is content-derived rather than a nonce. A
-		// double-click of the same control must dedupe, and two DELIBERATE restocks
-		// of the same size must both apply — which they do because the second is
-		// taken against the on-hand the first produced.
+		// A confirmed command replay applies once; a later deliberate movement
+		// receives a new identity even when its quantity is unchanged.
 		const seeded = await seedProduct({ onHand: 42 });
-		const payload = { productId: seeded.productId, onHand: "42", qty: "8" };
+		const payload = {
+			productId: seeded.productId,
+			onHand: "42",
+			qty: "8",
+			commandId: crypto.randomUUID(),
+		};
 
 		await act("products:restock", payload);
 		const replay = await act("products:restock", payload);
@@ -778,6 +789,33 @@ describe("the Pricing & inventory write path (workerd sandbox)", () => {
 		// different watermark ⇒ a different key ⇒ a second, deliberate restock.
 		await act("products:restock", { productId: seeded.productId, onHand: "50", qty: "8" });
 		expect(await inventory.findOnHand(seeded.sku)).toBe(58);
+	});
+
+	test("parent stock add-remove-add has separate commands and a removal retry does not apply twice", async () => {
+		const seeded = await seedProduct({ onHand: 4 });
+		const first = {
+			productId: seeded.productId,
+			onHand: "4",
+			qty: "3",
+			commandId: crypto.randomUUID(),
+		};
+		await act("products:restock", first);
+		expect(await inventory.findOnHand(seeded.sku)).toBe(7);
+		const removal = { ...first, onHand: "7", commandId: crypto.randomUUID() };
+		await act("products:remove-stock", removal);
+		expect(await inventory.findOnHand(seeded.sku)).toBe(4);
+		expect((await act("products:remove-stock", removal)).notice?.variant).toBe("default");
+		expect(await inventory.findOnHand(seeded.sku)).toBe(4);
+		await act("products:restock", { ...first, commandId: crypto.randomUUID() });
+		expect(await inventory.findOnHand(seeded.sku)).toBe(7);
+		expect(
+			(await act("products:restock", { ...first, onHand: "7", qty: "1" })).notice?.variant,
+		).toBe("error");
+		expect(await inventory.findOnHand(seeded.sku)).toBe(7);
+		expect((await act("products:restock", { ...first, commandId: "" })).notice?.variant).toBe(
+			"error",
+		);
+		expect(await inventory.findOnHand(seeded.sku)).toBe(7);
 	});
 
 	// -- remove stock (the screen's ONE destructive act) ------------------------

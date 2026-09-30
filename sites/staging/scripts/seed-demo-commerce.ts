@@ -247,11 +247,13 @@ export function priceBody(row: DemoRow, expectedUpdatedAt: string): Record<strin
 	};
 }
 
-/** The `products:restock` payload. `onHand` is the WATERMARK — the count this
- *  script just observed — not the target; the route refuses the write if the
- *  live count has moved since. `qty` is how many to ADD. */
-export function restockBody(row: DemoRow, onHand: number): Record<string, string> {
-	return { productId: row.id, onHand: String(onHand), qty: String(row.initialOnHand) };
+/** Construct once per seed intent. A transport retry must reuse this exact body. */
+export function restockBody(
+	row: DemoRow,
+	onHand: number,
+	commandId = crypto.randomUUID(),
+): Record<string, string> {
+	return { productId: row.id, onHand: String(onHand), qty: String(row.initialOnHand), commandId };
 }
 
 /** The commerce row as the console detail read reports it — `null` when the
