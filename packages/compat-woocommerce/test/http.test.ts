@@ -381,6 +381,30 @@ describe("remaining profile resources and validation", () => {
 			ids,
 		});
 		expect((await foreign(request("orders/99/notes/99"))).status).toBe(404);
+		let stockWrites = 0;
+		const foreignStock = handler(["products:write"], {
+			backend: {
+				...profile,
+				getVariation: async () => ({ ...variation, parentId: "foreign-product" }),
+				applyStockUpdate: async () => {
+					stockWrites++;
+					return variation;
+				},
+			},
+			ids,
+		});
+		expect(
+			(
+				await foreignStock(
+					request("products/99/variations/99", {
+						method: "PUT",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ stock_quantity: 4 }),
+					}),
+				)
+			).status,
+		).toBe(404);
+		expect(stockWrites).toBe(0);
 	});
 	it("rejects a corrupt native financial projection and malformed pagination", async () => {
 		const process = handler(["orders:read"], {

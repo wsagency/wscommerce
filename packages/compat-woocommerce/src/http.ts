@@ -482,6 +482,11 @@ export function createWooCommerceHandler(
 					for (const key of Object.keys(body)) if (key !== "stock_quantity") unsupportedField(key);
 					if (!Number.isSafeInteger(body.stock_quantity) || Number(body.stock_quantity) < 0)
 						invalid("stock_quantity must be a nonnegative safe integer.");
+					if (route.child === "variations" && child) {
+						const variation = await options.backend.getVariation(parent, child);
+						if (!variation || variation.parentId !== parent || variation.nativeId !== child)
+							throw new WooMutationError("woocommerce_rest_not_found", "Resource not found.", 404);
+					}
 					return response(
 						await mapper.product(
 							await options.backend.applyStockUpdate(
