@@ -30,7 +30,7 @@
  */
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
-import { mkdtemp, cp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, cp, rm, writeFile, realpath } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -380,6 +380,11 @@ function capnpConfig(
  * TypeScript source — the same dev-time `exports` the real package.json declares.
  */
 async function materializeWorkspacePackages(workDir: string): Promise<void> {
+	await cp(
+		await realpath(path.join(PLUGIN_ROOT, "node_modules/@bwip-js/generic")),
+		path.join(workDir, "node_modules/@bwip-js/generic"),
+		{ recursive: true },
+	);
 	for (const pkg of WORKSPACE_PACKAGES) {
 		const scope = pkg.scope ?? "@otta-sh";
 		const packageDir = path.join(workDir, "node_modules", scope, pkg.name);
@@ -439,7 +444,7 @@ export async function loadPluginInSandbox(options: SandboxOptions): Promise<Sand
 		// `pnpm --filter @otta-sh/plugin exec vitest`. The pattern is the SCOPE
 		// rather than the one package, because a second shared package would
 		// otherwise reintroduce exactly this failure and only in one invocation.
-		noExternal: [/^(@otta-sh|@emdash-commerce)\//],
+		noExternal: [/^(@otta-sh|@emdash-commerce|@bwip-js)\//],
 	});
 
 	// tsdown emits a single entry flat into outDir under the entry's basename.

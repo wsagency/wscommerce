@@ -1,0 +1,9 @@
+# Croatian bank-transfer barcodes
+
+HUB-3A support follows the [HUB version 6 specification](https://hub.hr/sites/default/files/inline-files/2DBK_EUR_Uputa_1.pdf). Amounts are authoritative integer EUR cents of at most 15 digits. The fourteen UTF-8 fields terminate with LF. Croatian letters, periods and colons survive normalization; descriptive text is truncated to the prescribed character limits. Control characters fail validation. Croatian IBANs require a valid mod-97 checksum. Current supported reference models are HR00 (one to three numeric groups of at most twelve digits, at most 22 total characters) and HR99 (empty reference); other models require explicit validation algorithms before support.
+
+`freezeBankTransferSnapshot` validates and copies recipient, payer and financial data. `buildHub3Payload` and `renderHub3Svg` revalidate inputs. SVG uses the pinned MIT-licensed `@bwip-js/generic` renderer, with nine columns, error correction level four, full PDF417, 3:1 rows and 0.254 mm modules. Output is bounded to 58 × 26 mm, with a quiet zone. Scale accepts whole values 1–6 and changes SVG coordinates, preserving physical print dimensions. No Node buffers, image service, PNG or external barcode API is involved.
+
+Qualification: `pnpm exec vitest run packages/plugin/test/bank-barcode.test.ts` includes a real bundled workerd render with the production sandbox bridge. The synthetic recipient uses a nonexistent institution code and must never receive money. Automated SVG qualification does not prove a successful scan in a bank app or a payment. Print at actual size, scan on the intended supported bank apps, inspect the decoded fields without authorizing payment, and record device/app versions before activation.
+
+Rendering attribution and MIT notices for Mark Warren's bwip-js and Terry Burton's BWIPP are preserved in `packages/plugin/THIRD_PARTY_NOTICES`.
