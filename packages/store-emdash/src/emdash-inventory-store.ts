@@ -394,10 +394,11 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 
 	/**
 	 * The ORDER-SCOPED release: an order may only release a hold IT adopted.
-	 * Anything else — unknown id, already terminal, another order's hold, a hold
-	 * still cart-`held` — is a silent no-op, never a throw: an unscoped release
-	 * here is how a stale order could free a live checkout's hold, or crash the
-	 * expiry sweep forever on a committed one.
+	 * A cart-held reservation keeps its units and ownership, but records this
+	 * order's permanent adoption refusal in the SAME inventory CAS adoption uses.
+	 * A delayed writer must lose that CAS or read the fence, even if cancellation
+	 * already closed its recovery brackets before the writer resumes or crashes.
+	 * Unknown/terminal ids and another order's adopted hold remain harmless.
 	 */
 	async releaseAdopted(reservationId: string, orderId: string): Promise<void> {
 		const index = await this.#index.get(reservationId);
@@ -406,9 +407,27 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 			await this.#prune(index.sku, this.#pruneEntries(index, reservationId), "releaseAdopted");
 			return;
 		}
-		const hold = await this.#liveHold(index, reservationId);
-		if (hold === undefined || hold.state !== "adopted" || hold.orderId !== orderId) return;
-		await this.#settle(index, reservationId, "released");
+		const owned = await this.#cas<boolean>("releaseAdopted", async () => {
+			const current = await this.#inventory.getVersioned(index.sku);
+			if (current === null) return casDone(false);
+			const doc = normalizeInventoryDoc(current.value);
+			const hold = doc.holds[index.idempotencyKey];
+			if (hold === undefined || hold.reservationId !== reservationId) return casDone(false);
+			if (hold.state === "adopted") return casDone(hold.orderId === orderId);
+			if (hold.adoptionBlockedFor?.includes(orderId)) return casDone(false);
+			const written = await this.#inventory.compareAndSet(index.sku, current.revision, {
+				...doc,
+				holds: {
+					...doc.holds,
+					[index.idempotencyKey]: {
+						...hold,
+						adoptionBlockedFor: [...(hold.adoptionBlockedFor ?? []), orderId],
+					},
+				},
+			});
+			return written.applied ? casDone(false) : CAS_RETRY;
+		});
+		if (owned) await this.#settle(index, reservationId, "released");
 	}
 
 	/**
@@ -560,6 +579,10 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 			for (const { id, index } of group) {
 				const hold = holds[index.idempotencyKey];
 				if (hold === undefined || hold.reservationId !== id) {
+					lost.push(id);
+					continue;
+				}
+				if (hold.adoptionBlockedFor?.includes(input.orderId)) {
 					lost.push(id);
 					continue;
 				}

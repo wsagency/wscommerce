@@ -286,7 +286,7 @@ describe("createOrderFromCart — a same-key replay finishes an interrupted chec
 		expect((await h.orderStore.getById(placed.order.id))?.state).toBe("paid");
 	});
 
-	test("a replay racing EXPIRY (swept between its I1 read and its adopt) never adopts for the dead order — stock back on sale, no intent, cart untouched", async () => {
+	test("a replay racing EXPIRY never adopts for the dead order — no intent, cart holds retained until their own sweep", async () => {
 		const cartId = await cart();
 		adoptThrowsOnce();
 		await expect(createOrderFromCart(h.createDeps, cmd(cartId))).rejects.toThrow(ContentionError);
@@ -296,7 +296,8 @@ describe("createOrderFromCart — a same-key replay finishes an interrupted chec
 
 		// The replay reads the order `pending`; the order sweep then expires it
 		// before the replay's adoption runs. Its `releaseAdopted` finds the holds
-		// still cart-`held` — a no-op — so only the replay itself can undo them.
+		// still cart-held: it fences this order's future adoption without changing
+		// the cart's units. Its own expiry sweep still owns their eventual release.
 		const real = h.orderStore.getByIdempotencyKey.bind(h.orderStore);
 		h.orderStore.getByIdempotencyKey = async (key) => {
 			const stale = await real(key);
@@ -317,14 +318,19 @@ describe("createOrderFromCart — a same-key replay finishes an interrupted chec
 			clientAction: { kind: "none" },
 		});
 		expect(h.stripeGw.intentCalls.length).toBe(intentsBefore);
-		expect(ids.map((id) => h.inventory.reservationState(id))).toEqual(["released", "released"]);
-		expect(h.inventory.onHand("SKU-1")).toBe(10);
-		expect(h.inventory.onHand("SKU-2")).toBe(10);
+		expect(ids.map((id) => h.inventory.reservationState(id))).toEqual(["held", "held"]);
+		expect(h.inventory.onHand("SKU-1")).toBe(9);
+		expect(h.inventory.onHand("SKU-2")).toBe(8);
 		const cartRow = await h.cartStore.get(cartId);
 		expect({ state: cartRow?.state, orderId: cartRow?.orderId }).toEqual({
 			state: "active",
 			orderId: null,
 		});
+		expect(await expireHolds(h.cartDeps, new Date(stranded.holdExpiresAt))).toBe(2);
+		expect(ids.map((id) => h.inventory.reservationState(id))).toEqual(["released", "released"]);
+		expect(h.inventory.onHand("SKU-1")).toBe(10);
+		expect(h.inventory.onHand("SKU-2")).toBe(10);
+		expect(await expireHolds(h.cartDeps, new Date(stranded.holdExpiresAt))).toBe(0);
 	});
 
 	test("a replay of a COMPLETED checkout is unchanged: same order, holds still adopted, cart still stamped", async () => {

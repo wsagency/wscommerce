@@ -66,3 +66,32 @@ unknown SKU does not consume the key. No collection or migration is added. Drain
 and upgrade all inventory writers before using absolute operations: older
 writers do not understand the new direction. Shared port tests and native CAS,
 crash and ring-eviction regressions run on migrated SQLite and local D1.
+
+## Cancellation fences for delayed adoption (2026-09-30)
+
+Cancellation can finish its release before a delayed checkout or offline
+settlement adopts the cart hold. A post-adoption state check compensates a live
+writer, but does not protect a writer that dies after the inventory CAS, once
+cancellation recovery has already closed the order's hold brackets.
+
+An order-scoped `releaseAdopted` therefore records the released order in a
+cart-held reservation's optional `adoptionBlockedFor` field. The fence and every
+singular or batch adoption guard use the same SKU document CAS. A stale adoption
+must either lose its revision or observe the fence on retry. The cart keeps its
+quantity, ownership and deadline; it may still adjust, expire, or supply the hold
+to a different legitimate order. Adopted holds are still released only by their
+owning order. Post-adoption terminal-state cleanup remains useful compensation.
+
+Fences are never evicted while a hold is live. Every mutable hold rewrite
+preserves them. After pruning, the reservation's durable terminal records prevent
+the same identity from being recreated, so retaining the fence beyond the hold
+is unnecessary. There is no new collection, index, schema migration or background
+healer. Legacy absent fields mean no recorded fence. Upgrade all writers together;
+older adoption code does not enforce this protection.
+
+The shared inventory contract verifies both adoption operations, cart quantity
+changes, other-order adoption, once-only cart release, and retention past 256
+other cancellation fences. Native SQLite and local D1 regressions park a stale
+adoption CAS and reproduce a bank/COD writer dying after cancellation recovery
+closed both brackets. Those cases also drive the actual cart expiry sweep and
+verify that held units return once, without any order post-adoption cleanup.

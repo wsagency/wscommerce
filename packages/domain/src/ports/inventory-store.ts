@@ -43,6 +43,9 @@ export interface InventoryStore {
 	// When `expected` is supplied, SKU and quantity must also match in the same
 	// guarded write, including already-adopted replay; mismatch is RESERVATION_LOST
 	// and leaves the live hold intact. Checkout supplies its immutable snapshot.
+	// A previous releaseAdopted for this order while the hold was cart-owned
+	// permanently prevents adoption; that fence is checked in the same guarded
+	// write and survives cart quantity/deadline changes. Other orders remain eligible.
 	adopt(input: AdoptInput): Promise<AdoptResult>;
 
 	// Additive (PR B — checkout-write batching): the BATCHED counterpart of
@@ -79,12 +82,15 @@ export interface InventoryStore {
 	// Additive (review G2): the ORDER-SCOPED release used by every order-driven
 	// release path (`expireOrders`, the cancel release). A single guarded
 	// flip `adopted → released` scoped `WHERE order_id = :orderId`, then the
-	// stock return — an order can only ever release a hold IT adopted. 0 rows is
-	// ALWAYS a silent no-op: already released/committed (benign replay), or
-	// owned by another order / still cart-`held` (not this order's to touch —
-	// an unscoped release here is how a stale order could free a live checkout's
-	// hold, or crash the sweep on a committed one). Never throws on state; the
-	// loud lost-hold anomaly stays `commit`'s.
+	// stock return — an order can only ever release a hold IT adopted. A hold
+	// already released/committed or owned by another order is harmless. A still
+	// cart-held reservation retains its quantity/ownership/expiry, but durably
+	// blocks this order's future adoption in the same atomic record adoption
+	// checks. This refusal cannot be evicted while the reservation remains live.
+	// A cancellation can therefore complete before a delayed adoption, even if
+	// that writer later dies before compensation. A different legitimate order
+	// may still adopt, and cart adjustment/expiry keep their existing semantics.
+	// Never throws on state; the loud lost-hold anomaly stays `commit`'s.
 	releaseAdopted(reservationId: string, orderId: string): Promise<void>;
 
 	// Additive (Phase 1 §7/§8 Risk 4) — a dedicated create-if-absent initial

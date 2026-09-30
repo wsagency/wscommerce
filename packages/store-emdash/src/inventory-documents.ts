@@ -34,7 +34,7 @@
  * bounded ring of the last {@link APPLIED_MOVEMENT_RING_SIZE} applied keys. Each
  * result is promoted onto its durable claim BEFORE its ring witness is evicted;
  * a failed promotion prevents eviction. No periodic healer or timing assumption
- * is needed, and no map on the hot document grows without limit.
+ * is needed, and movement history on the hot document stays bounded.
  *
  * Document ids are the once-only guard everywhere a claim is needed
  * (`_plugin_storage`'s primary key plus `compareAndSet(id, null, …)`'s
@@ -102,6 +102,14 @@ export interface HoldEntry {
 	/** The owning order once adopted; `null` while cart-held. */
 	orderId: string | null;
 	createdAt: string;
+	/**
+	 * Orders whose scoped release already ran while this hold was cart-owned.
+	 * Checked in the adoption CAS, so a delayed writer cannot adopt for a dead
+	 * order after cancellation recovery completed. Retained without eviction for
+	 * this live hold's lifetime; terminal reservation records prevent resurrection
+	 * after pruning. Cart adjustments and deadline stamps preserve the fence.
+	 */
+	adoptionBlockedFor?: string[];
 	/**
 	 * The last `adjust` key whose movement this hold recorded. A hold-local witness
 	 * that an adjust's `compareAndSet` landed, which survives eviction from

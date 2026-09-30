@@ -513,6 +513,67 @@ export function inventoryStoreContract(
 		const PAST = "2026-07-10T00:01:00.000Z"; // < NOW ⇒ an expired hold
 		const LATER = "2026-07-10T01:00:00.000Z"; // > FUTURE ⇒ past the deadline
 
+		for (const operation of ["adopt", "adoptMany"] as const) {
+			test(`${operation} cannot adopt for an order whose scoped release ran while cart-held`, async () => {
+				const h = await makeStore();
+				if (!h.holdWithExpiry) throw new Error("the contract requires holdWithExpiry");
+				await h.seed("SKU-1", 10);
+				const reservationId = await h.holdWithExpiry("SKU-1", 2, "fenced-hold", FUTURE);
+				await h.store.releaseAdopted(reservationId, "ord-cancelled");
+				await h.store.releaseAdopted(reservationId, "ord-cancelled");
+				expect(await h.onHand("SKU-1")).toBe(8);
+				// The cart keeps its hold and may still change the quantity. The old
+				// order's adoption refusal must survive that mutable hold rewrite.
+				expect(await h.store.adjust(reservationId, 3, idempotencyKey("cart-edit"))).toEqual({
+					ok: true,
+					reservationId,
+				});
+				const input = { orderId: "ord-cancelled", holdExpiresAt: FUTURE, now: NOW };
+				if (operation === "adopt") {
+					expect(await h.store.adopt({ ...input, reservationId })).toEqual({
+						ok: false,
+						reason: "RESERVATION_LOST",
+					});
+				} else {
+					expect(await h.store.adoptMany({ ...input, reservationIds: [reservationId] })).toEqual({
+						adopted: [],
+						lost: [reservationId],
+					});
+				}
+				expect(await h.onHand("SKU-1")).toBe(7);
+				// A different legitimate order can use the cart's unchanged live hold.
+				expect(await h.store.adopt({ ...input, reservationId, orderId: "ord-next" })).toEqual({
+					ok: true,
+				});
+				await h.store.releaseAdopted(reservationId, "ord-cancelled");
+				expect(await h.onHand("SKU-1")).toBe(7);
+				await h.store.releaseAdopted(reservationId, "ord-next");
+				expect(await h.onHand("SKU-1")).toBe(10);
+			});
+		}
+
+		test("scoped release keeps every blocked order until cart release returns the held units once", async () => {
+			const h = await makeStore();
+			if (!h.holdWithExpiry) throw new Error("the contract requires holdWithExpiry");
+			await h.seed("SKU-1", 10);
+			const reservationId = await h.holdWithExpiry("SKU-1", 2, "many-fences", FUTURE);
+			for (let i = 0; i < 257; i++)
+				await h.store.releaseAdopted(reservationId, `ord-blocked-${String(i)}`);
+			expect(
+				await h.store.adopt({
+					reservationId,
+					orderId: "ord-blocked-0",
+					holdExpiresAt: FUTURE,
+					now: NOW,
+				}),
+			).toEqual({ ok: false, reason: "RESERVATION_LOST" });
+			expect(await h.onHand("SKU-1")).toBe(8);
+			// Cart expiry/removal owns this release, not any of the abandoned orders.
+			await h.store.release(reservationId);
+			await h.store.release(reservationId);
+			expect(await h.onHand("SKU-1")).toBe(10);
+		});
+
 		for (const expected of [
 			{ sku: "SKU-1", quantity: 1 },
 			{ sku: "SKU-2", quantity: 2 },

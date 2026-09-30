@@ -31,6 +31,8 @@ interface ReservationRow {
 	orderId: string | null;
 	/** Phase 4: re-pointed to the order's hold deadline on adoption. */
 	expiresAt: string | null;
+	/** Order-scoped release fences retained until this reservation is terminal. */
+	adoptionBlockedFor?: string[];
 }
 
 export interface InMemoryInventoryStoreOptions {
@@ -203,13 +205,18 @@ export class InMemoryInventoryStore implements InventoryStore {
 	/**
 	 * Order-scoped release (review G2): the guarded `adopted → released` flip
 	 * scoped to the OWNING order. Anything else — unknown id, released/committed,
-	 * adopted by another order, still cart-`held` — is a silent no-op, never a
-	 * throw: a stale order must not free (or crash the sweep on) a hold it never
-	 * adopted.
+	 * adopted by another order — is harmless. A cart-held reservation keeps its
+	 * units but permanently refuses adoption for the released order, so a delayed
+	 * writer cannot attach it to an order whose cancellation already completed.
 	 */
 	async releaseAdopted(reservationId: string, orderId: string): Promise<void> {
 		const row = this.#reservations.get(reservationId);
 		if (row === undefined) return;
+		if (row.state === "held") {
+			if (!row.adoptionBlockedFor?.includes(orderId))
+				row.adoptionBlockedFor = [...(row.adoptionBlockedFor ?? []), orderId];
+			return;
+		}
 		if (row.state !== "adopted" || row.orderId !== orderId) return;
 		row.state = "released";
 		this.#onHand.set(row.sku, (this.#onHand.get(row.sku) ?? 0) + row.qty);
@@ -224,6 +231,8 @@ export class InMemoryInventoryStore implements InventoryStore {
 	 */
 	async adopt(input: AdoptInput): Promise<AdoptResult> {
 		const row = this.#mustGet(input.reservationId);
+		if (row.adoptionBlockedFor?.includes(input.orderId))
+			return { ok: false, reason: "RESERVATION_LOST" };
 		if (
 			input.expected !== undefined &&
 			(row.sku !== input.expected.sku || row.qty !== input.expected.quantity)
