@@ -130,6 +130,28 @@ importers:
         specifier: 'catalog:'
         version: 4.1.10(@types/node@26.1.1)(happy-dom@20.11.1)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(yaml@2.9.0))
 
+  packages/compat-woocommerce:
+    dependencies:
+      '@otta-sh/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@otta-sh/store-emdash':
+        specifier: workspace:*
+        version: link:../store-emdash
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.1
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.22.4(typescript@5.9.3)
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.10(@types/node@22.20.1)(happy-dom@20.11.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(yaml@2.9.0))
+
   packages/invoicing:
     dependencies:
       '@otta-sh/domain':

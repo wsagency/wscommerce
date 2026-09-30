@@ -1,0 +1,11 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"lib": ["ES2023", "DOM", "DOM.Iterable"],
+		"outDir": "dist/tsc",
+		"emitDeclarationOnly": true,
+		"rootDir": "."
+	},
+	"include": ["src", "test", "tsdown.config.ts", "vitest.config.ts"],
+	"references": [{ "path": "../domain" }, { "path": "../store-emdash" }]
+}
