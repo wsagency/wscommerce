@@ -472,7 +472,7 @@ export function createCheckoutSummaryRouteHandler(): RouteHandler<CheckoutSummar
 					? {}
 					: {
 							paymentMethods: paymentMethods.filter(
-								(method) => method.id !== "cod" || quote.requiresShipping,
+								(method) => method.id !== "cod" || quote.codEligible === true,
 							),
 							billingRequired: true,
 						}),

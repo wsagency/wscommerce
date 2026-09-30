@@ -876,6 +876,7 @@ export class InProcessCommerceClient implements CommerceClient {
 		);
 		const lines: TotalsLineInput[] = [];
 		let requiresShipping = false;
+		let codEligible = true;
 		for (const line of cart.lines) {
 			if (line.productId === null) return { ok: false, reason: "PRODUCT_NOT_PRICED" };
 			const row = byId.get(toProductId(line.productId)) ?? null;
@@ -887,6 +888,7 @@ export class InProcessCommerceClient implements CommerceClient {
 			if (unit === null || unit.price === null) return { ok: false, reason: "PRODUCT_NOT_PRICED" };
 			if (unit.price.currency !== cart.currency) return { ok: false, reason: "CURRENCY_MISMATCH" };
 			if (row.productKind === "physical") requiresShipping = true;
+			else codEligible = false;
 			lines.push({
 				unitPriceCents: unit.price.amount,
 				qty: line.qty,
@@ -918,6 +920,7 @@ export class InProcessCommerceClient implements CommerceClient {
 		return {
 			ok: true,
 			requiresShipping,
+			codEligible: codEligible && requiresShipping,
 			destination: serializeDestination(quote.destination),
 			taxDestination: serializeDestination(quote.taxDestination),
 			discountedSubtotalCents: breakdown.subtotalCents - breakdown.discountCents,

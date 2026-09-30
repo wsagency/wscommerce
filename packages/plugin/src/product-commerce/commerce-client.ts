@@ -504,6 +504,8 @@ export type QuoteResult =
 			breakdown: QuoteBreakdownWire;
 			/** Whether any line ships. A digital-only cart needs no address. */
 			requiresShipping: boolean;
+			/** Native proof that every live sellable line is physical. Absent fails closed. */
+			codEligible?: boolean;
 			destination: QuoteDestinationWire;
 			taxDestination?: QuoteDestinationWire;
 			/** `subtotal − discount` — what a delivery option's free-shipping
