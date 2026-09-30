@@ -158,6 +158,13 @@ export interface OrderAddress {
 	phone: string | null;
 }
 
+/** Immutable invoice recipient submitted at checkout, independent of the profile. */
+export interface OrderBillingAddress extends OrderAddress {
+	company: string | null;
+	taxNumber: string | null;
+	vatId: string | null;
+}
+
 /**
  * An order line — **insert-once, never updated** (§4). `title`, `unitPrice`, and
  * `currency` are snapshots taken at creation; they are stored on the line, never
@@ -227,6 +234,8 @@ export interface Order {
 	 * customer's profile address book never rewrites it (the snapshot invariant).
 	 */
 	shippingAddress: OrderAddress | null;
+	/** Captured once. Legacy orders without this field have no billing snapshot. */
+	billingAddress?: OrderBillingAddress | null;
 	/**
 	 * Set when settle could not commit an adopted hold that should have been
 	 * present (§5): the order is `paid` (money received) but stock was lost, so

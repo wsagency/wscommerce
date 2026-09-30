@@ -13,6 +13,7 @@ import type {
 	FulfillmentKind,
 	Order,
 	OrderAddress,
+	OrderBillingAddress,
 	OrderState,
 	PaymentMethod,
 	ReconciliationOutcome,
@@ -517,6 +518,7 @@ export interface CreateOrderInput {
 	 * nothing (the address, like the line snapshots, is carried exactly once).
 	 */
 	shippingAddress?: OrderAddress | null;
+	billingAddress?: OrderBillingAddress | null;
 	/**
 	 * The `order_totals` write. Phase 4 passed only `{ subtotal, total, currency }`
 	 * (the stub); Phase 6 passes the full computed breakdown. The extra fields are

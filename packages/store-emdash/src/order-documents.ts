@@ -78,6 +78,7 @@ import type {
 	FulfillmentKind,
 	IdempotencyKey,
 	OrderAddress,
+	OrderBillingAddress,
 	OrderCancellation,
 	OrderEventKind,
 	OrderFulfillment,
@@ -459,6 +460,7 @@ export interface OrderDoc {
 	totals: OrderTotalsDoc;
 	/** The ship-to snapshot (ADR-0009), or null when none was captured. */
 	shippingAddress: OrderAddress | null;
+	readonly billingAddress?: OrderBillingAddress | null;
 	/** Append-only state-change audit; appended inside the guarded flip. */
 	events: OrderEventDoc[];
 	/** At most one entry per `toState`; first-wins. */
@@ -622,6 +624,7 @@ export function normalizeOrderDoc(doc: OrderDoc): OrderDoc {
 		searchKey: doc.searchKey ?? null,
 		buyerRefLower: doc.buyerRefLower ?? null,
 		items: doc.items ?? [],
+		billingAddress: doc.billingAddress ?? null,
 		events: doc.events ?? [],
 		emailOutbox: doc.emailOutbox ?? [],
 		payments: doc.payments ?? [],

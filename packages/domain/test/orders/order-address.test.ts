@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { normalizeOrderAddress, type OrderAddressInput } from "../../src/orders/order-address.js";
+import {
+	normalizeOrderAddress,
+	normalizeOrderBillingAddress,
+	type OrderAddressInput,
+} from "../../src/orders/order-address.js";
 
 /** ADR-0021 Decisions 3 and 6: every new order's address carries an ISO
  *  alpha-2 country, and a non-blank region is a real subdivision of it, stored
@@ -11,6 +15,33 @@ const base: OrderAddressInput = {
 	postalCode: "12345",
 	country: "US",
 };
+
+describe("normalizeOrderBillingAddress", () => {
+	test("copies and trims invoice identity, normalizes optional fields to null", () => {
+		expect(
+			normalizeOrderBillingAddress({
+				...base,
+				country: " us ",
+				company: " Acme Ltd ",
+				taxNumber: " TAX123 ",
+				vatId: " ",
+			}),
+		).toMatchObject({
+			ok: true,
+			value: { country: "US", company: "Acme Ltd", taxNumber: "TAX123", vatId: null },
+		});
+	});
+	test("rejects an overlong invoice identifier or incomplete address", () => {
+		expect(normalizeOrderBillingAddress({ ...base, vatId: "x".repeat(65) })).toEqual({
+			ok: false,
+			reason: "INVALID",
+		});
+		expect(normalizeOrderBillingAddress({ ...base, city: " " })).toEqual({
+			ok: false,
+			reason: "INVALID",
+		});
+	});
+});
 
 describe("normalizeOrderAddress — ISO codes", () => {
 	test("the country is uppercased and trimmed", () => {

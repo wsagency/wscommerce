@@ -175,6 +175,7 @@ export class InMemoryOrderStore implements OrderStore {
 			// ADR-0009: freeze the submitted ship-to snapshot (a COPY — never a live
 			// pointer to the profile book), or null when none was captured.
 			shippingAddress: cloneAddress(input.shippingAddress ?? null),
+			billingAddress: input.billingAddress ? { ...input.billingAddress } : null,
 			reconciliationFlag: null,
 			reconciliationResolution: null,
 			fulfillment: null,
@@ -915,6 +916,7 @@ export class InMemoryOrderStore implements OrderStore {
 			// Deep-clone the frozen ship-to so a caller can never mutate the stored
 			// snapshot (mirrors the immutability the real adapter gets structurally).
 			shippingAddress: cloneAddress(order.shippingAddress),
+			billingAddress: order.billingAddress ? { ...order.billingAddress } : null,
 			fulfillment: order.fulfillment === null ? null : { ...order.fulfillment },
 			cancellation: order.cancellation === null ? null : { ...order.cancellation },
 		};

@@ -190,6 +190,41 @@ export function orderStoreContract(
 
 		// -- ADR-0009: immutable ship-to snapshot on the order --------------------
 
+		test("billing snapshot survives reload, caller mutations, and same-key replay", async () => {
+			const { store } = await makeHarness();
+			const billingAddress = {
+				name: "Ada Lovelace",
+				line1: "12 Analytical Way",
+				line2: null,
+				city: "London",
+				region: null,
+				postalCode: "EC1A 1BB",
+				country: "GB",
+				email: "ada@example.com",
+				phone: null,
+				company: "Analytical Ltd",
+				taxNumber: "GB123",
+				vatId: "GB123456789",
+			};
+			const frozen = { ...billingAddress };
+			const input = physicalInput({ billingAddress });
+			const { order } = await store.createFromCart(input);
+			expect(order.billingAddress).toEqual(frozen);
+			billingAddress.company = "Changed profile";
+			order.billingAddress!.city = "Changed response";
+			expect((await store.getById(order.id))?.billingAddress).toEqual(frozen);
+			const replay = await store.createFromCart(physicalInput({ billingAddress }));
+			expect(replay.created).toBe(false);
+			expect(replay.order.billingAddress).toEqual(frozen);
+		});
+
+		test("billing snapshot is null when legacy checkout supplies none", async () => {
+			const { store } = await makeHarness();
+			const { order } = await store.createFromCart(physicalInput());
+			expect(order.billingAddress ?? null).toBeNull();
+			expect((await store.getById(order.id))?.billingAddress ?? null).toBeNull();
+		});
+
 		test("createFromCart freezes the submitted shipping address onto the order; a reload returns it", async () => {
 			const { store } = await makeHarness();
 			const { order } = await store.createFromCart(

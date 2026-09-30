@@ -268,6 +268,7 @@ export type {
 	FulfillmentKind,
 	Order,
 	OrderAddress,
+	OrderBillingAddress,
 	OrderCancellation,
 	OrderFulfillment,
 	OrderLine,
@@ -278,9 +279,11 @@ export type {
 } from "./orders/model.js";
 export {
 	normalizeOrderAddress,
+	normalizeOrderBillingAddress,
 	ORDER_ADDRESS_MAX_LENGTHS,
 	type NormalizeOrderAddressResult,
 	type OrderAddressInput,
+	type OrderBillingAddressInput,
 } from "./orders/order-address.js";
 export type { CreateOrderFailure, SettleFailure } from "./orders/errors.js";
 export {

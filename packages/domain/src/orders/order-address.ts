@@ -15,7 +15,7 @@
  */
 
 import { normalizeCountryCode, normalizeSubdivision } from "../pricing/region-codes.js";
-import type { OrderAddress } from "./model.js";
+import type { OrderAddress, OrderBillingAddress } from "./model.js";
 
 /**
  * The optional shipping address a checkout submits. Required fields
@@ -34,6 +34,28 @@ export interface OrderAddressInput {
 	country: string;
 	email?: string | null;
 	phone?: string | null;
+}
+
+export interface OrderBillingAddressInput extends OrderAddressInput {
+	company?: string | null;
+	taxNumber?: string | null;
+	vatId?: string | null;
+}
+
+export function normalizeOrderBillingAddress(
+	input: OrderBillingAddressInput,
+):
+	| { ok: true; value: OrderBillingAddress }
+	| { ok: false; reason: "INVALID" | "REGION_NOT_A_CODE" } {
+	const address = normalizeOrderAddress(input);
+	if (!address.ok) return address;
+	const company = trimToNull(input.company);
+	const taxNumber = trimToNull(input.taxNumber);
+	const vatId = trimToNull(input.vatId);
+	if ((company?.length ?? 0) > 200 || (taxNumber?.length ?? 0) > 64 || (vatId?.length ?? 0) > 64) {
+		return { ok: false, reason: "INVALID" };
+	}
+	return { ok: true, value: { ...address.value, company, taxNumber, vatId } };
 }
 
 /** Per-field max lengths (post-trim), enforced by {@link normalizeOrderAddress}.
