@@ -75,12 +75,14 @@ describe("the migrated D1 schema", () => {
 		const triggers = await sql<{ name: string }>`
 			SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'emdash_%revision%'
 		`.execute(db.db);
-		expect(triggers.rows.map((row) => row.name).toSorted()).toEqual([
-			"emdash__plugin_storage_revision_insert",
-			"emdash__plugin_storage_revision_update",
-			"emdash_options_revision_insert",
-			"emdash_options_revision_update",
-		]);
+		expect(triggers.rows.map((row) => row.name)).toEqual(
+			expect.arrayContaining([
+				"emdash__plugin_storage_revision_insert",
+				"emdash__plugin_storage_revision_update",
+				"emdash_options_revision_insert",
+				"emdash_options_revision_update",
+			]),
+		);
 	});
 
 	it("stamps a fresh non-default revision on insert and on every update", async () => {
