@@ -25,6 +25,7 @@ For feature/bug behavior, start with a failing behavioral test, implement the ch
 - Store contracts run on actual migrated databases. Do not replace persistence with a DB mock.
 - Replay and crash recovery are part of the contract. Test interruption, retries and financial/stock conservation where affected.
 - Provider acceptance is distinct from deterministic local adapter tests. A successful HTTP refund request is not a completed refund.
+- Source identifiers, comments, API contracts and documentation stay English. User-facing reference-shop and commerce merchant copy supports English and Croatian; follow the [localization guide](docs/development/localization.md) and never dictionary-transform merchant/customer content or protocol values.
 - Preserve original license notices for imported code/data, record source paths and commits in `NOTICE.md`, and keep dependency licenses intact. WooCommerce is a protocol/functional reference, not PHP source to paste into this MIT implementation.
 
 ## Validate

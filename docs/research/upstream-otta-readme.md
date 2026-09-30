@@ -1,6 +1,8 @@
 # Otta — an open-source commerce layer for EmDash
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+> Historical upstream README from [Otta `7c63e6c`](https://github.com/UrumiAI/otta.sh/blob/7c63e6c2b21927b4760d396cc79da321de131f15/README.md). Relative navigation links are adjusted for this archive location; the original introduction is otherwise preserved. For current WSCommerce features and validation, use [the project README](../../README.md).
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../../LICENSE)
 [![Version](https://img.shields.io/badge/version-0.0.1-orange.svg)](https://github.com/UrumiAI/otta.sh/releases/tag/v0.0.1)
 
 Open source (MIT), version 0.0.1. The WooCommerce-equivalent for
@@ -14,10 +16,10 @@ Open source (MIT), version 0.0.1. The WooCommerce-equivalent for
 >
 > **Coming soon: one-click Cloudflare Workers deployment.** A one-click / hosted way to put
 > an Otta store on Cloudflare Workers is on the way. Until then you can self-deploy the
-> reference site by following [`DEPLOYMENT.md`](./DEPLOYMENT.md) — see [Status](#status)
+> reference site by following [`DEPLOYMENT.md`](../../DEPLOYMENT.md) — see [Status](#status)
 > for what is and isn't built yet.
 
-![The Otta storefront: a product listing with three sample products, each showing generated coil artwork, a title, a description, a price, and whether it is in stock — the first is sold out, its price struck through](./docs/storefront.png)
+![The Otta storefront: a product listing with three sample products, each showing generated coil artwork, a title, a description, a price, and whether it is in stock — the first is sold out, its price struck through](../../docs/storefront.png)
 
 <sub>The reference storefront running locally, with prices and stock served in-process by the
 Otta plugin — this is what the [quick start](#quick-start-local-2-minutes) below gives you.</sub>
@@ -35,8 +37,8 @@ Otta turns an EmDash site into a store. It is **one deployable**, and it ships a
    adapter — no separate service, no second database. Its only outbound egress is
    `ctx.http.fetch`, gated by `network:request` + `allowedHosts`. The CMS owns content; every commercial
    field lives in the plugin's store and is edited in the admin console
-   ([ADR-0018](./adr/0018-plugin-owns-commerce-truth-in-process.md),
-   [ADR-0020](./adr/0020-one-deployable-plugin-owns-commerce-truth.md)).
+   ([ADR-0018](../../adr/0018-plugin-owns-commerce-truth-in-process.md),
+   [ADR-0020](../../adr/0020-one-deployable-plugin-owns-commerce-truth.md)).
 2. **The reference site** (`sites/staging`) — a default EmDash site with the plugin already
    registered, so there's something to actually run. It's the storefront in the screenshot
    above and what the [quick start](#quick-start-local-2-minutes) boots: product listing
@@ -89,7 +91,7 @@ the build-time publishable key), and the storefront has no account or download p
 see [Status](#status).
 
 To self-deploy this for free on Cloudflare Workers today, follow
-[`DEPLOYMENT.md`](./DEPLOYMENT.md) §2 (one-click deployment: see [Status](#status)).
+[`DEPLOYMENT.md`](../../DEPLOYMENT.md) §2 (one-click deployment: see [Status](#status)).
 
 ## Architecture (summary)
 
@@ -105,14 +107,14 @@ To self-deploy this for free on Cloudflare Workers today, follow
   host's per-plugin document store (`ctx.storage`) by compare-and-set — D1 in dev and in
   production, with a dialect harness that runs the same adapters against SQLite and
   Postgres in CI. The plugin composes those stores in-process, and the domain's contract
-  suites are the spec they are held to ([ADR-0019](./adr/0019-commerce-aggregates-are-one-document-each.md)).
+  suites are the spec they are held to ([ADR-0019](../../adr/0019-commerce-aggregates-are-one-document-each.md)).
 - **Pluggable payments.** Stripe (async webhook) and x402 (HTTP-402 at the page layer)
   behind one `PaymentGateway` interface.
 - **Deployment.** One Worker and one D1 database: the EmDash site with the plugin
   registered trusted (in-process), on the Cloudflare Workers **free** plan, with cron
   sweeps for cart/reservation expiry. The plugin still passes the full workerd sandbox
   suite on every CI run, which is the binding contract (ADR-0006).
-  Step-by-step bootstrap guide: [`DEPLOYMENT.md`](./DEPLOYMENT.md).
+  Step-by-step bootstrap guide: [`DEPLOYMENT.md`](../../DEPLOYMENT.md).
 
 ## Repository layout
 
@@ -127,8 +129,8 @@ To self-deploy this for free on Cloudflare Workers today, follow
 | `@otta-sh/admin-react` | The React admin console on the `otta-console` native descriptor (ADR-0014) — Orders and Pricing & inventory. |
 | `sites/staging` | Staging storefront + admin — EmDash on Cloudflare Workers, plugin registered trusted. |
 
-Design decisions live in [`adr/`](./adr/); development practices in
-[`DEVELOPMENT.md`](./DEVELOPMENT.md); the agent-facing contract in [`CLAUDE.md`](./CLAUDE.md).
+Design decisions live in [`adr/`](../../adr/); development practices in
+[`DEVELOPMENT.md`](../../DEVELOPMENT.md); the agent-facing contract in [`CLAUDE.md`](../../CLAUDE.md).
 
 ## Development
 
@@ -153,7 +155,7 @@ are all at `0.0.1` and are not published to npm yet; consume them from the works
 breaking changes before 1.0.
 
 **Cloudflare Workers:** self-deploying the reference site to Workers works today
-([`DEPLOYMENT.md`](./DEPLOYMENT.md)); a one-click / hosted Workers deployment is coming soon.
+([`DEPLOYMENT.md`](../../DEPLOYMENT.md)); a one-click / hosted Workers deployment is coming soon.
 
 The commerce **layer** is feature-complete (Phases 0–7 merged): catalog, inventory,
 cart, checkout, orders, customers with magic-link auth, Stripe + x402 payments, tax,
@@ -164,9 +166,9 @@ points at the storefront's `/account/verify` page.
 The reference **storefront** (`sites/staging`) covers catalog, cart, **card checkout** and
 **customer accounts** (`/account/login`, `/account/verify`, `/account/orders`):
 `/checkout`, the Stripe pay page and the order confirmation page are built
-([ADR-0012](./adr/0012-storefront-checkout-loads-stripe-elements-in-the-browser.md)), so a
+([ADR-0012](../../adr/0012-storefront-checkout-loads-stripe-elements-in-the-browser.md)), so a
 Stripe-configured deployment completes a card purchase end-to-end
-([`DEPLOYMENT.md`](./DEPLOYMENT.md) §3). The x402 gate and the download delivery page
+([`DEPLOYMENT.md`](../../DEPLOYMENT.md) §3). The x402 gate and the download delivery page
 ([#27](https://github.com/UrumiAI/otta.sh/issues/27)) are not built yet — for those, build
 the pages or drive the plugin's own commerce routes directly.
 

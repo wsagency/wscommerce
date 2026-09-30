@@ -90,6 +90,15 @@ Files: pricing/quote policy, offline payment adapter, storefront product/checkou
 - [x] Integrate independent commits, run lint/typecheck/build/full suite/D1, investigate inherited sandbox cleanup failures and run a local storefront smoke check.
 - [x] Document remaining external acceptance gates and unsupported optional commerce modules, add changesets and commit the reviewable integrated result.
 
+## Required follow-up: Croatian bank-transfer barcode
+
+The foundation's text instructions and authorized receipt flow do not complete this core checkout requirement.
+
+- [ ] Freeze structured recipient/account/reference/amount data with the order; never derive it from translated instructions or money labels.
+- [ ] Implement the confirmed Croatian bank-compatible 2D payment format and render it beside the buyer's instructions.
+- [ ] Verify payload equality and locale independence with deterministic fixtures, then scan representative codes in actual banking apps before claiming bank acceptance.
+- [ ] Keep existing private-order authorization and receipt verification: displaying or scanning a barcode is not proof of payment.
+
 ## Execution
 
 The user explicitly requested immediate implementation of the previously proposed design. Execute in this session. Independent tasks 2–4 use isolated local worktrees; root owns invoicing, composition, documentation and final integration. No additional approval is required for local code or reversible repository work.

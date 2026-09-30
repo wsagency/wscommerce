@@ -7,7 +7,8 @@ This guide is for developers installing, extending and operating **WSCommerce (W
 1. [Local setup](local-setup.md): toolchain, sample catalog, payment settings and targeted commands.
 2. [Architecture and source map](architecture.md): ownership, composition, native state, routes and extension boundaries.
 3. [Building integrations](integrations.md): payment/invoice adapters, Woo-compatible APIs/webhooks and provider configuration.
-4. [Testing and releases](testing-and-releases.md): meaningful contract tiers, browser acceptance, CI and deployment checks.
+4. [English and Croatian interfaces](localization.md): locale selection, dictionaries, content boundaries and safe switching.
+5. [Testing and releases](testing-and-releases.md): meaningful contract tiers, browser acceptance, CI and deployment checks.
 
 Also read the root [engineering practices](../../DEVELOPMENT.md), [contributor guide](../../CONTRIBUTING.md) and [architecture decisions](../../adr/README.md). The [operator integration guide](../integrations.md), [deployment runbook](../../DEPLOYMENT.md) and [operations guide](../operations.md) complement these developer instructions.
 

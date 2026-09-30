@@ -11,5 +11,7 @@ This file records WSCommerce changes. The inherited upstream history remains in 
 - Add bank-transfer/COD receipt flows, durable Solo/e-racuni invoice jobs and a selected WooCommerce REST v3 profile with signed durable webhooks.
 - Document installation, deployment, provider acceptance, operations, validation and source provenance.
 - Publish project metadata, contributor/security policies, Websolutions integration contact, acknowledgments and Ko-fi support links.
+- Add English/Croatian presentation to the reference storefront and commerce merchant screens, preserving English source/docs and canonical commerce identities.
+- Correct the stale inventory contention test contract for durable failed-reserve witnesses; retain the production 24-attempt ceiling and verify original-key recovery and stock conservation.
 
 Remaining deployment/vendor acceptance and module boundaries are documented in [README.md](README.md), [integration setup](docs/integrations.md) and [validation](docs/validation.md).
