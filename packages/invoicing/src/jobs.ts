@@ -142,6 +142,26 @@ export class InvoiceJobStore {
 		});
 		return page.items.map((item) => item.data as InvoiceJob);
 	}
+	/** Park work that ceased to be invoiceable without discarding a potentially issued document. */
+	async block(id: string, code: string): Promise<InvoiceJob | null> {
+		for (let attempt = 0; attempt < 12; attempt++) {
+			const row = await this.collection.getVersioned(id);
+			if (!row) return null;
+			const job = row.value as InvoiceJob;
+			const timestamp = this.now();
+			if (!["queued", "retry", "issuing"].includes(job.state)) return job;
+			if (job.state === "issuing" && job.lease && job.lease.expiresAt > timestamp) return job;
+			const next: InvoiceJob = {
+				...job,
+				updatedAt: timestamp,
+				lease: null,
+				state: job.state === "issuing" ? "reconciliation" : "failed",
+				code: job.state === "issuing" ? "ISSUE_LEASE_EXPIRED" : code,
+			};
+			if ((await this.collection.compareAndSet(id, row.revision, next)).applied) return next;
+		}
+		throw new Error("INVOICE_WRITE_CONTENTION");
+	}
 }
 
 export async function dispatchInvoiceJob(

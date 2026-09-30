@@ -8,6 +8,19 @@ import { INVOICE_JOB_COLLECTION, InvoiceJobStore, dispatchInvoiceJob } from "../
 import type { InvoiceJob, InvoiceProvider } from "../src/index.js";
 import { invoiceFixture } from "./fixtures.js";
 
+function provider(
+	outcome: Awaited<ReturnType<InvoiceProvider["issue"]>>,
+	safe = false,
+): InvoiceProvider {
+	return {
+		id: "solo",
+		idempotentIssue: safe,
+		async issue() {
+			return outcome;
+		},
+	};
+}
+
 describe("durable invoice work on actual migrated storage", () => {
 	let db: Parameters<typeof runMigrations>[0];
 	let collection: StorageCollection;
@@ -31,18 +44,7 @@ describe("durable invoice work on actual migrated storage", () => {
 		now = "2026-09-30T10:00:00.000Z";
 	});
 	afterAll(async () => db.destroy());
-	function provider(
-		outcome: Awaited<ReturnType<InvoiceProvider["issue"]>>,
-		safe = false,
-	): InvoiceProvider {
-		return {
-			id: "solo",
-			idempotentIssue: safe,
-			async issue() {
-				return outcome;
-			},
-		};
-	}
+
 	it("enqueues one immutable job per order and rejects changed snapshots", async () => {
 		const a = await store.enqueue(invoiceFixture(), "solo");
 		const b = await store.enqueue(invoiceFixture(), "solo");
@@ -158,5 +160,19 @@ describe("durable invoice work on actual migrated storage", () => {
 		const claims = await Promise.all([store.claim(job.id, "one"), store.claim(job.id, "two")]);
 		expect(claims.filter(Boolean)).toHaveLength(1);
 		expect((await store.pending()).map((row) => row.id)).toContain(job.id);
+	});
+	it("blocking an active or expired issue preserves unknown provider evidence", async () => {
+		const job = await store.enqueue(invoiceFixture(), "solo");
+		const claim = await store.claim(job.id, "one");
+		expect((await store.block(job.id, "REFUND_ACCOUNTING_REQUIRED"))?.lease?.token).toBe(
+			claim?.lease?.token,
+		);
+		now = "2026-09-30T11:00:00.000Z";
+		expect(await store.block(job.id, "REFUND_ACCOUNTING_REQUIRED")).toMatchObject({
+			state: "reconciliation",
+			code: "ISSUE_LEASE_EXPIRED",
+		});
+		await store.finish(claim!, { status: "terminal", code: "STALE_WORKER" });
+		expect((await store.get(job.id))?.state).toBe("reconciliation");
 	});
 });

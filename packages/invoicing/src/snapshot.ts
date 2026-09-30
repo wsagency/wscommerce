@@ -16,6 +16,9 @@ export const TWO_DECIMAL_CURRENCIES = new Set([
 	"BAM",
 ]);
 
+const money = (amount: number) => Number.isSafeInteger(amount) && amount >= 0;
+const rate = (bps: number) => Number.isSafeInteger(bps) && bps >= 0 && bps <= 10000;
+
 export function validateInvoiceSnapshot(
 	snapshot: InvoiceSnapshot,
 ): { ok: true } | { ok: false; reason: string } {
@@ -32,8 +35,6 @@ export function validateInvoiceSnapshot(
 		return { ok: false, reason: "INVALID_BILLING" };
 	if (snapshot.lines.length === 0 || snapshot.lines.length > 1000)
 		return { ok: false, reason: "INVALID_LINES" };
-	const money = (amount: number) => Number.isSafeInteger(amount) && amount >= 0;
-	const rate = (bps: number) => Number.isSafeInteger(bps) && bps >= 0 && bps <= 10000;
 	if (
 		!money(snapshot.shipping.net) ||
 		!money(snapshot.shipping.tax) ||
@@ -79,7 +80,7 @@ export function canonicalJson(value: unknown): string {
 	if (typeof value === "object" && value !== null) {
 		const row = value as Record<string, unknown>;
 		return `{${Object.keys(row)
-			.sort()
+			.toSorted()
 			.map((key) => `${JSON.stringify(key)}:${canonicalJson(row[key])}`)
 			.join(",")}}`;
 	}

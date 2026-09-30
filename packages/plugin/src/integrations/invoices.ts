@@ -96,6 +96,26 @@ function invoiceStores(ctx: PluginContext) {
 	};
 }
 
+async function paymentBlock(
+	stores: ReturnType<typeof invoiceStores>,
+	order: Order | null,
+): Promise<string | null> {
+	if (!order || !["paid", "processing", "shipped", "delivered", "completed"].includes(order.state))
+		return "ORDER_NOT_INVOICEABLE";
+	if (order.reconciliationFlag) return "ORDER_RECONCILIATION_REQUIRED";
+	const payments = await stores.native.orderStore.getCapturedPayments(order.id);
+	if (payments.some((p) => p.status === "succeeded" && p.currency !== order.currency))
+		return "PAYMENT_CURRENCY_MISMATCH";
+	const captured = payments
+		.filter((p) => p.status === "succeeded" && p.currency === order.currency)
+		.reduce((sum, p) => sum + p.amount, 0);
+	if (!Number.isSafeInteger(captured) || captured !== order.totals.total)
+		return "CAPTURE_PROOF_REQUIRED";
+	if ((await stores.native.orderStore.listRefunds(order.id)).some((r) => r.status !== "voided"))
+		return "REFUND_ACCOUNTING_REQUIRED";
+	return null;
+}
+
 function resolveProvider(
 	ctx: PluginContext,
 	configuration: IntegrationConfiguration,
@@ -158,6 +178,10 @@ export async function runInvoiceIntegrationSweep(
 		const order = await stores.native.orderStore.getById(orderId(row.id));
 		if (!order || (await stores.jobs.get(order.id))) continue;
 		try {
+			if (await paymentBlock(stores, order)) {
+				result.blocked++;
+				continue;
+			}
 			const snapshot = invoiceSnapshotFromOrder(
 				order,
 				billingFromOrder(order, configuration.allowLegacyBillingFromShipping === true),
@@ -176,6 +200,16 @@ export async function runInvoiceIntegrationSweep(
 		const lease = await stores.locks.acquire(provider.id, crypto.randomUUID());
 		if (!lease) break;
 		try {
+			const code = await paymentBlock(
+				stores,
+				await stores.native.orderStore.getById(orderId(job.orderId)),
+			);
+			if (code) {
+				const parked = await stores.jobs.block(job.id, code);
+				result.blocked++;
+				if (parked?.state === "reconciliation") result.reconciliation++;
+				continue;
+			}
 			const completed = await dispatchInvoiceJob(stores.jobs, job.id, provider, lease.workerId);
 			if (completed.state === "issued") result.issued++;
 			if (completed.state === "reconciliation") result.reconciliation++;
@@ -250,9 +284,37 @@ export function withInvoiceIntegrations(
 					const input = routeCtx.input as { orderId?: unknown };
 					if (typeof input.orderId !== "string" || !input.orderId || input.orderId.length > 200)
 						return { ok: false, code: "INVALID_ORDER_ID" };
-					const job = await invoiceStores(ctx).jobs.get(input.orderId);
+					const stores = invoiceStores(ctx);
+					const job = await stores.jobs.get(input.orderId);
+					let blockingCode: string | null = null;
+					if (!job) {
+						const order = await stores.native.orderStore.getById(orderId(input.orderId));
+						blockingCode = await paymentBlock(stores, order);
+						if (!blockingCode && order) {
+							const configuration = await loadConfiguration();
+							try {
+								invoiceSnapshotFromOrder(
+									order,
+									billingFromOrder(order, configuration.allowLegacyBillingFromShipping === true),
+									configuration.shopId,
+								);
+							} catch (error) {
+								const known = [
+									"BILLING_REQUIRED",
+									"FROZEN_TAX_PROOF_REQUIRED",
+									"PAYMENT_METHOD_REQUIRED",
+									"INVALID_SHOP_ID",
+								];
+								blockingCode =
+									error instanceof Error && known.includes(error.message)
+										? error.message
+										: "FROZEN_INVOICE_PROOF_REQUIRED";
+							}
+						}
+					}
 					return {
 						ok: true,
+						blockingCode,
 						job: job
 							? {
 									id: job.id,

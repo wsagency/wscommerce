@@ -4,6 +4,7 @@ import { validateInvoiceSnapshot } from "./snapshot.js";
 import type { InvoiceSnapshot } from "./types.js";
 
 interface FrozenTaxLine {
+	priceTaxMode?: "inclusive" | "exclusive";
 	rateBps?: number;
 	discountedCents: number;
 	taxCents: number;
@@ -12,7 +13,7 @@ interface FrozenTaxLine {
 	subtotalNetCents?: number;
 }
 interface FrozenTax {
-	priceTaxMode?: "inclusive" | "exclusive";
+	priceTaxMode?: "inclusive" | "exclusive" | "mixed";
 	lines?: FrozenTaxLine[];
 	shippingTaxCents?: number;
 	shippingNetCents?: number;
@@ -35,6 +36,8 @@ export function invoiceSnapshotFromOrder(
 		throw new Error("FROZEN_TAX_PROOF_REQUIRED");
 	const lines = order.lines.map((line, index) => {
 		const tax = proof.lines![index]!;
+		const mode = tax.priceTaxMode ?? proof.priceTaxMode ?? "exclusive";
+		if (mode !== "inclusive" && mode !== "exclusive") throw new Error("FROZEN_TAX_PROOF_REQUIRED");
 		if (
 			!Number.isSafeInteger(tax.taxCents) ||
 			!Number.isSafeInteger(tax.discountedCents) ||
@@ -43,13 +46,10 @@ export function invoiceSnapshotFromOrder(
 			throw new Error("FROZEN_TAX_PROOF_REQUIRED");
 		const net =
 			tax.netCents ??
-			(proof.priceTaxMode === "inclusive"
-				? tax.discountedCents - tax.taxCents
-				: tax.discountedCents);
+			(mode === "inclusive" ? tax.discountedCents - tax.taxCents : tax.discountedCents);
 		const gross = tax.grossCents ?? net + tax.taxCents;
 		const subtotalNet =
-			tax.subtotalNetCents ??
-			(proof.priceTaxMode === "inclusive" ? undefined : line.unitPrice * line.quantity);
+			tax.subtotalNetCents ?? (mode === "inclusive" ? undefined : line.unitPrice * line.quantity);
 		if (subtotalNet === undefined) throw new Error("FROZEN_TAX_PROOF_REQUIRED");
 		return {
 			sku: line.sku,

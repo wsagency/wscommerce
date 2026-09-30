@@ -68,6 +68,34 @@ function nativeOrder(): Order {
 }
 
 describe("native immutable invoice projection", () => {
+	it("uses each frozen line mode for mixed-price orders and refuses ambiguous mixed evidence", () => {
+		const order = nativeOrder();
+		order.totals.taxBreakdown = {
+			priceTaxMode: "mixed",
+			lines: [
+				{
+					priceTaxMode: "inclusive",
+					rateBps: 500,
+					discountedCents: 1650,
+					subtotalNetCents: 1571,
+					taxCents: 79,
+				},
+			],
+			shippingTaxCents: 0,
+			shippingNetCents: 0,
+			shippingRateBps: 0,
+		};
+		expect(invoiceSnapshotFromOrder(order, invoiceFixture().billing, "shop-a")).toEqual(
+			invoiceFixture(),
+		);
+		order.totals.taxBreakdown = {
+			priceTaxMode: "mixed",
+			lines: [{ rateBps: 500, discountedCents: 1650, subtotalNetCents: 1571, taxCents: 79 }],
+		};
+		expect(() => invoiceSnapshotFromOrder(order, invoiceFixture().billing, "shop-a")).toThrow(
+			"FROZEN_TAX_PROOF_REQUIRED",
+		);
+	});
 	it("uses frozen net/gross/tax evidence for inclusive retail order prices", () => {
 		expect(invoiceSnapshotFromOrder(nativeOrder(), invoiceFixture().billing, "shop-a")).toEqual(
 			invoiceFixture(),
