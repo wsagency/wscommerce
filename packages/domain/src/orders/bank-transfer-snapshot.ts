@@ -17,6 +17,7 @@ export interface BankTransferSnapshot {
 	readonly reference: string;
 	readonly description: string;
 }
+// oxlint-disable-next-line no-control-regex -- Bank fields must reject control characters.
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 function field(value: string) {
 	if (typeof value !== "string" || value.length > 4000 || CONTROL.test(value))
@@ -36,7 +37,7 @@ export function bankText(value: string, max: number): string {
 	return Array.from(field(value))
 		.map((c) => (/[ČčĆćĐđŠšŽž]/.test(c) ? c : c.normalize("NFD").replace(/\p{Diacritic}/gu, "")))
 		.join("")
-		.replace(/[^A-Za-z0-9ČčĆćĐđŠšŽž ,.:+?'\/()\-]/g, " ")
+		.replace(/[^A-Za-z0-9ČčĆćĐđŠšŽž ,.:+?'/()-]/g, " ")
 		.replace(/ +/g, " ")
 		.trim()
 		.slice(0, max);

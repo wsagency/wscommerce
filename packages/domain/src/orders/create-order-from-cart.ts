@@ -1,4 +1,5 @@
 import type { Currency } from "../money/cents.js";
+import { freezeBankTransferSnapshot, type BankTransferSnapshot } from "./bank-transfer-snapshot.js";
 import type { CustomerId, IdempotencyKey, OrderId } from "../money/ids.js";
 import type { CouponRecord } from "../ports/coupon-store.js";
 import type { TotalsBreakdown } from "../pricing/types.js";
@@ -510,12 +511,42 @@ interface FinalizeContext {
 	onForeignOrder: () => Promise<void>;
 }
 
+function bankReference(id: string): string {
+	if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id))
+		throw new RangeError("Structured bank references require UUID order IDs");
+	// ponytail: 69-bit reconciliation label; allocate unique numeric references if volume makes collisions material. The full UUID remains the order capability.
+	const digits = (BigInt(`0x${id.replace(/-/g, "")}`) % 10n ** 21n).toString().padStart(21, "0");
+	return `${digits.slice(0, 11)}-${digits.slice(11)}`;
+}
 async function finalizeOrder(
 	deps: CreateOrderDeps,
 	command: CreateOrderCommand,
 	ctx: FinalizeContext,
 ): Promise<CreateOrderFromCartResult> {
 	const { breakdown } = ctx;
+	let bankTransfer: BankTransferSnapshot | undefined;
+	if (
+		command.paymentMethod === "bank_transfer" &&
+		ctx.gateway.checkoutPolicy?.bankTransferRecipient
+	) {
+		try {
+			const recipient = ctx.gateway.checkoutPolicy.bankTransferRecipient;
+			bankTransfer = freezeBankTransferSnapshot({
+				recipient,
+				amountCents: breakdown.totalCents,
+				currency: ctx.currency,
+				payer: ctx.billingAddress ?? ctx.shippingAddress,
+				reference: recipient.model === "HR99" ? "" : bankReference(ctx.freshOrderId),
+				description: `Order ${ctx.freshOrderId.slice(0, 8)}`,
+			});
+		} catch (error) {
+			if (error instanceof RangeError) {
+				await ctx.onFailure();
+				return { ok: false, reason: "PAYMENT_METHOD_NOT_AVAILABLE" };
+			}
+			throw error;
+		}
+	}
 	// 1. Insert the pending order FIRST (guarded by idempotency_key UNIQUE),
 	//    before adopting any reservation (§5 ordering / self-healing). Writes the
 	//    FULL breakdown into order_totals (§6), once, never rewritten.
@@ -537,7 +568,8 @@ async function finalizeOrder(
 					offlinePayment: {
 						method: command.paymentMethod,
 						instructions: ctx.gateway.checkoutPolicy!.offlineInstructions,
-						paymentReference: ctx.freshOrderId,
+						paymentReference: bankTransfer?.reference ?? ctx.freshOrderId,
+						...(bankTransfer ? { bankTransfer } : {}),
 						paymentDueAt: ctx.holdExpiresAt,
 						status: "awaiting",
 						acceptedAt: null,

@@ -224,6 +224,42 @@ interface PlainSettingSpec {
 
 const PLAIN_PAYMENT_SETTINGS: readonly PlainSettingSpec[] = [
 	{
+		fieldId: "bankBarcodeName",
+		kvKey: OFFLINE_SETTING_KEYS.bankName,
+		label: "Bank barcode recipient name (optional profile)",
+		placeholder: "Recipient legal name",
+	},
+	{
+		fieldId: "bankBarcodeAddress",
+		kvKey: OFFLINE_SETTING_KEYS.bankAddress,
+		label: "Bank barcode recipient street",
+		placeholder: "Street and number",
+	},
+	{
+		fieldId: "bankBarcodeCity",
+		kvKey: OFFLINE_SETTING_KEYS.bankCity,
+		label: "Bank barcode recipient postal code and city",
+		placeholder: "Postal code and city",
+	},
+	{
+		fieldId: "bankBarcodeIban",
+		kvKey: OFFLINE_SETTING_KEYS.bankIban,
+		label: "Bank barcode Croatian IBAN",
+		placeholder: "HR…",
+	},
+	{
+		fieldId: "bankBarcodeModel",
+		kvKey: OFFLINE_SETTING_KEYS.bankModel,
+		label: "Bank barcode reference model (HR00 or HR99)",
+		placeholder: "HR00",
+	},
+	{
+		fieldId: "bankBarcodePurpose",
+		kvKey: OFFLINE_SETTING_KEYS.bankPurpose,
+		label: "Bank barcode four-letter purpose",
+		placeholder: "GDDS",
+	},
+	{
 		fieldId: "emailFrom",
 		kvKey: EMAIL_FROM_KEY,
 		label: "Order email from-address",

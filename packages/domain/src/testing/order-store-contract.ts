@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { cents, currency } from "../money/cents.js";
+import { freezeBankTransferSnapshot } from "../orders/bank-transfer-snapshot.js";
 import { idempotencyKey, orderId, productId, reservationId, sku } from "../money/ids.js";
 import type { CreateOrderInput, OrderStore } from "../ports/order-store.js";
 import type { SeedOrderSummaryRow } from "./in-memory-order-store.js";
@@ -193,6 +194,54 @@ export function orderStoreContract(
 		});
 
 		// -- ADR-0009: immutable ship-to snapshot on the order --------------------
+		test("optional bank snapshot roundtrips and same-key inserts preserve the first profile", async () => {
+			const { store } = await makeHarness();
+			const bankTransfer = freezeBankTransferSnapshot({
+				amountCents: cents(1500),
+				currency: currency("EUR"),
+				recipient: {
+					name: "Synthetic",
+					address: "Test 1",
+					city: "10000 Test",
+					iban: "HR3799999990000000001",
+					model: "HR00",
+					purpose: "GDDS",
+				},
+				payer: null,
+				reference: "123",
+				description: "Test",
+			});
+			const input = physicalInput({
+				currency: currency("EUR"),
+				totals: { subtotal: cents(1500), total: cents(1500), currency: currency("EUR") },
+				paymentMethod: "bank_transfer",
+				offlinePayment: { ...offlineSnapshot("bank_transfer"), bankTransfer },
+			});
+			const first = await store.createFromCart(input);
+			expect((await store.getById(first.order.id))?.offlinePayment?.bankTransfer).toEqual(
+				bankTransfer,
+			);
+			const changed = freezeBankTransferSnapshot({
+				...bankTransfer,
+				recipient: { ...bankTransfer.recipient, name: "Changed" },
+			});
+			const retry = await store.createFromCart({
+				...input,
+				offlinePayment: { ...input.offlinePayment!, bankTransfer: changed },
+			});
+			expect(retry.created).toBe(false);
+			expect(retry.order.offlinePayment?.bankTransfer).toEqual(bankTransfer);
+			const legacy = await store.createFromCart(
+				physicalInput({
+					orderId: orderId("old-bank"),
+					idempotencyKey: idempotencyKey("old-bank"),
+					cartId: null,
+					paymentMethod: "bank_transfer",
+					offlinePayment: offlineSnapshot("bank_transfer"),
+				}),
+			);
+			expect((await store.getById(legacy.order.id))?.offlinePayment?.bankTransfer).toBeUndefined();
+		});
 
 		test("COD acceptance permits unpaid dispatch; a receipt preserves fulfillment and captures once", async () => {
 			const h = await makeHarness();

@@ -1,4 +1,5 @@
 import type { TotalsLineBreakdown } from "../pricing/types.js";
+import type { BankTransferSnapshot } from "./bank-transfer-snapshot.js";
 /**
  * Order model (Phase 4 §4). An order is an **immutable** record minted from a
  * cart: its line items snapshot price + title at purchase time, so a later
@@ -38,6 +39,7 @@ export type PaymentMethod = "stripe" | "x402" | "bank_transfer" | "cod";
 
 /** Payment and fulfillment are independent for COD. Receipt evidence is private. */
 export interface OfflinePayment {
+	readonly bankTransfer?: BankTransferSnapshot;
 	readonly method: "bank_transfer" | "cod";
 	readonly instructions: string;
 	readonly paymentReference: string;

@@ -981,3 +981,34 @@ describe("Settings admin form (workerd sandbox)", () => {
 		expect([...groupLabels(after).keys()]).toEqual([...groupLabels(before).keys()]);
 	});
 });
+
+test("bank barcode profile is saved through the native Settings route and an invalid partial replacement writes nothing", async () => {
+	sandbox = await loadPluginInSandbox({ allowedHosts: [], storage: true });
+	const profile = {
+		bankBarcodeName: "Synthetic ČĆĐŠŽ",
+		bankBarcodeAddress: "Test 1",
+		bankBarcodeCity: "10000 Test",
+		bankBarcodeIban: "HR3799999990000000001",
+		bankBarcodeModel: "HR00",
+		bankBarcodePurpose: "GDDS",
+	};
+	const saved = await sandbox.invokeRoute("admin", {
+		type: "form_submit",
+		action_id: "save-payment-settings",
+		values: profile,
+	});
+	expect(toastOf(saved)?.type).toBe("success");
+	expect(
+		field(formFor(blocksOf(saved), "save-payment-settings"), "bankBarcodeIban")?.initial_value,
+	).toBe(profile.bankBarcodeIban);
+	const invalid = await sandbox.invokeRoute("admin", {
+		type: "form_submit",
+		action_id: "save-payment-settings",
+		values: { bankBarcodeIban: "invalid", bankBarcodeName: "Changed" },
+	});
+	expect(findBlocks(blocksOf(invalid), "banner").some((b) => b.variant === "error")).toBe(true);
+	const loaded = await sandbox.invokeRoute("admin", { type: "page_load", page: "/settings" });
+	expect(
+		field(formFor(blocksOf(loaded), "save-payment-settings"), "bankBarcodeName")?.initial_value,
+	).toBe(profile.bankBarcodeName);
+});
