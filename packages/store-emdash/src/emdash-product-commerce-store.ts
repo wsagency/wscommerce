@@ -121,6 +121,15 @@ const LIST_PAGE_SIZE = 100;
 /** Default page ceiling for a bounded scan. 1000 × 100 pointers. */
 const MAX_LIST_PAGES = 1000;
 
+/** The merchant equality guard must advance even within one clock tick or a clock rollback. */
+function nextProductWatermark(clock: Clock, previous: string): string {
+	const previousTime = Date.parse(previous);
+	if (!Number.isFinite(previousTime)) {
+		throw new RangeError("Product edit watermark must be a valid stored timestamp");
+	}
+	return new Date(Math.max(clock.now().getTime(), previousTime + 1)).toISOString();
+}
+
 /**
  * How many attempts a write spends waiting for a CONTENDED target claim before it
  * refuses.
@@ -708,7 +717,7 @@ export class EmdashProductCommerceStore implements ProductCommerceStore {
 					productKind: input.productKind ?? doc.productKind,
 					idempotencyKey: key,
 					contentUpdatedAt: input.contentUpdatedAt ?? doc.contentUpdatedAt,
-					updatedAt: now,
+					updatedAt: nextProductWatermark(this.#clock, doc.updatedAt),
 				};
 				if (current === null) throw new Error("unreachable: a read row has a revision");
 				// The claim is re-asserted HERE, adjacent to the commit, so a takeover that
@@ -872,7 +881,7 @@ export class EmdashProductCommerceStore implements ProductCommerceStore {
 				heightMm: input.heightMm !== undefined ? input.heightMm : doc.heightMm,
 				productKind: input.productKind ?? doc.productKind,
 				idempotencyKey: key,
-				updatedAt: this.#clock.now().toISOString(),
+				updatedAt: nextProductWatermark(this.#clock, doc.updatedAt),
 			};
 			if (prepared.hold !== null && !(await this.#heartbeatClaim(prepared.hold, ref, ledger))) {
 				return CAS_RETRY;
@@ -940,7 +949,7 @@ export class EmdashProductCommerceStore implements ProductCommerceStore {
 				publishKey: publishKeyFor(active),
 				activeUpdatedAt: contentUpdatedAt,
 				idempotencyKey: key,
-				updatedAt: this.#clock.now().toISOString(),
+				updatedAt: nextProductWatermark(this.#clock, doc.updatedAt),
 			});
 			return written.applied ? casDone(undefined) : CAS_RETRY;
 		});
@@ -969,7 +978,7 @@ export class EmdashProductCommerceStore implements ProductCommerceStore {
 				publishKey: "inactive",
 				deletedAt: at,
 				idempotencyKey: key,
-				updatedAt: at,
+				updatedAt: nextProductWatermark(this.#clock, doc.updatedAt),
 			});
 			if (!written.applied) return CAS_RETRY;
 			if (doc.sku !== null) await this.#releaseSku(doc.sku, ref);
@@ -1084,7 +1093,7 @@ export class EmdashProductCommerceStore implements ProductCommerceStore {
 				orphanedAt: resurrecting ? null : existing.orphanedAt,
 				idempotencyKey: key,
 				contentUpdatedAt: input.contentUpdatedAt ?? existing.contentUpdatedAt,
-				updatedAt: now,
+				updatedAt: nextProductWatermark(this.#clock, existing.updatedAt),
 			};
 			// The re-assertion a resurrect owes, for the same reason every other sku-taking
 			// write owes one: the claim was proven when it was taken and this commit is
@@ -1210,7 +1219,7 @@ export class EmdashProductCommerceStore implements ProductCommerceStore {
 				sku: input.sku ?? existing.sku,
 				price: input.price ?? existing.price,
 				idempotencyKey: key,
-				updatedAt: this.#clock.now().toISOString(),
+				updatedAt: nextProductWatermark(this.#clock, existing.updatedAt),
 			};
 			if (prepared.hold !== null && !(await this.#heartbeatClaim(prepared.hold, ref, ledger))) {
 				return CAS_RETRY;
@@ -1271,7 +1280,7 @@ export class EmdashProductCommerceStore implements ProductCommerceStore {
 						orphanedAt: at,
 						idempotencyKey: key,
 						contentUpdatedAt,
-						updatedAt: at,
+						updatedAt: nextProductWatermark(this.#clock, existing.updatedAt),
 					},
 				},
 			});
