@@ -80,6 +80,7 @@ export type { HoldDeadlineStamper } from "./hold-deadline-stamper.js";
 export { uuidIdGen } from "./id-gen.js";
 export {
 	DerivedPointerConflictError,
+	InventoryMovementReconciliationRequiredError,
 	isDerivedPointerConflictError,
 	isOrderNotFoundError,
 	isOutboxEntryUnlocatableError,

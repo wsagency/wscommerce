@@ -86,7 +86,11 @@ import {
 	type CasStep,
 } from "./cas-retry.js";
 import { collectionOf } from "./collection-of.js";
-import { ReservationIdCollisionError, ReservationNotReleasableError } from "./errors.js";
+import {
+	InventoryMovementReconciliationRequiredError,
+	ReservationIdCollisionError,
+	ReservationNotReleasableError,
+} from "./errors.js";
 import type { HoldDeadlineStamper } from "./hold-deadline-stamper.js";
 import {
 	adjustClaimId,
@@ -100,6 +104,7 @@ import {
 	RESERVATION_KEYS_COLLECTION,
 	stockClaimId,
 	type AdjustClaim,
+	type AppliedMovement,
 	type HoldEntry,
 	type InventoryDoc,
 	type MovementClaimDoc,
@@ -491,6 +496,9 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 				orderId: input.orderId,
 				holdExpiresAt: input.holdExpiresAt,
 				now: input.now,
+				...(input.expected !== undefined
+					? { expectedReservations: [{ reservationId: input.reservationId, ...input.expected }] }
+					: {}),
 			},
 			"adopt",
 		);
@@ -535,7 +543,7 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 	async #adoptGrouped(
 		sku: string,
 		group: ReadonlyArray<{ id: string; index: ReservationIndexDoc }>,
-		input: { orderId: string; holdExpiresAt: string; now: string },
+		input: Omit<AdoptManyInput, "reservationIds">,
 		operation: string,
 	): Promise<AdoptManyResult> {
 		return this.#cas<AdoptManyResult>(operation, async () => {
@@ -552,6 +560,14 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 			for (const { id, index } of group) {
 				const hold = holds[index.idempotencyKey];
 				if (hold === undefined || hold.reservationId !== id) {
+					lost.push(id);
+					continue;
+				}
+				const expected = input.expectedReservations?.find((entry) => entry.reservationId === id);
+				if (
+					input.expectedReservations !== undefined &&
+					(expected === undefined || expected.sku !== sku || expected.quantity !== hold.qty)
+				) {
 					lost.push(id);
 					continue;
 				}
@@ -612,14 +628,10 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 	 * own witness (the applied-movement ring, or the hold's `lastMovementKey`) which
 	 * is then recorded on the claim. First writer wins, and both callers return it.
 	 *
-	 * **Documented residual.** If the hold is gone AND the key is neither in the
-	 * aggregate's ring nor on a hold, there is no durable witness left that this key
-	 * ever applied, and the call throws `ReservationNotHeldError` rather than invent
-	 * a recorded answer. Reaching that state takes a crash between the aggregate
-	 * write and the claim update, followed by the hold being pruned and the key being
-	 * evicted from a ring of {@link APPLIED_MOVEMENT_RING_SIZE} entries. Closing it
-	 * would need a second atomic document, which these primitives do not offer; the
-	 * sweeper contract that bounds it is in this package's README.
+	 * Every ring eviction persists its witnessed result onto the claim first, so
+	 * a replay remains deterministic even after later adjusts and hold pruning.
+	 * An old unfinished claim with no surviving witness is ambiguous and requires
+	 * reconciliation; it cannot safely be applied again.
 	 */
 	async adjust(reservationId: string, newQty: number, key: IdempotencyKey): Promise<ReserveResult> {
 		assertPositiveInt(newQty, "adjust", "newQty");
@@ -648,6 +660,7 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 			fromQty: hold.qty,
 			toQty: newQty,
 			createdAt: this.#clock.now().toISOString(),
+			witnessVersion: 1,
 		};
 		const written = await this.#movements.compareAndSet(claimId, null, intent);
 		if (!written.applied) {
@@ -688,9 +701,16 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 			const current = await this.#inventory.getVersioned(claim.sku);
 			if (current === null) return casDone<void>(undefined); // answered below
 			const doc = normalizeInventoryDoc(current.value);
+			// A delayed caller may have read an unfinished claim before a peer
+			// promoted it and evicted its ring entry. Re-read after pinning the
+			// inventory revision; concurrent eviction then forces a CAS retry.
+			const recorded = await this.#movements.get(claimId);
+			if (recorded?.kind === "adjust" && recorded.applied !== undefined) {
+				return casDone<void>(undefined);
+			}
 
 			// Already applied, as remembered by the aggregate.
-			if (findAppliedMovement(doc.appliedMovements, key) !== undefined) {
+			if (findAppliedMovement(doc.appliedMovements, key, "adjust") !== undefined) {
 				return casDone<void>(undefined);
 			}
 
@@ -700,6 +720,9 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 			}
 			// The hold's own witness, which outlives eviction from the ring.
 			if (hold.lastMovementKey === key) return casDone<void>(undefined);
+			if (claim.witnessVersion !== 1) {
+				throw new InventoryMovementReconciliationRequiredError(claimId, claim.sku);
+			}
 			if (hold.state !== "held") {
 				throw new ReservationNotHeldError(claim.reservationId, hold.state);
 			}
@@ -714,7 +737,7 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 				const failed: ReserveResult = { ...OUT_OF_STOCK };
 				const written = await this.#inventory.compareAndSet(claim.sku, current.revision, {
 					...doc,
-					appliedMovements: pushAppliedMovement(doc.appliedMovements, {
+					appliedMovements: await this.#appendMovement(doc, {
 						key,
 						kind: "adjust",
 						result: failed,
@@ -730,7 +753,7 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 					...doc.holds,
 					[claim.reserveKey]: { ...hold, qty: claim.toQty, lastMovementKey: key },
 				},
-				appliedMovements: pushAppliedMovement(doc.appliedMovements, {
+				appliedMovements: await this.#appendMovement(doc, {
 					key,
 					kind: "adjust",
 					result: { ok: true, reservationId: claim.reservationId },
@@ -758,7 +781,7 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 
 		const doc = await this.#inventory.get(claim.sku);
 		const aggregate = doc === null ? undefined : normalizeInventoryDoc(doc);
-		const remembered = findAppliedMovement(aggregate?.appliedMovements, key);
+		const remembered = findAppliedMovement(aggregate?.appliedMovements, key, "adjust");
 		let witnessed: ReserveResult | undefined;
 		if (remembered?.kind === "adjust") {
 			witnessed = remembered.result;
@@ -769,8 +792,15 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 			}
 		}
 		if (witnessed === undefined) {
+			// Promotion can race the two reads above: the first claim read saw an
+			// unfinished intent, then the inventory read saw its witness evicted.
+			// Eviction persisted the result first, so resolve that durable answer.
+			const promoted = await this.#movements.get(claimId);
+			if (promoted?.kind === "adjust" && promoted.applied !== undefined) {
+				return { ...promoted.applied.result };
+			}
 			// No durable witness: nothing moved and the hold is no longer this
-			// reservation's to move — or the documented residual above.
+			// reservation's to move. An old ambiguous claim is never re-applied.
 			throw new ReservationNotHeldError(claim.reservationId, "pending");
 		}
 
@@ -915,6 +945,7 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 			direction,
 			qty,
 			createdAt: this.#clock.now().toISOString(),
+			witnessVersion: 1,
 		};
 		const written = await this.#movements.compareAndSet(claimId, null, intent);
 		if (!written.applied) {
@@ -965,9 +996,16 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 					return casDone<StockRemovalResult>({ ok: false, reason: "UNKNOWN_SKU" });
 				}
 				const doc = normalizeInventoryDoc(current.value);
-				const remembered = findAppliedMovement(doc.appliedMovements, key);
+				const recorded = await this.#movements.get(claimId);
+				if (recorded?.kind === "stock" && recorded.applied !== undefined) {
+					return casDone<StockRemovalResult>({ ...recorded.applied.result });
+				}
+				const remembered = findAppliedMovement(doc.appliedMovements, key, "stock");
 				if (remembered?.kind === "stock") {
 					return casDone<StockRemovalResult>({ ...remembered.result });
+				}
+				if (claim.witnessVersion !== 1) {
+					throw new InventoryMovementReconciliationRequiredError(claimId, claim.sku);
 				}
 
 				let moved: StockRemovalResult;
@@ -985,7 +1023,7 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 				const written = await this.#inventory.compareAndSet(claim.sku, current.revision, {
 					...doc,
 					onHand,
-					appliedMovements: pushAppliedMovement(doc.appliedMovements, {
+					appliedMovements: await this.#appendMovement(doc, {
 						key,
 						kind: "stock",
 						result: moved,
@@ -1008,6 +1046,42 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 			return { ...settled.applied.result };
 		}
 		return result;
+	}
+
+	/**
+	 * Before the inventory CAS can remove an entry, persist its ORIGINAL result
+	 * on the claim. Failure prevents the inventory write. The pinned revision
+	 * makes concurrent ring changes retry the entire check, so this ordering is
+	 * sufficient across documents without transactions or a scheduled healer.
+	 */
+	async #appendMovement(doc: InventoryDoc, entry: AppliedMovement): Promise<AppliedMovement[]> {
+		const next = pushAppliedMovement(doc.appliedMovements, entry);
+		for (const previous of doc.appliedMovements ?? []) {
+			if (next.some((kept) => kept.key === previous.key && kept.kind === previous.kind)) continue;
+			const claimId =
+				previous.kind === "stock" ? stockClaimId(previous.key) : adjustClaimId(previous.key);
+			await this.#markMovementApplied(claimId, (stored) => {
+				if (stored.sku !== doc.sku) return undefined;
+				const appliedAt = this.#clock.now().toISOString();
+				if (stored.kind === "stock" && previous.kind === "stock") {
+					return { ...stored, applied: { result: previous.result, appliedAt } };
+				}
+				if (stored.kind === "adjust" && previous.kind === "adjust") {
+					return { ...stored, applied: { result: previous.result, appliedAt } };
+				}
+				return undefined;
+			});
+			const recorded = await this.#movements.get(claimId);
+			if (
+				recorded === null ||
+				recorded.sku !== doc.sku ||
+				recorded.kind !== previous.kind ||
+				recorded.applied === undefined
+			) {
+				throw new InventoryMovementReconciliationRequiredError(claimId, doc.sku);
+			}
+		}
+		return next;
 	}
 
 	/** Record a movement claim's terminal answer. First writer wins; idempotent. */

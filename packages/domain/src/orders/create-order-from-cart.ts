@@ -153,9 +153,9 @@ export async function createOrderFromCart(
 		// A `pending` order does NOT prove the checkout finished — finish it first
 		// (see `finishCheckout`). The cart flipped is the one the ORDER was made
 		// from, never the command's.
-		// KNOWN FOLLOW-UP (pre-existing): a cart line edited between the failed call
-		// and this replay (qty adjusted on the same hold) is adopted as edited for an
-		// order that snapshotted the old lines.
+		// Adoption checks the persisted line's SKU and quantity in its guarded
+		// write, so a hold adjusted after this order was inserted cannot pay for a
+		// different quantity from the immutable order snapshot.
 		const finished = await finishCheckout(deps, already, already.cartId, async () => {
 			await deps.couponStore.releaseByOrder(already.id);
 		});
@@ -571,11 +571,14 @@ async function finishCheckout(
 	//    (PR B — checkout-write batching), collected from the persisted order lines
 	//    so a replay re-issues idempotently. Digital lines carry no reservation.
 	const now = deps.clock.now().toISOString();
-	const physicalReservationIds = order.lines
-		.map((line) => line.reservationId)
-		.filter((id): id is NonNullable<typeof id> => id !== null);
+	const expectedReservations = order.lines.flatMap((line) =>
+		line.reservationId === null
+			? []
+			: [{ reservationId: line.reservationId, sku: line.sku, quantity: line.quantity }],
+	);
 	const result = await deps.inventoryStore.adoptMany({
-		reservationIds: physicalReservationIds,
+		reservationIds: expectedReservations.map((entry) => entry.reservationId),
+		expectedReservations,
 		orderId: order.id,
 		holdExpiresAt: order.holdExpiresAt,
 		now,

@@ -219,6 +219,12 @@ export class InMemoryInventoryStore implements InventoryStore {
 	 */
 	async adopt(input: AdoptInput): Promise<AdoptResult> {
 		const row = this.#mustGet(input.reservationId);
+		if (
+			input.expected !== undefined &&
+			(row.sku !== input.expected.sku || row.qty !== input.expected.quantity)
+		) {
+			return { ok: false, reason: "RESERVATION_LOST" };
+		}
 		if (row.state === "adopted" && row.orderId === input.orderId) {
 			return { ok: true }; // idempotent replay of createOrderFromCart
 		}
@@ -250,8 +256,16 @@ export class InMemoryInventoryStore implements InventoryStore {
 				lost.push(reservationId); // unknown id ⇒ lost (matches Kysely + JSDoc)
 				continue;
 			}
+			const expected = input.expectedReservations?.find(
+				(entry) => entry.reservationId === reservationId,
+			);
+			if (input.expectedReservations !== undefined && expected === undefined) {
+				lost.push(reservationId);
+				continue;
+			}
 			const result = await this.adopt({
 				reservationId,
+				...(expected !== undefined ? { expected } : {}),
 				orderId: input.orderId,
 				holdExpiresAt: input.holdExpiresAt,
 				now: input.now,

@@ -60,6 +60,8 @@ than rewriting history.
 
 - [0023. The reporting rollup is one guarded numeric delta per event](./0023-reporting-rollup-is-a-guarded-delta.md) — accepted, **refines [ADR-0019](./0019-commerce-aggregates-are-one-document-each.md)'s two-tier write strategy for the reporting day document only**: each rollup event is one `updateIf` (arithmetic in SQL) guarded on the day's `epoch` and per-counter floors and bumping `seq`, and a recompute commits guarded on the pinned `(epoch, seq)` and bumps `epoch`; records the one named exception to ADR-0019's single-guard rule and why it is safe, the forward-only flat stored shape, and the mixed-version/rollback behaviour (an old worker's rollup leaves a hybrid that the next event un-taints in one guarded write; its reconcile leaves a legacy document that is migrated forward; `reconcile` heals what either discarded). Deploys must be atomic
 
+- [0024. Frozen adoption and durable movement replay witnesses](./0024-inventory-replay-witnesses-are-durable.md) — accepted, supersedes ADR-0019's movement eviction residual and periodic-healer assumption; checkout guards the persisted SKU/quantity in its adoption CAS, and every movement persists evicted results before dropping their inventory witnesses. Legacy unknown outcomes require reconciliation.
+
 ## Queued (to promote from the private draft plans)
 
 Decisions already made that should each become an ADR:

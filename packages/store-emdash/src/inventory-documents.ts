@@ -31,8 +31,10 @@
  * **Ledgers are bounded.** `adjust` / `restock` / `removeStock` keep their
  * per-key intent in `inventory_movements/{prefixedKey}` — one document per key,
  * updated to `applied` once the units moved — and the aggregate keeps only a
- * bounded ring of the last {@link APPLIED_MOVEMENT_RING_SIZE} applied keys, so no
- * map on the hot document grows without limit.
+ * bounded ring of the last {@link APPLIED_MOVEMENT_RING_SIZE} applied keys. Each
+ * result is promoted onto its durable claim BEFORE its ring witness is evicted;
+ * a failed promotion prevents eviction. No periodic healer or timing assumption
+ * is needed, and no map on the hot document grows without limit.
  *
  * Document ids are the once-only guard everywhere a claim is needed
  * (`_plugin_storage`'s primary key plus `compareAndSet(id, null, …)`'s
@@ -127,21 +129,11 @@ export type AppliedMovement =
 /**
  * How many applied movement keys the aggregate remembers.
  *
- * The ring exists only to make the window between a movement's `compareAndSet`
- * and its claim document being marked `applied` idempotent — a window the width
- * of one round trip. The claim document is the durable record; the ring is the
- * short-horizon witness, bounded so the hot document cannot grow without limit
- * (the same device the sku-rename transfer ring uses).
- *
- * **The residual this bound leaves, stated exactly.** A replay delayed past this
- * many later movements on the SAME sku loses its witness and would apply a second
- * time (or, for an adjust whose hold has also been pruned, throw rather than
- * answer). It cannot be closed without a second atomic document, which these
- * primitives do not offer, so it is accepted as BOUNDED and handed to the sweeper
- * as a contract: a movement claim still in `claimed` state whose key is present in
- * the aggregate's ring, or on a hold, is marked `applied` by the sweeper BEFORE
- * eviction can occur. Reaching the residual therefore takes at least this many
- * movements on ONE sku between a crash and the next sweep.
+ * The ring protects the window between an inventory movement and its claim
+ * completion. Every writer promotes any evicted entry's result to the claim
+ * FIRST, then removes the witness in the inventory CAS. A crash before promotion
+ * leaves the witness intact; a crash after it leaves the durable answer intact.
+ * The ring bound controls document size, never the idempotency lifetime.
  */
 export const APPLIED_MOVEMENT_RING_SIZE = 256;
 
@@ -267,6 +259,8 @@ export interface StockMovementClaim {
 	direction: StockDirection;
 	qty: number;
 	createdAt: string;
+	/** Version 1 writers persist results before evicting witnesses. Absent on legacy claims. */
+	witnessVersion?: 1;
 	/** Set once the aggregate write landed. Its presence IS "this key is done". */
 	applied?: { result: StockRemovalResult; appliedAt: string };
 }
@@ -290,6 +284,8 @@ export interface AdjustClaim {
 	/** The absolute target qty. */
 	toQty: number;
 	createdAt: string;
+	/** Version 1 writers persist results before evicting witnesses. Absent on legacy claims. */
+	witnessVersion?: 1;
 	/** Set once the aggregate write landed. Its presence IS "this key is done". */
 	applied?: { result: ReserveResult; appliedAt: string };
 }
@@ -339,16 +335,25 @@ export function normalizeInventoryDoc(doc: InventoryDoc): InventoryDoc {
 export function findAppliedMovement(
 	ring: readonly AppliedMovement[] | undefined,
 	key: string,
+	kind?: AppliedMovement["kind"],
 ): AppliedMovement | undefined {
-	return ring?.find((entry) => entry.key === key);
+	return ring?.find((entry) => entry.key === key && (kind === undefined || entry.kind === kind));
 }
 
-/** Append to the ring, evicting the oldest entries past the bound. */
+/**
+ * Compute the bounded ring. Callers MUST durably promote evicted entries before
+ * committing it; this pure helper cannot perform the required storage writes.
+ */
 export function pushAppliedMovement(
 	ring: readonly AppliedMovement[] | undefined,
 	entry: AppliedMovement,
 ): AppliedMovement[] {
-	const next = [...(ring ?? []).filter((existing) => existing.key !== entry.key), entry];
+	const next = [
+		...(ring ?? []).filter(
+			(existing) => existing.key !== entry.key || existing.kind !== entry.kind,
+		),
+		entry,
+	];
 	return next.length > APPLIED_MOVEMENT_RING_SIZE
 		? next.slice(next.length - APPLIED_MOVEMENT_RING_SIZE)
 		: next;
@@ -360,7 +365,7 @@ export function pushAppliedMovement(
  * The ring makes the window between the source's stamp and the source's clear
  * idempotent, and it is bounded for the same reason
  * {@link APPLIED_MOVEMENT_RING_SIZE} is: the hot document must not grow without
- * limit. The residual is the same shape too, and smaller in practice — reaching
+ * limit. Its separate cross-document residual is smaller in practice — reaching
  * it takes this many *renames onto one sku*, and a sku that has ever held stock
  * can never be renamed onto again at all (see the port's `SkuStockConflictError`),
  * so in the shipped rule a target accumulates exactly one token in its life. The

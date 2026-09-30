@@ -513,6 +513,52 @@ export function inventoryStoreContract(
 		const PAST = "2026-07-10T00:01:00.000Z"; // < NOW ⇒ an expired hold
 		const LATER = "2026-07-10T01:00:00.000Z"; // > FUTURE ⇒ past the deadline
 
+		for (const expected of [
+			{ sku: "SKU-1", quantity: 1 },
+			{ sku: "SKU-2", quantity: 2 },
+		]) {
+			test(`adoptMany refuses a frozen snapshot mismatch (${expected.sku}, qty ${String(expected.quantity)}) without changing the hold`, async () => {
+				const h = await makeStore();
+				if (!h.holdWithExpiry) throw new Error("the contract requires holdWithExpiry");
+				await h.seed("SKU-1", 10);
+				const reservationId = await h.holdWithExpiry("SKU-1", 2, "frozen-hold", FUTURE);
+				expect(
+					await h.store.adoptMany({
+						reservationIds: [reservationId],
+						expectedReservations: [{ reservationId, ...expected }],
+						orderId: "ord-frozen",
+						holdExpiresAt: FUTURE,
+						now: NOW,
+					}),
+				).toEqual({ adopted: [], lost: [reservationId] });
+				// A rejected adoption must leave the mutable cart hold intact.
+				expect(await h.store.adjust(reservationId, 3, idempotencyKey("still-cart-held"))).toEqual({
+					ok: true,
+					reservationId,
+				});
+				expect(await h.onHand("SKU-1")).toBe(7);
+			});
+		}
+
+		test("singular adoption checks frozen quantity on an already adopted replay", async () => {
+			const h = await makeStore();
+			if (!h.holdWithExpiry) throw new Error("the contract requires holdWithExpiry");
+			await h.seed("SKU-1", 10);
+			const reservationId = await h.holdWithExpiry("SKU-1", 2, "frozen-hold", FUTURE);
+			const input = { reservationId, orderId: "ord-frozen", holdExpiresAt: FUTURE, now: NOW };
+			expect(await h.store.adopt({ ...input, expected: { sku: "SKU-1", quantity: 2 } })).toEqual({
+				ok: true,
+			});
+			expect(await h.store.adopt({ ...input, expected: { sku: "SKU-1", quantity: 1 } })).toEqual({
+				ok: false,
+				reason: "RESERVATION_LOST",
+			});
+			expect(
+				await h.store.adopt({ ...input, now: LATER, expected: { sku: "SKU-1", quantity: 2 } }),
+			).toEqual({ ok: true });
+			expect(await h.onHand("SKU-1")).toBe(8);
+		});
+
 		test("adoptMany flips every held line of one order to adopted (all-success)", async () => {
 			const h = await makeStore();
 			if (!h.holdWithExpiry) return;

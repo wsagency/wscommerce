@@ -200,7 +200,7 @@ each idempotent by reservation id, so a partially applied set is safe for any
 replayer to re-run. The order-side intent record and the completing sweeper belong
 to later increments. Duplicate ids in a batch are collapsed before classification.
 
-**Ledgers are bounded.** `adjust`, `restock` and `removeStock` keep their
+**The aggregate history is bounded; replay protection is durable.** `adjust`, `restock` and `removeStock` keep their
 once-only record in `inventory_movements` — ONE document per key, carrying the full
 intent and then `applied` with the recorded result. Nothing on the hot aggregate
 grows without limit: it keeps only `appliedMovements`, a ring of the last
@@ -209,24 +209,27 @@ grows without limit: it keeps only `appliedMovements`, a ring of the last
 make the one-round-trip window between a movement's `compareAndSet` and its claim
 being marked `applied` idempotent; the claim document is the durable record.
 
-**The residual that bound leaves, and the sweeper contract that closes it.** A
-replay delayed past `APPLIED_MOVEMENT_RING_SIZE` later movements on the SAME sku
-loses its witness: a stock movement would apply a second time, and an `adjust`
-whose hold has also been pruned throws `ReservationNotHeldError` rather than invent
-a recorded answer. Closing it needs a second atomic document, which these
-primitives do not offer, so it is an accepted BOUNDED residual with a contract the
-sweeper must satisfy:
+**Persist the outcome before eviction.** Any stock movement or adjustment that
+would evict a ring entry writes that entry's ORIGINAL result onto its movement
+claim first, then commits the inventory CAS that removes the witness. If promotion
+fails, the movement and eviction fail together. If the inventory revision changed,
+the whole check retries. An in-flight replay also re-reads its claim after pinning
+the inventory revision, so a peer's promotion/eviction cannot make that caller
+apply again. Ring entries distinguish `stock` and `adjust` keys, matching the two
+idempotency scopes. This supersedes ADR-0019's movement residual and its unimplemented
+periodic-healer assumption; see [ADR-0024](../../adr/0024-inventory-replay-witnesses-are-durable.md).
 
-> A movement claim document in `inventory_movements` whose `applied` field is
-> ABSENT — there is no `state` field; an absent `applied` IS the unfinished marker —
-> and whose key still appears in the aggregate's `appliedMovements` ring, or as a
-> hold's `lastMovementKey`, is given its `applied` record by the sweeper **before**
-> that key can be evicted from the ring. The recorded result is the ring entry's
-> `result`, or `{ ok: true, reservationId }` when the witness is a hold's
-> `lastMovementKey`. The residual therefore requires at least ring-size movements on
-> one SKU between a crash and the next sweep.
+**Existing data.** No SQL migration or new collection is needed. Applied claims
+and existing ring/hold witnesses retain their meaning and heal normally. New
+claims carry `witnessVersion: 1`. An unfinished legacy claim without a surviving
+witness has an unknown outcome: it throws `InventoryMovementReconciliationRequiredError`
+(`INVENTORY_MOVEMENT_RECONCILIATION_REQUIRED`) without moving units. Reconcile it
+against the merchant's movement audit and actual stock before recording its result;
+do not blindly retry with another key or tag it version 1. Upgrade all inventory
+writers together after draining in-flight writes: an older writer can still evict
+without promotion, so a mixed-version rollout cannot provide this guarantee.
 
-**`adjust` re-derives; it never refuses.** The port takes an ABSOLUTE target, and
+**An unapplied version-1 `adjust` re-derives its delta.** The port takes an ABSOLUTE target, and
 the SQL reference re-derives the previous qty on every retry — a lost qty CAS rolls
 its claim back with the transaction — so it always applies. This adapter matches
 that: a completion reads the hold's CURRENT qty and applies `toQty` against it, and

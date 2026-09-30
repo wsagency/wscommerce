@@ -29,11 +29,7 @@
  * make a compare-and-set lose.
  */
 import type { ReserveResult } from "@otta-sh/domain";
-import {
-	idempotencyKey,
-	ReservationCommitLostError,
-	ReservationNotHeldError,
-} from "@otta-sh/domain";
+import { idempotencyKey, ReservationCommitLostError } from "@otta-sh/domain";
 import { FixedClock } from "@otta-sh/domain/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type {
@@ -174,29 +170,14 @@ describeEachDialect("EmdashInventoryStore crash seams", (ctx) => {
 		});
 	};
 
-	/**
-	 * Overwrite the aggregate's applied-movement ring with a FULL ring of unrelated
-	 * keys — the cheap, exact equivalent of performing
-	 * {@link APPLIED_MOVEMENT_RING_SIZE} further movements on this sku, which is
-	 * what it takes to evict a crashed movement's witness.
-	 */
-	const evictRing = async (sku: string, options: { keepHolds: boolean }): Promise<void> => {
-		const current = await inventory().getVersioned(sku);
-		if (current === null) throw new Error(`no inventory document for ${sku}`);
-		const doc = normalizeInventoryDoc(current.value);
-		const saturated: AppliedMovement[] = Array.from(
-			{ length: APPLIED_MOVEMENT_RING_SIZE },
-			(_unused, i) => ({
-				key: `evicted-filler-${String(i)}`,
-				kind: "stock",
-				result: { ok: true, onHand: doc.onHand },
-			}),
-		);
-		await inventory().compareAndSet(sku, current.revision, {
-			...doc,
-			holds: options.keepHolds ? doc.holds : {},
-			appliedMovements: saturated,
-		});
+	/** Real subsequent movements must persist an evicted witness's answer first. */
+	const evictWithRestocks = async (sku: string): Promise<void> => {
+		const store = makeStore();
+		for (let i = 0; i < APPLIED_MOVEMENT_RING_SIZE; i++) {
+			expect(await store.restock(sku, 1, idempotencyKey(`eviction-${String(i)}`))).toMatchObject({
+				ok: true,
+			});
+		}
 	};
 
 	const claimedDoc = async (
@@ -606,19 +587,7 @@ describeEachDialect("EmdashInventoryStore crash seams", (ctx) => {
 			expect((await movements().get(adjustClaimId(key)))?.applied?.result).toEqual(replay);
 		});
 
-		it("restock past ring eviction RE-APPLIES — the documented, ACCEPTED residual the sweeper contract bounds (do not 'fix' this test)", async () => {
-			// This is not a bug being tolerated quietly; it is the residual the
-			// applied-movement ring's bound leaves, stated in `inventory-documents.ts`
-			// and in this package's README, together with the contract that closes it:
-			//
-			//   a movement claim whose `applied` is ABSENT and whose key still appears
-			//   in the aggregate's ring (or on a hold) is given its `applied` record by
-			//   the sweeper BEFORE that key can be evicted from the ring.
-			//
-			// Reaching this state therefore takes a crash plus at least
-			// APPLIED_MOVEMENT_RING_SIZE further movements on ONE sku before the next
-			// sweep. Asserting it is how the residual stays a known, bounded, sweeper-
-			// owned fact instead of quietly widening.
+		it("restock past ring eviction returns its durable original answer without moving twice", async () => {
 			await seed("SKU-F4", 10);
 			const key = idempotencyKey("k-f4");
 			const crash = failCall(raw(INVENTORY_MOVEMENTS_COLLECTION), isUpdateWrite, {
@@ -629,22 +598,21 @@ describeEachDialect("EmdashInventoryStore crash seams", (ctx) => {
 			).rejects.toThrow(InjectedCrashError);
 			expect(await onHand("SKU-F4")).toBe(17);
 
-			// The witness is evicted — the cheap equivalent of 256 later movements.
-			await evictRing("SKU-F4", { keepHolds: true });
+			await evictWithRestocks("SKU-F4");
 			expect((await ringOf("SKU-F4")).some((entry) => entry.key === key)).toBe(false);
-			expect((await movements().get(stockClaimId(key)))?.applied).toBeUndefined();
+			expect((await movements().get(stockClaimId(key)))?.applied?.result).toEqual({
+				ok: true,
+				onHand: 17,
+			});
 
-			// With no witness left, the replay applies the movement a SECOND time.
-			const reapplied = await makeStore().restock("SKU-F4", 7, key);
-			expect(reapplied).toEqual({ ok: true, onHand: 24 });
-			expect(await onHand("SKU-F4")).toBe(24);
-			// It is at least self-limiting: the claim is now applied, so a THIRD
-			// replay returns the recorded answer and moves nothing.
-			expect(await makeStore().restock("SKU-F4", 7, key)).toEqual(reapplied);
-			expect(await onHand("SKU-F4")).toBe(24);
-		});
+			const replay = await makeStore().restock("SKU-F4", 7, key);
+			expect(replay).toEqual({ ok: true, onHand: 17 });
+			expect(await onHand("SKU-F4")).toBe(273);
+			expect(await makeStore().restock("SKU-F4", 7, key)).toEqual(replay);
+			expect(await onHand("SKU-F4")).toBe(273);
+		}, 30_000);
 
-		it("adjust past ring eviction and prune throws ReservationNotHeldError rather than inventing an answer — the same ACCEPTED residual", async () => {
+		it("adjust past ring eviction and hold pruning returns its durable original answer", async () => {
 			await seed("SKU-F5", 20);
 			const reserveKey = idempotencyKey("k-f5-hold");
 			const held = await makeStore().reserve("SKU-F5", 2, reserveKey);
@@ -662,17 +630,19 @@ describeEachDialect("EmdashInventoryStore crash seams", (ctx) => {
 				),
 			).rejects.toThrow(InjectedCrashError);
 
-			// Both witnesses gone: the ring evicted AND the hold pruned. Per the
-			// `adjust` docblock this is the one state with no durable witness left, and
-			// the store refuses to invent a recorded answer.
-			await evictRing("SKU-F5", { keepHolds: false });
-			await expect(makeStore().adjust(held.reservationId, 5, key)).rejects.toBeInstanceOf(
-				ReservationNotHeldError,
-			);
-			// It refused rather than moved: the shelf is untouched by the refusal.
-			expect(await onHand("SKU-F5")).toBe(15);
-			expect((await movements().get(adjustClaimId(key)))?.applied).toBeUndefined();
-		});
+			await evictWithRestocks("SKU-F5");
+			await makeStore().commit(held.reservationId);
+			expect((await holdsOf("SKU-F5"))[reserveKey]).toBeUndefined();
+			expect(await makeStore().adjust(held.reservationId, 5, key)).toEqual({
+				ok: true,
+				reservationId: held.reservationId,
+			});
+			expect(await onHand("SKU-F5")).toBe(271);
+			expect((await movements().get(adjustClaimId(key)))?.applied?.result).toEqual({
+				ok: true,
+				reservationId: held.reservationId,
+			});
+		}, 30_000);
 	});
 
 	// -- (g) a partial batch across N SKUs -------------------------------------

@@ -7,6 +7,26 @@
  */
 
 /**
+ * An unfinished legacy movement lost its witness, or an eviction cannot persist
+ * its witnessed result. Replaying the units would risk a duplicate movement.
+ * No movement is applied; an operator must reconcile the claim and stock first.
+ */
+export class InventoryMovementReconciliationRequiredError extends Error {
+	override readonly name = "InventoryMovementReconciliationRequiredError";
+	readonly code = "INVENTORY_MOVEMENT_RECONCILIATION_REQUIRED";
+	readonly claimId: string;
+	readonly sku: string;
+
+	constructor(claimId: string, sku: string) {
+		super(
+			`inventory movement ${claimId} for ${sku} has no provable durable outcome; reconcile before replaying`,
+		);
+		this.claimId = claimId;
+		this.sku = sku;
+	}
+}
+
+/**
  * A reservation id came back already taken.
  *
  * `reservation_index/{reservationId}` is written create-if-absent before the hold,

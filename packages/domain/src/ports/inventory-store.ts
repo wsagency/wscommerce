@@ -40,6 +40,9 @@ export interface InventoryStore {
 	// EXCEPT an already-`adopted` row for THIS `orderId` (idempotent replay of
 	// createOrderFromCart), which resolves to `ok`. `adopted` is a new additive
 	// reservation state, structurally invisible to Phase-3's `held`-scoped sweep.
+	// When `expected` is supplied, SKU and quantity must also match in the same
+	// guarded write, including already-adopted replay; mismatch is RESERVATION_LOST
+	// and leaves the live hold intact. Checkout supplies its immutable snapshot.
 	adopt(input: AdoptInput): Promise<AdoptResult>;
 
 	// Additive (PR B — checkout-write batching): the BATCHED counterpart of
@@ -259,6 +262,8 @@ export type ReserveResult =
 
 export interface AdoptInput {
 	reservationId: string;
+	/** Optional frozen order-line guard, checked atomically with adoption. */
+	expected?: { sku: string; quantity: number };
 	orderId: string;
 	/** The order's hold deadline (ISO-8601 UTC) the reservation is re-pointed to. */
 	holdExpiresAt: string;
@@ -272,6 +277,13 @@ export type AdoptResult = { ok: true } | { ok: false; reason: "RESERVATION_LOST"
 export interface AdoptManyInput {
 	/** The order's physical reservation ids (the digital lines carry none). */
 	reservationIds: string[];
+	/**
+	 * Frozen order-line guards. When supplied, every requested id must have one
+	 * matching SKU/quantity; a missing or mismatched guard classifies it as lost.
+	 * Checked in the same inventory write, also for an already-adopted replay.
+	 * Omitted by older callers to preserve their existing adoption semantics.
+	 */
+	expectedReservations?: Array<{ reservationId: string; sku: string; quantity: number }>;
 	/** The owning order the flips set `order_id` to. */
 	orderId: string;
 	/** The order's hold deadline (ISO-8601 UTC) each reservation is re-pointed to. */
