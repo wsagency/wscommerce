@@ -79,7 +79,7 @@ describe("makeAdminClients wires the payment gateways into admin refunds", () =>
 				requests.push({ method: init?.method ?? "GET", url, headers, body });
 				if (url.startsWith("https://api.stripe.com/v1/payment_intents/")) {
 					return Response.json({
-						id: "pi",
+						id: new URL(url).pathname.split("/").at(-1),
 						latest_charge: {
 							amount_refunded: amountRefunded,
 							amount_captured: 1500,
@@ -167,6 +167,8 @@ describe("makeAdminClients wires the payment gateways into admin refunds", () =>
 		expect(Object.fromEntries(new URLSearchParams(posts[0]?.body))).toEqual({
 			payment_intent: providerRef,
 			amount: "500",
+			"metadata[order_id]": id,
+			"metadata[refund_key]": `${id}-r1`,
 		});
 		const [row] = (await orders.getRefunds(id))?.refunds ?? [];
 		expect(row).toMatchObject({ kind: "gateway", gateway: "stripe", amountCents: 500 });

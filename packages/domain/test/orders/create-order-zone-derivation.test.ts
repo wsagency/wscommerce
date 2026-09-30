@@ -225,30 +225,24 @@ describe("createOrderFromCart derives the zone from the address", () => {
 	});
 
 	describe("a digital-only cart (U3)", () => {
-		test("an address no zone matches still orders, untaxed, and the address is stored", async () => {
+		test("an unmatched digital tax destination refuses checkout before any order is minted", async () => {
 			const cartId = await digitalCart();
 			const res = await createOrderFromCart(
 				h.createDeps,
 				cmd(cartId, { shippingAddress: addressIn("FR") }),
 			);
-			expect(res.ok).toBe(true);
-			if (!res.ok) return;
-			expect(res.order.totals).toMatchObject({
-				tax: 0,
-				shipping: 0,
-				total: 3000,
-				shippingMethodSnapshot: null,
-			});
-			expect(res.order.shippingAddress?.country).toBe("FR");
+			expect(res).toEqual({ ok: false, reason: "TAX_DESTINATION_NOT_MATCHED" });
+			await expectNothingMinted(cartId);
 		});
 
-		test("a blank region orders even where the country has a subdivision zone (US + US-CA)", async () => {
+		test("a digital tax destination requires a subdivision when country-only matching is ambiguous", async () => {
 			const cartId = await digitalCart();
 			const res = await createOrderFromCart(
 				h.createDeps,
 				cmd(cartId, { shippingAddress: addressIn("US") }),
 			);
-			expect(res.ok).toBe(true);
+			expect(res).toEqual({ ok: false, reason: "TAX_REGION_CODE_REQUIRED" });
+			await expectNothingMinted(cartId);
 		});
 
 		test("the address must still be valid: country 'United States' → INVALID_SHIPPING_ADDRESS; region 'Bavaria' → SHIPPING_REGION_CODE_REQUIRED", async () => {
@@ -267,9 +261,13 @@ describe("createOrderFromCart derives the zone from the address", () => {
 			).toEqual({ ok: false, reason: "SHIPPING_REGION_CODE_REQUIRED" });
 		});
 
-		test("with no address at all it orders", async () => {
+		test("a zoned digital checkout without billing or legacy shipping refuses to mint an untaxed order", async () => {
 			const cartId = await digitalCart();
-			expect((await createOrderFromCart(h.createDeps, cmd(cartId))).ok).toBe(true);
+			expect(await createOrderFromCart(h.createDeps, cmd(cartId))).toEqual({
+				ok: false,
+				reason: "MISSING_BILLING_ADDRESS",
+			});
+			await expectNothingMinted(cartId);
 		});
 
 		test("a method → SHIPPING_METHOD_NOT_APPLICABLE", async () => {

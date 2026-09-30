@@ -1,9 +1,10 @@
 /**
- * One copy of the host is an invariant, not a preference. Otta's commerce truth
+ * One version of the host is an invariant. pnpm may install peer-context copies
+ * of that same version. Otta's commerce truth
  * rides on EmDash's conditional-write primitives, which first shipped in `emdash@0.38.0`.
  * The released `@emdash-cms/cloudflare` pins `emdash` EXACTLY, so if a future
  * release of it ever pins a version other than the one the manifests name, a
- * second `emdash` lands in the store and the Worker bridge binds to the copy
+ * different `emdash` version lands in the store and the Worker bridge binds to the copy
  * WITHOUT the primitives: no install error, no type error. This suite is what
  * makes that loud. The fix, if it ever fires, is an exact `emdash` override in
  * `pnpm-workspace.yaml`.
@@ -12,7 +13,7 @@ import Database from "better-sqlite3";
 import { PluginStorageRepository } from "emdash";
 import { MIGRATION_NAMES, runMigrations } from "emdash/db";
 import { Kysely, SqliteDialect } from "kysely";
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -33,9 +34,15 @@ afterAll(async () => {
 });
 
 describe("the EmDash host pin", () => {
-	it("puts exactly one emdash in the store", () => {
+	it("pins one host version across pnpm peer-context copies", () => {
 		const copies = readdirSync(STORE).filter((entry) => entry.startsWith("emdash@"));
-		expect(copies).toHaveLength(1);
+		expect(copies.length).toBeGreaterThan(0);
+		const versions = copies.map(
+			(copy) =>
+				JSON.parse(readFileSync(`${STORE}/${copy}/node_modules/emdash/package.json`, "utf8"))
+					.version as string,
+		);
+		expect(new Set(versions)).toEqual(new Set(["1.0.1"]));
 	});
 
 	it("exports the plugin-storage repository from the root entry", () => {
