@@ -24,7 +24,11 @@ import type { APIContext } from "astro";
 const { getEmDashEntry } = vi.hoisted(() => ({ getEmDashEntry: vi.fn() }));
 vi.mock("emdash", () => ({ getEmDashEntry }));
 
-import { STOREFRONT_CART_LINE_ADD_ROUTE, STOREFRONT_PRODUCT_ROUTE } from "@otta-sh/plugin";
+import {
+	STOREFRONT_CART_CREATE_ROUTE,
+	STOREFRONT_CART_LINE_ADD_ROUTE,
+	STOREFRONT_PRODUCT_ROUTE,
+} from "@otta-sh/plugin";
 import { POST } from "../src/pages/cart/add.js";
 
 const SITE = "http://localhost:4321";
@@ -66,8 +70,30 @@ function makeHandler(opts: { productResult?: unknown; addLineResult?: unknown })
 		const body = (await request.json()) as Record<string, unknown>;
 		calls.push({ route, body });
 		if (route === STOREFRONT_PRODUCT_ROUTE) {
-			return { success: true, data: opts.productResult ?? { ok: false, error: "RENDER_FAILED" } };
+			return {
+				success: true,
+				data:
+					typeof opts.productResult === "function"
+						? opts.productResult(body)
+						: (opts.productResult ?? { ok: false, error: "RENDER_FAILED" }),
+			};
 		}
+		if (route === STOREFRONT_CART_CREATE_ROUTE)
+			return {
+				success: true,
+				data: {
+					ok: true,
+					cartId: "new-cart",
+					cookie: {
+						name: "otta_cart",
+						value: "new-cart",
+						path: "/",
+						httpOnly: true,
+						sameSite: "lax",
+						secure: false,
+					},
+				},
+			};
 		if (route === STOREFRONT_CART_LINE_ADD_ROUTE) {
 			return {
 				success: true,
@@ -89,7 +115,11 @@ function makeHandler(opts: { productResult?: unknown; addLineResult?: unknown })
 	return { handler: handler as never, calls };
 }
 
-function makeContext(form: Record<string, string>, handler: unknown): APIContext {
+function makeContext(
+	form: Record<string, string>,
+	handler: unknown,
+	existingCart = true,
+): APIContext {
 	const body = new URLSearchParams(form);
 	const url = new URL("/cart/add", SITE);
 	const request = new Request(url, {
@@ -101,7 +131,7 @@ function makeContext(form: Record<string, string>, handler: unknown): APIContext
 		body: body.toString(),
 	});
 	const cookieStore = new Map<string, string>();
-	cookieStore.set("otta_cart", "cart-existing");
+	if (existingCart) cookieStore.set("otta_cart", "cart-existing");
 	return {
 		request,
 		url,
@@ -137,6 +167,55 @@ beforeEach(() => {
 });
 
 describe("POST /cart/add — productId pre-check (item 3)", () => {
+	test("a first cart takes the authoritative selected price currency rather than default USD or a form field", async () => {
+		getEmDashEntry.mockResolvedValue({ entry: { data: { id: "prod-1", title: "Test product" } } });
+		const { handler, calls } = makeHandler({
+			productResult: {
+				...VALID_PRODUCT_RESULT,
+				product: {
+					...VALID_PRODUCT_RESULT.product,
+					price: { amount: 1800, currency: "EUR", formatted: "€18.00" },
+				},
+			},
+		});
+		const result = await POST(
+			makeContext(
+				{ sku: "SKU-1", productId: "prod-1", idempotencyKey: "first-eur", currency: "USD" },
+				handler,
+				false,
+			),
+		);
+		expect(result.headers.get("location")).toBe("/cart");
+		expect(calls.find((call) => call.route === STOREFRONT_CART_CREATE_ROUTE)?.body).toEqual({
+			currency: "EUR",
+		});
+	});
+	test("validates the selected variant through the live PDP before adding its SKU", async () => {
+		getEmDashEntry.mockResolvedValue({ entry: { data: { id: "prod-1", title: "Test product" } } });
+		const { handler, calls } = makeHandler({
+			productResult: (body: Record<string, unknown>) =>
+				body.sku === "VARIANT-1"
+					? {
+							...VALID_PRODUCT_RESULT,
+							product: {
+								...VALID_PRODUCT_RESULT.product,
+								sku: "VARIANT-1",
+								price: { amount: 1800, currency: "EUR", formatted: "€18.00" },
+							},
+						}
+					: VALID_PRODUCT_RESULT,
+		});
+		const result = await POST(
+			makeContext(
+				{ sku: "VARIANT-1", productId: "prod-1", idempotencyKey: "selected-variant" },
+				handler,
+			),
+		);
+		expect(result.headers.get("location")).toBe("/cart");
+		expect(calls.find((call) => call.route === STOREFRONT_CART_LINE_ADD_ROUTE)?.body.sku).toBe(
+			"VARIANT-1",
+		);
+	});
 	test("a productId that resolves to NO CMS entry redirects with PRODUCT_NOT_FOUND, and the add-line route is never called (real shape: entry:null PLUS a LiveEntryNotFoundError, not a clean null)", async () => {
 		getEmDashEntry.mockResolvedValue({
 			entry: null,

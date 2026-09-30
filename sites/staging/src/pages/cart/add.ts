@@ -75,6 +75,7 @@ export const POST: APIRoute = async (context) => {
 	}
 
 	const handler = routeDispatcher(context);
+	let selectedCurrency: string | undefined;
 
 	// Bogus SKU / garbage productId pre-check (item 3, fail fast — BEFORE
 	// `ensureCartId` mints a cart for a request that will be rejected).
@@ -133,7 +134,7 @@ export const POST: APIRoute = async (context) => {
 		const productResult = await dispatchOttaRoute<PdpRouteResult>(
 			handler,
 			STOREFRONT_PRODUCT_ROUTE,
-			{ content },
+			{ content, sku },
 			context.url,
 		);
 		// The pre-check READ was busy (already retried once): the shopper's add is
@@ -145,9 +146,12 @@ export const POST: APIRoute = async (context) => {
 		if (!productResult.product.purchasable || productResult.product.sku !== sku) {
 			return seeOther(context, returnTo, PRODUCT_UNAVAILABLE);
 		}
+		// A new cart uses the live selected sellable unit's currency. Existing
+		// carts retain theirs; checkout refuses mixing different currencies.
+		selectedCurrency = productResult.product.price?.currency;
 	}
 
-	const cart = await ensureCartId(context, handler);
+	const cart = await ensureCartId(context, handler, selectedCurrency);
 	if (!cart.ok) {
 		// A busy `cart/create` (key-less, so never auto-retried) is the busy 503;
 		// any other failure is the ordinary SERVICE_UNAVAILABLE turn.

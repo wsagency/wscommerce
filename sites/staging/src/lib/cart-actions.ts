@@ -70,6 +70,7 @@ export type EnsureCartResult =
 export async function ensureCartId(
 	context: APIContext,
 	handler: PublicPluginApiRouteHandler | undefined,
+	currency?: string,
 ): Promise<EnsureCartResult> {
 	const existing = currentCartId(context);
 	if (existing !== undefined) return { ok: true, cartId: existing };
@@ -77,7 +78,7 @@ export async function ensureCartId(
 	const created = await dispatchOttaRoute<CartCreateRouteResult>(
 		handler,
 		STOREFRONT_CART_CREATE_ROUTE,
-		{},
+		currency === undefined ? {} : { currency },
 		context.url,
 	);
 	if (isBusyResult(created)) return { ok: false, reason: "busy" };
