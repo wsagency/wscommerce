@@ -10,17 +10,16 @@
  * (`onHand >= qty`, computed in JS), the decrement and the hold record all commit
  * in ONE `compareAndSet`. No oversell and once-only are the same atom.
  *
- * **Reserve is still a two-step, and has exactly ONE crash window.** The durable
+ * **Reserve decisions survive both claim and outcome-copy crashes.** The durable
  * once-only guard is {@link ReservationKeyDoc} — `reservation_keys/{key}`,
  * claimed create-if-absent *before* the inventory write and carrying everything
- * needed to finish the job. The window is "claim written, inventory
- * `compareAndSet` not yet run"; any replayer completes it deterministically,
- * using the reservation id RECORDED in the claim rather than minting a new one,
- * and a sweeper reaps whatever is never replayed. What the embedded aggregate
- * removes is the *SQL* adapter's second window (a `pending` reservation flipped
- * to `held` separately from the decrement), not the claim window — which no
- * single-document primitive can remove, because the claim and the units live in
- * different documents by necessity.
+ * needed to finish the job. The inventory CAS records either its hold/decrement
+ * or its failed-decision witness; those outcomes cannot both land for one claim.
+ * A replay completes a crash before that CAS with the RECORDED reservation id,
+ * and recovers a crash before the outcome copy from the hold or bounded witness.
+ * A zero-stock read alone cannot finalize a claimed key. A new key's initial
+ * out-of-stock shortcut is safe: its terminal create-if-absent arbitrates before
+ * any peer can claim the same key and apply a hold.
  *
  * **Why `reservation_index` exists.** Six port methods take reservation ids with
  * no sku, and a hold embedded per SKU cannot be found from an id alone. The index
@@ -28,13 +27,16 @@
  * unknown — which is what lets `commitMany` throw `ReservationNotFoundError` for
  * a truly unknown id while `adoptMany` folds one into `lost`.
  *
- * **Ledgers are bounded.** `adjust` / `restock` / `removeStock` keep their
+ * **Witnesses are bounded, their durable outcomes are not.** Stock and `adjust` keep their
  * per-key intent in `inventory_movements/{prefixedKey}` — one document per key,
  * updated to `applied` once the units moved — and the aggregate keeps only a
  * bounded ring of the last {@link APPLIED_MOVEMENT_RING_SIZE} applied keys. Each
  * result is promoted onto its durable claim BEFORE its ring witness is evicted;
  * a failed promotion prevents eviction. No periodic healer or timing assumption
- * is needed, and movement history on the hot document stays bounded.
+ * is needed, and movement history on the hot document stays bounded. Failed
+ * claimed reserves share this ring and promote to `reservation_keys` plus the
+ * index's failed terminal state before eviction. SKU transfers preserve this
+ * ring while writing their separate `appliedTransfers` ring.
  *
  * Document ids are the once-only guard everywhere a claim is needed
  * (`_plugin_storage`'s primary key plus `compareAndSet(id, null, …)`'s
@@ -132,7 +134,13 @@ export type StockDirection = "restock" | "removal" | "absolute";
  */
 export type AppliedMovement =
 	| { key: string; kind: "adjust"; result: ReserveResult }
-	| { key: string; kind: "stock"; result: StockRemovalResult };
+	| { key: string; kind: "stock"; result: StockRemovalResult }
+	| {
+			key: string;
+			kind: "reserve";
+			reservationId: string;
+			result: Extract<ReserveResult, { ok: false }>;
+	  };
 
 /**
  * How many applied movement keys the aggregate remembers.

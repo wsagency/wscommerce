@@ -14,21 +14,17 @@
  * the new count and the hold record all commit together. No oversell and
  * once-only are the same atom.
  *
- * ## Reserve is a two-step with ONE crash window
+ * ## Reserve decisions survive interrupted completion
  *
  * `reserve` is: claim `reservation_keys/{key}` (create-if-absent, carrying the
  * sku, the qty and the minted reservation id) → the inventory `compareAndSet` →
- * update the key document to its terminal `ReserveResult`. The single crash window
- * is **claim written, `compareAndSet` not yet run**. It is healed, not merely
- * tolerated: any replayer of the key finds the `claimed` document and completes it
- * deterministically, reusing the RECORDED reservation id rather than minting a
- * second one, so the decrement happens exactly once and the caller gets one
- * answer. A sweeper reaps claims nothing ever replays (INC-C4).
- *
- * What the embedded aggregate removes is the SQL adapter's *second* window — a
- * `pending` reservation flipped to `held` separately from the decrement. The claim
- * window cannot be removed by any single-document primitive, because the claim and
- * the units necessarily live in different documents.
+ * update the key document to its terminal `ReserveResult`. The SKU CAS records
+ * either the successful hold/decrement or a failed-decision witness, so a peer
+ * cannot finalize failure while another applies a hold. A crash before the CAS
+ * is completed with the RECORDED reservation id. A crash before copying the
+ * outcome is completed from that hold or witness; failed witnesses are promoted
+ * before ring eviction. A new key's initial out-of-stock create-if-absent remains
+ * safe because it arbitrates before a claim or hold can exist for that key.
  *
  * ## The outcome-before-prune ordering
  *
@@ -182,7 +178,7 @@ function assertSafeStockTotal(onHand: number, holds: Readonly<Record<string, Hol
 	}
 }
 
-const OUT_OF_STOCK: ReserveResult = { ok: false, reason: "OUT_OF_STOCK" };
+const OUT_OF_STOCK: Extract<ReserveResult, { ok: false }> = { ok: false, reason: "OUT_OF_STOCK" };
 
 /** Rounds `reserve` spends resolving its key document; see the loop's comment. */
 const ROUNDS = 2;
@@ -236,7 +232,7 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 			const claim = await this.#keys.get(key);
 			if (claim !== null) {
 				if (claim.state === "terminal") return { ...claim.result };
-				return this.#completeReserveClaim(key, claim, { alreadyGuarded: false });
+				return this.#completeReserveClaim(key, claim);
 			}
 
 			const doc = await this.#inventory.get(sku);
@@ -268,7 +264,7 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 			};
 			const written = await this.#keys.compareAndSet(key, null, claimed);
 			if (!written.applied) continue; // a same-key peer claimed first
-			return this.#completeReserveClaim(key, claimed, { alreadyGuarded: true });
+			return this.#completeReserveClaim(key, claimed);
 		}
 		// Unreachable by construction: a create-if-absent claim can only fail because
 		// a document now exists, and the next round reads it. If it ever happens the
@@ -281,49 +277,22 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 	}
 
 	/**
-	 * Finish a claimed reserve: the reverse-lookup document, then the inventory
-	 * `compareAndSet`, then the terminal outcome on the key document. Safe to run
-	 * any number of times, from any caller — this IS the crash-window heal path.
-	 *
-	 * `alreadyGuarded` says the caller just read `onHand >= qty` for this claim, so
-	 * the extra pre-read that would spare an `OUT_OF_STOCK` completion its index
-	 * document is skipped on the hot path and taken on the (exceptional) heal path.
+	 * Finish a claimed reserve in the SKU CAS: either its hold/decrement or a
+	 * durable failed-decision witness. A mere zero-stock read cannot finalize the
+	 * claim while a peer applies its hold. Terminal key promotion follows this CAS;
+	 * any peer can complete it, and eviction promotes the same original decision.
 	 */
 	async #completeReserveClaim(
 		key: string,
 		claim: Extract<ReservationKeyDoc, { state: "claimed" }>,
-		options: { alreadyGuarded: boolean },
 	): Promise<ReserveResult> {
-		if (!options.alreadyGuarded) {
-			const doc = await this.#inventory.get(claim.sku);
-			const holds = doc === null ? {} : normalizeInventoryDoc(doc).holds;
-			if (holds[key] === undefined && (doc === null || doc.onHand < claim.qty)) {
-				// The completion cannot succeed and never wrote a hold, so it needs no
-				// reverse-lookup document either.
-				await this.#markKeyTerminal(key, { ...OUT_OF_STOCK }, claim.reservationId);
-				await this.#setTerminalState(claim.reservationId, "failed");
-				return { ...OUT_OF_STOCK };
-			}
-		}
-
-		// The reverse lookup, BEFORE the hold: an id absent from `reservation_index`
-		// is provably unknown, which is what `commit`'s 404 and `commitMany`'s throw
-		// rest on. A collision must never be silently adopted.
-		const indexed = await this.#index.compareAndSet(claim.reservationId, null, {
-			sku: claim.sku,
-			idempotencyKey: key,
-		});
-		if (!indexed.applied) {
-			const existing = await this.#index.get(claim.reservationId);
-			if (existing !== null && existing.idempotencyKey !== key) {
-				throw new ReservationIdCollisionError(claim.reservationId, key, existing.idempotencyKey);
-			}
-		}
-
 		const result = await this.#cas<ReserveResult>("reserve", async () => {
 			const current = await this.#inventory.getVersioned(claim.sku);
-			if (current === null) return casDone<ReserveResult>({ ...OUT_OF_STOCK });
-			const doc = normalizeInventoryDoc(current.value);
+			// Only an EXISTING claim can reach an absent SKU here. Its zero-stock
+			// witness uses create-if-absent to arbitrate a recreation; it never invents
+			// units. A new unknown-SKU command still exits before claiming any key.
+			const doc =
+				current === null ? newInventoryDoc(claim.sku, 0) : normalizeInventoryDoc(current.value);
 
 			// This claim's hold is already in place: the decrement happened, and this
 			// caller is a replay (or a same-key peer that lost the race to apply it).
@@ -344,7 +313,41 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 				return casDone<ReserveResult>({ ...settled.result });
 			}
 
-			if (doc.onHand < claim.qty) return casDone<ReserveResult>({ ...OUT_OF_STOCK });
+			const failed = findAppliedMovement(doc.appliedMovements, key, "reserve");
+			if (failed?.kind === "reserve") {
+				if (failed.reservationId !== claim.reservationId)
+					throw new ReservationIdCollisionError(claim.reservationId, key, failed.reservationId);
+				return casDone<ReserveResult>({ ...failed.result });
+			}
+			if (doc.onHand < claim.qty) {
+				const written = await this.#inventory.compareAndSet(claim.sku, current?.revision ?? null, {
+					...doc,
+					appliedMovements: await this.#appendMovement(doc, {
+						key,
+						kind: "reserve",
+						reservationId: claim.reservationId,
+						result: { ...OUT_OF_STOCK },
+					}),
+				});
+				return written.applied ? casDone<ReserveResult>({ ...OUT_OF_STOCK }) : CAS_RETRY;
+			}
+
+			// The reverse lookup still precedes a successful hold. A losing failure
+			// CAS cannot terminalize this index: it must retry the winning SKU state.
+			const indexed = await this.#index.compareAndSet(claim.reservationId, null, {
+				sku: claim.sku,
+				idempotencyKey: key,
+			});
+			if (!indexed.applied) {
+				const recordedIndex = await this.#index.get(claim.reservationId);
+				if (recordedIndex !== null && recordedIndex.idempotencyKey !== key) {
+					throw new ReservationIdCollisionError(
+						claim.reservationId,
+						key,
+						recordedIndex.idempotencyKey,
+					);
+				}
+			}
 
 			const hold: HoldEntry = {
 				reservationId: claim.reservationId,
@@ -354,7 +357,7 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 				orderId: null,
 				createdAt: this.#clock.now().toISOString(),
 			};
-			const written = await this.#inventory.compareAndSet(claim.sku, current.revision, {
+			const written = await this.#inventory.compareAndSet(claim.sku, current?.revision ?? null, {
 				...doc,
 				onHand: doc.onHand - claim.qty,
 				holds: { ...doc.holds, [key]: hold },
@@ -1149,6 +1152,20 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 		const next = pushAppliedMovement(doc.appliedMovements, entry);
 		for (const previous of doc.appliedMovements ?? []) {
 			if (next.some((kept) => kept.key === previous.key && kept.kind === previous.kind)) continue;
+			if (previous.kind === "reserve") {
+				await this.#markKeyTerminal(previous.key, previous.result, previous.reservationId);
+				const state = await this.#setTerminalState(previous.reservationId, "failed");
+				const recorded = await this.#keys.get(previous.key);
+				if (
+					recorded?.state !== "terminal" ||
+					recorded.result.ok ||
+					recorded.reservationId !== previous.reservationId ||
+					(state !== undefined && state !== "failed")
+				) {
+					throw new InventoryMovementReconciliationRequiredError(previous.key, doc.sku);
+				}
+				continue;
+			}
 			const claimId =
 				previous.kind === "stock" ? stockClaimId(previous.key) : adjustClaimId(previous.key);
 			await this.#markMovementApplied(claimId, (stored) => {

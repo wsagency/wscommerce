@@ -1,18 +1,15 @@
 import type { IdempotencyKey, Sku } from "../money/ids.js";
 
 export interface InventoryStore {
-	// Atomic: decrement iff on_hand >= qty. Never oversell.
-	// `reserve` is a multi-statement choreography: an idempotency claim (single
-	// `INSERT … ON CONFLICT`), then a FINALIZE that couples the conditional inventory
-	// decrement with the `pending → held` flip so both commit all-or-nothing — see §0.5.
-	// The oversell-critical decrement is a single conditional statement; coupling it with the
-	// `held` flip is what guarantees the invariant `held ⟺ a durable decrement` (so `held` is
-	// never observable before stock was actually removed). On pg/sqlite the finalize is one
-	// short transaction on one connection; a future D1/`EmdashStore` must supply equivalent
-	// all-or-nothing semantics (CAS/batch) for that pair. A replay MUST resolve the
-	// reservation's *state* (held ⇒ ok, failed ⇒ OUT_OF_STOCK, pending ⇒ finalize-or-await),
-	// never assume the original call completed — see §0.5's replay choreography and the
-	// concurrent-same-key / crash-window contract cases it requires.
+	// Atomic: decrement iff available >= qty. Never oversell. A claimed key's
+	// decision couples its successful hold/decrement OR its failed outcome to the
+	// same inventory guard. Failure cannot finalize from a plain stock read while
+	// a same-key peer may apply a hold. Replay completes the original claim and
+	// resolves its durable decision, never assumes the first caller completed.
+	// The decision's witness must survive crashes before the outcome copy and be
+	// promoted before pruning/eviction; competing peers return the same answer.
+	// An unknown SKU is rejected before claiming and leaves the key usable later;
+	// genuine OUT_OF_STOCK on an existing SKU consumes it.
 	reserve(sku: string, qty: number, key: IdempotencyKey): Promise<ReserveResult>;
 	// `commit`/`release` are the Phase-0 guarded flips with their source state
 	// widened (additively) to include Phase-4's `adopted`: `held` still works, so

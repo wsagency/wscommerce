@@ -120,3 +120,46 @@ exercise both race directions, singular and batch commits, normal and scoped
 releases, interrupted batch completion, and the concurrent absolute-target bound.
 The shared absolute-stock port contract covers exact safe-boundary adjustment
 and release plus overflow rejection with held stock.
+
+## Same-key reserve decisions and bounded failure witnesses
+
+An abandoned reserve claim can be completed by multiple peers. Finalizing
+`OUT_OF_STOCK` from a stock read outside the inventory CAS allowed another peer
+to apply its hold while the failure caller marked the key and reverse index as
+failed. The live hold then spent stock that neither release nor commit could
+resolve. Both the original schedule and its inverse must return one decision.
+
+Every existing claim now records its decision in the SKU document CAS: success
+stores the hold and decrement together; failure stores `kind: "reserve"` with
+the original reservation ID and failed result in `appliedMovements`. A stale
+failure read loses the revision to a successful hold, and a later successful
+attempt sees the failed witness even if stock has returned. Each attempt reads
+the durable key after pinning the inventory revision so eviction or a successful
+hold's completed prune cannot authorize a second reservation.
+
+The ring remains bounded at 256 entries. Every ring writer promotes an evicted
+reserve failure to its original key and failed reverse-index state before the
+inventory CAS can remove it. A failed or contradictory promotion prevents that
+write. Restock, removal, absolute targets, both adjustment outcomes and claimed
+reserve failures use this same promotion path. SKU transfer stamp, target apply,
+clear and recovery writes preserve `appliedMovements`; their separate transfer
+ring cannot evict a reserve witness. Pristine target withdrawal also refuses to
+delete a document carrying the witness.
+
+The new-key initial out-of-stock shortcut is retained: its terminal key
+create-if-absent arbitrates before any claim or hold for that key. New unknown
+SKUs still leave the key usable. If an existing claim finds an absent inventory
+document, its failed decision creates only a zero-stock witness with a
+create-if-absent CAS, preventing a competing recreation from escaping the guard.
+
+No collection, index or schema migration is required. Drain and upgrade all
+inventory writers together; an older writer does not understand the new witness
+kind. Durable key records must be retained. Previously corrupted failed terminal
+records with a live hold require explicit reconciliation; this change does not
+guess their intended outcome or mutate historical stock to repair them. Existing
+legacy stock/adjustment witness refusal remains unchanged.
+
+Portable migrated SQLite and local D1 cases reproduce both decision directions,
+either key-writer order, crashed outcome copying, failed promotion at eviction,
+every evicting writer, and interrupted SKU transfer completion. The tests use
+actual native storage with barriers and injected crashes, without mocked data.
