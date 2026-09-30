@@ -39,6 +39,15 @@ OTTA_E2E_BASE_URL=http://127.0.0.1:4500 OTTA_E2E_REQUIRE_SITE=1   pnpm exec play
 
 That case needs the configured demo mug and HR shipping rules described in the validation record. The full retail smoke additionally checks variant purchase, bank/COD receipts/replay, private merchant actions and Woo projections. Do not substitute a green server-free harness for a real configured checkout run.
 
+The interface regressions use the same disposable shop. They cover shopper language persistence, private receipt navigation, unchanged catalog identities, and the merchant preference across React and sandboxed pages:
+
+```sh
+OTTA_E2E_BASE_URL=http://127.0.0.1:4500 OTTA_E2E_REQUIRE_SITE=1 \
+  pnpm exec playwright test sites/staging/e2e/storefront-language.spec.ts sites/staging/e2e/merchant-language.spec.ts
+```
+
+These cases require the priced/stocked demo mug and a populated merchant catalog. They use the harness's sign-in-only development route and do not reseed the shop on each login or issue provider transactions.
+
 ## CI
 
 [The GitHub workflow](../../.github/workflows/ci.yml) runs unit checks/builds/workspace tests, a dependent PostgreSQL integration job and an independent D1 gate. D1 runs on `main` pushes, PRs targeting `main`, manual dispatch and nightly. The workflow uses read-only repository permissions and no payment/accounting secrets.

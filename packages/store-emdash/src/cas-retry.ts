@@ -23,16 +23,17 @@ import { isStorageSerializationError } from "./storage-access.js";
  *
  * **Why 24, and why it used to be 12.** Every failed attempt means a *different*
  * writer committed to the same document, so what a writer can lose is bounded by
- * how many peers can successfully commit while it is in flight — and that bound is
- * a property of the DOCUMENT, not of the crowd.
+ * how many peer writes can commit while it is in flight. That depends on the
+ * document's state machine, including failure witnesses, and the claimed crowd.
  *
- * - The **inventory** bound is the units. N shoppers racing for M units on one SKU
- *   produce at most M successful writes before the guard turns every remaining
- *   caller into a clean `OUT_OF_STOCK` with no write at all, so the depth tracks M,
- *   not N. 12 was chosen for that shape, with room for the flash-sale
- *   restock-in-the-middle case; it is measured at 6 for the flash sale and at the
- *   old ceiling only for the merchant removal shape, where a REFUSED removal still
- *   writes its ledger entry and the writes are therefore not unit-bounded.
+ * - The **inventory** bound now includes claimed failures. The original
+ *   unit-bounded measurement preceded durable failed-reserve witnesses: a caller
+ *   that already claimed its key must arbitrate its failed decision in the SKU
+ *   aggregate, or a same-key success can race the terminal failure and lose stock.
+ *   These witnesses also write when no units remain, so depth depends on the
+ *   claimed crowd. The current flash-sale shapes measured 15/13 in CI and 18/23
+ *   locally for M5/N50 and M1/N100 respectively. Larger crowds can exhaust this
+ *   ceiling and receive a typed retryable refusal. No units move on a failed CAS.
  * - The **order document** bound is money movements, and it is roughly
  *   `2 × (refunds that fit under the ceiling) + 1` — each gateway refund writes
  *   TWICE (the reservation, then the finalize) and the ceiling-reaching one folds
@@ -51,7 +52,8 @@ import { isStorageSerializationError } from "./storage-access.js";
  *   rides on it; the money edits on those same documents keep refusing cleanly as
  *   `stale`.
  *
- * So 24 covers the worse of the two bounds instead of the better one. **The extra
+ * So 24 is a bounded operating ceiling, not a guarantee that every crowd finishes
+ * in one call. **The extra
  * attempts buy jittered backoff on a path that would otherwise throw**
  * {@link StorageContentionError}: a caller that was going to be told "too busy" now
  * waits instead, and nothing about the invariants changes either way — a losing
@@ -61,10 +63,11 @@ import { isStorageSerializationError } from "./storage-access.js";
  *
  * A change to this number is a change to the contention budget: measure first (every
  * race suite records the maximum depth observed), then move it. The per-shape
- * assertions all bound the measured depth AT or BELOW this constant, so raising it
- * never turns a passing shape green by accident — `CAS_ATTEMPT_BUDGET` in
- * `test/inventory-crash-seams.dialects.test.ts` stays the tighter, hand-set 8 that
- * the flash-sale shape is held to.
+ * assertions all bound the measured depth AT or BELOW this constant.
+ * `CAS_ATTEMPT_BUDGET` in `test/inventory-crash-seams.dialects.test.ts` independently
+ * pins 24 and checks every busy command's original-key recovery, stable outcome
+ * and exact stock conservation; increasing the production ceiling alone fails
+ * that configuration guard. The coupon suite keeps its separate tighter budget.
  */
 export const CAS_MAX_ATTEMPTS = 24;
 

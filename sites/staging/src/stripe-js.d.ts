@@ -22,7 +22,7 @@ interface StripeConfirmPaymentResult {
 }
 
 interface StripeJs {
-	elements(options: { clientSecret: string | undefined }): StripeElements;
+	elements(options: { clientSecret: string | undefined; locale?: "en" | "hr" }): StripeElements;
 	confirmPayment(options: {
 		elements: StripeElements;
 		confirmParams: { return_url: string | undefined };

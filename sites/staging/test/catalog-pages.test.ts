@@ -380,7 +380,7 @@ describe("the PDP's add-to-cart form is unchanged in behaviour", () => {
 		expect(PDP).toMatch(
 			/const cartHoldMinutes = result !== null && result\.ok \? result\.cartHoldMinutes/,
 		);
-		expect(PDP).toMatch(/<p class="hold-note">\s*\{holdNote\(cartHoldMinutes\)\}/);
+		expect(PDP).toMatch(/<p class="hold-note">\s*\{holdNote\(cartHoldMinutes, locale\)\}/);
 		expect(PDP).not.toContain("holds one in stock for 15 minutes");
 		expect(PDP).not.toContain("CART_HOLD_TTL_MS");
 	});

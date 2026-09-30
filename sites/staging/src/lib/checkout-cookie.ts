@@ -18,8 +18,9 @@
  * `payment_intent_client_secret` to our `return_url`, so one hop later it is in
  * history, in the `Referer` of any subresource on the confirmation page, and in
  * Cloudflare's access logs. That is Stripe's wire format. Our mitigations are
- * the confirmation page's `no-referrer` meta, never echoing the parameters into
- * markup, and this cookie's own deletion on arrival.
+ * the confirmation page's `same-origin` referrer policy (external destinations
+ * receive no Referer), discarding known provider fields from polling/language
+ * targets, never echoing those parameters, and this cookie's deletion on arrival.
  *
  * ── Why `path=/` ─────────────────────────────────────────────────────────
  * So `/orders/[orderId]` can DELETE it. A `path=/checkout` cookie is never sent
@@ -42,13 +43,13 @@ export const CHECKOUT_COOKIE_MAX_AGE_SECONDS = 900;
  *
  * Two decisions worth stating, because this is the payment path:
  *
- *  - It is a SNAPSHOT, not a pointer. /checkout/pay makes no commerce call, and
- *    the cart the order came from is still live — a total re-derived there could
- *    disagree with the amount Stripe will actually take. This travels with the
- *    client secret because it was true at the same instant.
+ *  - It is a SNAPSHOT, not a pointer to the still-live cart. /checkout/pay may
+ *    read the SAME private order's immutable totals to change their locale, but
+ *    never requotes the cart or creates an intent. This stash remains the
+ *    fallback if that read is unavailable, because it was true at place-time.
  *  - It carries a PRE-FORMATTED string and no minor-unit number. `formatMoney`
  *    is the plugin's one sanctioned money→display boundary and takes branded
- *    `Cents`/`Currency`; the site owns no formatter and no locale, and §7's rule
+ *    `Cents`/`Currency`; the site passes its selected presentation locale, and §7's rule
  *    is that this theme never assembles a money string. Storing the amount would
  *    mean re-branding a JSON-parsed `number` on the pay page — a float or a NaN
  *    away from a wrong figure on a payment button — to re-derive a string the

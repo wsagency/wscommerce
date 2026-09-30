@@ -14,6 +14,7 @@
  */
 import type { HTMLAttributes } from "astro/types";
 import { restProps } from "../lib/rest-props.js";
+import { storefrontPresentation } from "../lib/messages.js";
 
 interface Props extends HTMLAttributes<"div"> {
 	/** The order's state string, verbatim off the view model. */
@@ -39,6 +40,8 @@ interface Props extends HTMLAttributes<"div"> {
 /** The five appearances. Any state the service grows that is not in this map
  *  gets the neutral rule and lets the headline carry the meaning — a new state
  *  must never be silently coloured as "paid". */
+const { t } = storefrontPresentation(Astro);
+
 const RULES: Record<string, "paid" | "pending" | "failed" | "expired"> = {
 	paid: "paid",
 	pending: "pending",
@@ -71,7 +74,7 @@ const rule = RULES[state];
 	{
 		reference !== null && reference !== "" && (
 			<span class="ref">
-				<span class="u-label">Reference</span>
+				<span class="u-label">{t("Reference")}</span>
 				<span class="u-mono ref-value">{reference}</span>
 			</span>
 		)

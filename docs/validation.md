@@ -1,6 +1,6 @@
 # Validation record
 
-Status: the foundation is integrated, independently reviewed and validated locally. All stated combined gates and fresh browser acceptance pass. No production deployment or external account acceptance is implied.
+Status: the foundation is integrated, independently reviewed and validated locally. The foundation evidence below is historical; the subsequent English/Croatian interface validation is recorded separately. No production deployment or external account acceptance is implied.
 
 ## Reproduce the combined gates
 
@@ -17,11 +17,11 @@ pnpm -C packages/store-emdash exec vitest run --config vitest.d1.config.ts --fil
 pnpm build
 ```
 
-The workspace Vitest tier includes pure domain contracts, actual migrated SQLite stores, workerd plugin routes, React DOM behavior, invoice HTTP/job contracts, Woo HTTP/persistence/signatures and theme endpoints. The separate D1 tier exercises the adapter against local workerd/D1. Optional PostgreSQL suites require an isolated `PG_CONNECTION_STRING`; they were not run here. SQLite cases that require simultaneous database writers remain conditional; deterministic parked-CAS crash/interleaving cases still run on SQLite and D1.
+The workspace Vitest tier includes pure domain contracts, actual migrated SQLite stores, workerd plugin routes, React DOM behavior, invoice HTTP/job contracts, Woo HTTP/persistence/signatures and theme endpoints. The separate D1 tier exercises the adapter against local workerd/D1. Optional PostgreSQL suites require an isolated `PG_CONNECTION_STRING`; the foundation's original gate did not run them. The later PostgreSQL gate below uses a disposable local PostgreSQL 16 database. SQLite cases that require simultaneous database writers remain conditional; deterministic parked-CAS crash/interleaving cases still run on SQLite and D1.
 
 One inherited `test.todo` remains: issue #287, a reports widget whose low-stock settings read fails. It is explicitly outside the passing count. The audited upstream baseline also had sandbox cleanup timeouts. This fork adds bounded teardown for its local test harness; final gate results below report the current branch rather than treating that old baseline as permission to skip checks. See [source comparison](research/2026-09-30-codebase-audit.md).
 
-The final workspace/build gates pass against source revision `5a6398c`, including the browser-discovered guest-contact fix. The separate D1 gate passed at `c254540`; its adapter and test sources are unchanged by the final Woo contact projection:
+The historical foundation workspace/build gates pass against source revision `5a6398c`, including the browser-discovered guest-contact fix. The separate D1 gate passed at `c254540`; its adapter and test sources are unchanged by the final Woo contact projection:
 
 | Gate | Result |
 | --- | --- |
@@ -68,5 +68,41 @@ Independent review of `5a6398c` found no Critical or Important issue and reran a
 Six deterministic native SQLite/D1 regressions reproduce stale product/variant drafts after same-tick merchant edits, CMS refreshes, clock rollback and returning price/metadata values. They fail before the monotonic edit-token fix; no arbitrary delay is added to hide a real-clock conflict.
 
 Twelve additional native SQLite/D1 cases exercise completion of abandoned reserve claims: opposing out-of-stock/success schedules, interrupted durable receipt writes and witness eviction, every movement-ring writer, and SKU transfer/recovery. The original six race/eviction cases fail against the preceding implementation. The corrected SKU CAS preserves one decision and stock conservation even when a peer returns stock before the terminal receipt is written.
+
+## English/Croatian interface validation
+
+The reference storefront and commerce merchant interfaces provide explicit English/Croatian presentation; source identifiers, native contracts and developer documentation stay English. See [localization](development/localization.md) for preference resolution, supported surfaces and content boundaries.
+
+The first public foundation CI run at `a804a2d` passed its unit and D1 jobs and exposed a stale PostgreSQL inventory assertion: failed reserve decisions now leave durable witnesses, so crowd writes can exceed the earlier eight-attempt measurement. The production ceiling remains 24. Commits `a09bd32` and `16200e2` update the tests and explanatory comments, recover typed-busy outcomes with their original command keys, and check replay equality, exact winners, stock conservation, holds and winning-cart completion. They do not change production retry behavior or remove failed-decision witnesses.
+
+A fresh full PostgreSQL gate passed against the affected adapter sources at `16200e2`: 75 files; 1,863 tests passed, 7 skipped; 240.52 seconds. It used PostgreSQL 16 in a disposable loopback container. Skips are excluded from the passing count.
+
+The interface checks include rendered checkout, payment and receipt fixtures, merchant React DOM behavior, request-scoped SQLite/workerd handlers and dictionary slot parity. They assert unchanged native form/action/enum values, immutable financial amounts, IDs, private order capabilities and merchant content. Browser regressions are committed in [storefront language](../sites/staging/e2e/storefront-language.spec.ts) and [merchant language](../sites/staging/e2e/merchant-language.spec.ts).
+
+Fresh local gates for the bilingual interface sources at `df9430a`:
+
+| Gate | Result |
+| --- | --- |
+| TypeScript workspace and E2E types | Passed |
+| Lint and dependency boundaries | Passed; 1,721 modules / 3,850 dependencies |
+| Formatting | Passed; 834 matched files |
+| Workspace Vitest | 306 files passed; 17 skipped. 5,725 tests passed; 975 skipped; 1 inherited TODO. 66.67 seconds |
+| Local workerd/D1 | 25 files and 662 tests passed. 68.31 seconds; adapter/domain sources unchanged by interface follow-ups |
+| Package and Astro production build | Passed; Astro check reports 154 files, zero errors, warnings or hints |
+| Actual-host Playwright interface, origin/privacy and harness gates | All 15 tests passed; 22.9 seconds; no skipped browser cases |
+
+The compiler gates caught a missing optional locale declaration, a nullable coupon-display slot, a route-fixture variance mismatch and two test callbacks that passed an array index into the new locale parameter. Narrow fixes preserve runtime/native contracts; the corrected callback suite separately passed all 66 tests. Independent review also reproduced and resolved untranslated variant-discard text, retained client notices and a tax fallback-table affirmative label. Raw diagnostics and merchant-authored content remain literal.
+
+The actual EmDash browser exposed a host boundary that raw-cookie fixtures did not cover: EmDash removes cookies before plugin dispatch. The host now forwards only a normalized presentation preference through its supported outer middleware. A regression uses the installed EmDash sanitizer and verifies that credentials stay stripped while request bytes and native command values remain unchanged. Header-only native handlers and actual React → Block Kit navigation both pass. Native action notices retain the language of the request that created them, as documented in the localization guide.
+
+The first combined browser attempt reached 14 passing cases but failed the three-second site-readiness probe while the cold dev server and full workspace checks were competing for resources. The final run used the rebuilt, warmed server with no other verification jobs: the strict checkout identity/readiness gate and all 15 cases passed without changing its timeout or assertions.
+
+```sh
+OTTA_E2E_BASE_URL=http://127.0.0.1:4500 OTTA_E2E_REQUIRE_SITE=1 \
+  pnpm exec playwright test sites/staging/e2e/harness.spec.ts \
+  sites/staging/e2e/checkout-origin.spec.ts \
+  sites/staging/e2e/storefront-language.spec.ts \
+  sites/staging/e2e/merchant-language.spec.ts
+```
 
 No real Stripe charge/refund, Solo/e-racuni invoice, provider email, ERP stock synchronization, carrier purchase, backup restoration or production deploy was executed. A successful local schema migration is not a production migration/restore drill. [Integration acceptance](integrations.md) and [operations](operations.md) describe the remaining account/deployment gates.

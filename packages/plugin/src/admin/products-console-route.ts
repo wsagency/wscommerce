@@ -47,6 +47,7 @@
  * body. A refusal is a value.
  */
 import type { PluginContext, RouteHandler, SelectOption } from "../types.js";
+import { requestTranslator, type PluginTranslate } from "./localization.js";
 import {
 	type AdminProductsSurface,
 	type ProductDetailWire,
@@ -204,6 +205,7 @@ const NOT_FOUND: ConsoleFailure = {
 /** The console's request envelope, narrowed to what this module reads. Every
  *  field is untrusted operator-round-tripped input and is re-validated here. */
 export interface ProductsConsoleInput {
+	locale?: unknown;
 	type?: unknown;
 	resource?: unknown;
 	productId?: unknown;
@@ -373,6 +375,7 @@ async function consoleDetail(
 async function consoleAct(
 	input: ProductsConsoleInput,
 	ctx: PluginContext,
+	t: PluginTranslate,
 ): Promise<ProductsActionResult | ConsoleFailure> {
 	const actionId = readString(input.action_id);
 	if (actionId === undefined) return UNREADABLE_REQUEST;
@@ -382,6 +385,7 @@ async function consoleAct(
 		actionId,
 		readConsolePayload(input.value),
 		client.products,
+		t,
 	);
 	// Unreachable while the gate above reads the same table — kept because the two
 	// are separate statements, and "the id was registered but nothing ran" must
@@ -397,7 +401,7 @@ export function createProductsConsoleHandler(): RouteHandler<ProductsConsoleInpu
 		const input = routeCtx.input;
 		try {
 			if (readString(input.type) === CONSOLE_ACT_INTERACTION) {
-				return await consoleAct(input, ctx);
+				return await consoleAct(input, ctx, requestTranslator(routeCtx));
 			}
 			const resource = readString(input.resource);
 			if (resource === "products.list") return await consoleList(input, ctx);

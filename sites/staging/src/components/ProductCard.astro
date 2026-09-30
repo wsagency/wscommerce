@@ -19,6 +19,7 @@ import MediaPanel from "./MediaPanel.astro";
 import PriceTag from "./PriceTag.astro";
 import StockRule from "./StockRule.astro";
 import { restProps } from "../lib/rest-props.js";
+import { storefrontPresentation } from "../lib/messages.js";
 
 interface Props extends HTMLAttributes<"a"> {
 	href: string;
@@ -50,6 +51,8 @@ interface Props extends HTMLAttributes<"a"> {
 	level?: "h2" | "h3";
 }
 
+const { t } = storefrontPresentation(Astro);
+
 const {
 	href,
 	title,
@@ -59,7 +62,7 @@ const {
 	image = null,
 	price = null,
 	availability = null,
-	priceNote = "Not currently available for purchase",
+	priceNote = t("Not currently available for purchase"),
 	level = "h2",
 	class: className,
 	...rest

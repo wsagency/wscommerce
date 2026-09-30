@@ -34,6 +34,7 @@
  */
 import type { HTMLAttributes } from "astro/types";
 import { restProps } from "../lib/rest-props.js";
+import { storefrontPresentation } from "../lib/messages.js";
 
 interface Props extends HTMLAttributes<"label"> {
 	/** The form field name. The cart and PDP endpoints both read `qty`. */
@@ -54,10 +55,12 @@ interface Props extends HTMLAttributes<"label"> {
 	form?: string;
 }
 
+const { t } = storefrontPresentation(Astro);
+
 const {
 	name = "qty",
 	value,
-	label = "Qty",
+	label = t("Qty"),
 	hideLabel = false,
 	min = 1,
 	size = "md",

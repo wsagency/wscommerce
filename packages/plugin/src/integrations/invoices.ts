@@ -20,6 +20,7 @@ import type { Order } from "@otta-sh/domain";
 import { ORDERS_COLLECTION } from "@otta-sh/store-emdash";
 import { createInProcessCommerceStores } from "../commerce/in-process-commerce-stores.js";
 import { SWEEP_TASK_NAME } from "../cron/index.js";
+import { requestTranslator } from "../admin/localization.js";
 import type {
 	AdminPageConfig,
 	BlockResponse,
@@ -338,25 +339,36 @@ export function withInvoiceIntegrations(
 					const input = routeCtx.input as { type?: unknown; page?: unknown };
 					if (input.type !== "page_load" || input.page !== COMMERCE_INTEGRATIONS_PAGE.path)
 						return baseAdmin?.(routeCtx, ctx) ?? { blocks: [] };
+					const t = requestTranslator(routeCtx);
 					const configuration = presence(await loadConfiguration());
 					const jobs = ctx.storage?.[INVOICE_JOB_COLLECTION];
 					const counts = await Promise.all(
 						["queued", "issued", "reconciliation", "failed"].map(async (state) => ({
-							label: state,
+							label: t(state),
 							value: String((await jobs?.count({ state })) ?? 0),
 						})),
 					);
 					return {
 						blocks: [
-							{ type: "header", text: "Commerce integrations" },
+							{ type: "header", text: t("Commerce integrations") },
 							{
 								type: "section",
-								text: `Invoice owner: ${configuration.invoiceOwner}. Automatic issuance: ${configuration.invoiceLiveEnabled ? "enabled" : "disabled"}. Solo: ${configuration.soloConfigured ? "configured" : "not configured"}. e-racuni: ${configuration.eRacuniConfigured ? "configured" : "not configured"}.`,
+								text: t(
+									"Invoice owner: {owner}. Automatic issuance: {issuance}. Solo: {solo}. e-racuni: {eRacuni}.",
+									{
+										owner: t(configuration.invoiceOwner),
+										issuance: t(configuration.invoiceLiveEnabled ? "enabled" : "disabled"),
+										solo: t(configuration.soloConfigured ? "configured" : "not configured"),
+										eRacuni: t(configuration.eRacuniConfigured ? "configured" : "not configured"),
+									},
+								),
 							},
 							{ type: "stats", items: counts },
 							{
 								type: "section",
-								text: "Provider credentials are server runtime secrets. See docs/integrations.md for setup and reconciliation. WooCommerce compatibility exposes the supported REST/webhook profile; WordPress PHP plugins require a separate bridge.",
+								text: t(
+									"Provider credentials are server runtime secrets. See docs/integrations.md for setup and reconciliation. WooCommerce compatibility exposes the supported REST/webhook profile; WordPress PHP plugins require a separate bridge.",
+								),
 							},
 						],
 					} satisfies BlockResponse;

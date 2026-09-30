@@ -1,3 +1,9 @@
+import {
+	englishTranslate,
+	moneyLocale,
+	requestTranslator,
+	type PluginTranslate,
+} from "./localization.js";
 import { formatMoney } from "../presentation/format-money.js";
 import { cents as toCents, currency as toCurrency } from "../presentation/money.js";
 import type {
@@ -198,43 +204,47 @@ const PAGE_LIMIT = 25;
 const LABEL_BUDGET = 60;
 
 export function createCouponsPageHandler(): RouteHandler<CouponsPageInput> {
-	return createListDetailHandler<CouponsRenderState>({
-		actions: COUPON_ACTIONS,
-		// THE TIER IS THE FACTORY'S DECISION, not this screen's (work order 02,
-		// INC-B10c-i): `makeAdminClients` hands back either the `ctx.http` client
-		// this line used to construct or the in-process one over the plugin's own
-		// document store, and the page cannot tell which — everything below is
-		// typed against `AdminRulesSurface`, the structural surface both answer to.
-		//
-		// NO TOKENS: `X-Internal-Token` / `X-Service-Token` were transport
-		// credentials for the commerce service, and there is no service to
-		// authenticate to (ADR-0014 D3, INC-D3a).
-		async createClient(ctx) {
-			const clients = await makeAdminClients(ctx);
-			return clients.rules;
-		},
-		// The "Open coupon" picker carries the ENCODED one-deep target path
-		// (`[code]`) in `values.target` — the code, not the id, because the only
-		// read that returns the full editable projection (incl. the validity
-		// window) is the exact-code list search (see `couponDetailLevel().load`).
-		parseOpen(input) {
-			const encoded = readString(input.values?.target);
-			if (encoded === undefined || encoded === NONE) return undefined;
-			// `decodePath` returns `null` (not `undefined`) on a malformed token —
-			// e.g. a hand-edited devtools value — normalized to `undefined` here so
-			// it falls back to the root list rather than throwing.
-			const targetPath = decodePath(encoded);
-			return targetPath === null ? undefined : { targetPath };
-		},
-		levels: [couponsListLevel(), couponDetailLevel()],
-		customActions: {
-			[ACTION_CREATE]: createCouponAction(),
-			[ACTION_SAVE]: saveCouponAction(),
-			[ACTION_DELETE]: deleteCouponAction(),
-			[ACTION_NEW]: newCouponAction(),
-			[ACTION_CANCEL_NEW]: cancelNewCouponAction(),
-		},
-	});
+	return async (routeCtx, ctx) => {
+		const t = requestTranslator(routeCtx);
+		return createListDetailHandler<CouponsRenderState>({
+			actions: COUPON_ACTIONS,
+			translate: t,
+			// THE TIER IS THE FACTORY'S DECISION, not this screen's (work order 02,
+			// INC-B10c-i): `makeAdminClients` hands back either the `ctx.http` client
+			// this line used to construct or the in-process one over the plugin's own
+			// document store, and the page cannot tell which — everything below is
+			// typed against `AdminRulesSurface`, the structural surface both answer to.
+			//
+			// NO TOKENS: `X-Internal-Token` / `X-Service-Token` were transport
+			// credentials for the commerce service, and there is no service to
+			// authenticate to (ADR-0014 D3, INC-D3a).
+			async createClient(clientCtx) {
+				const clients = await makeAdminClients(clientCtx);
+				return clients.rules;
+			},
+			// The "Open coupon" picker carries the ENCODED one-deep target path
+			// (`[code]`) in `values.target` — the code, not the id, because the only
+			// read that returns the full editable projection (incl. the validity
+			// window) is the exact-code list search (see `couponDetailLevel().load`).
+			parseOpen(input) {
+				const encoded = readString(input.values?.target);
+				if (encoded === undefined || encoded === NONE) return undefined;
+				// `decodePath` returns `null` (not `undefined`) on a malformed token —
+				// e.g. a hand-edited devtools value — normalized to `undefined` here so
+				// it falls back to the root list rather than throwing.
+				const targetPath = decodePath(encoded);
+				return targetPath === null ? undefined : { targetPath };
+			},
+			levels: [couponsListLevel(t), couponDetailLevel(t)],
+			customActions: {
+				[ACTION_CREATE]: createCouponAction(t),
+				[ACTION_SAVE]: saveCouponAction(t),
+				[ACTION_DELETE]: deleteCouponAction(t),
+				[ACTION_NEW]: newCouponAction(),
+				[ACTION_CANCEL_NEW]: cancelNewCouponAction(),
+			},
+		})(routeCtx, ctx);
+	};
 }
 
 // -- display summaries (pure; exported for their own unit test) ----------------
@@ -249,15 +259,19 @@ export function createCouponsPageHandler(): RouteHandler<CouponsPageInput> {
  */
 export function couponDiscountSummary(
 	c: Pick<CouponSummaryWire, "type" | "amountCents" | "rateBps" | "capCents" | "currency">,
+	t: PluginTranslate = englishTranslate,
 ): string {
 	if (c.type === "fixed_amount") {
-		if (c.amountCents === null) return "fixed amount (unset)";
-		return `${formatCentsForDisplay(c.amountCents, c.currency)} off`;
+		if (c.amountCents === null) return t("fixed amount (unset)");
+		return t("{amount} off", { amount: formatCentsForDisplay(t, c.amountCents, c.currency) });
 	}
 	if (c.type === "percentage") {
-		if (c.rateBps === null) return "percentage (unset)";
-		const cap = c.capCents === null ? "" : ` (cap ${formatCentsForDisplay(c.capCents, null)})`;
-		return `${formatBpsAsPercent(c.rateBps)}% off${cap}`;
+		if (c.rateBps === null) return t("percentage (unset)");
+		const cap =
+			c.capCents === null
+				? ""
+				: t(" (cap {amount})", { amount: formatCentsForDisplay(t, c.capCents, null) });
+		return t("{amount}% off{cap}", { amount: formatBpsAsPercent(c.rateBps), cap: cap });
 	}
 	return c.type;
 }
@@ -281,12 +295,18 @@ export function couponDiscountSummary(
  * RANGE, which is what a dash spells, and it matches the `1 Jul – 31 Jul 2026`
  * the Reports period line already renders.
  */
-export function couponWindowSummary(startsAt: string | null, expiresAt: string | null): string {
-	const from = startsAt === null ? null : formatDate(startsAt);
-	const until = expiresAt === null ? null : formatDate(expiresAt);
-	if (from === null && until === null) return "always";
-	if (from === null) return `until ${until}`;
-	if (until === null) return `from ${from}`;
+export function couponWindowSummary(
+	startsAt: string | null,
+	expiresAt: string | null,
+	t: PluginTranslate = englishTranslate,
+): string {
+	const from = startsAt === null ? null : formatDate(startsAt, t.locale);
+	const until = expiresAt === null ? null : formatDate(expiresAt, t.locale);
+	if (from === null) {
+		if (until === null) return t("always");
+		return t("until {until}", { until: until });
+	}
+	if (until === null) return t("from {from}", { from: from });
 	return `${from} – ${until}`;
 }
 
@@ -303,9 +323,13 @@ export function couponWindowSummary(startsAt: string | null, expiresAt: string |
  * picker vocabulary — so this brings the three renderings of one fact into
  * one wording rather than inventing a fourth.
  */
-export function couponUsesSummary(usesCount: number, maxUses: number | null): string {
-	if (maxUses !== null) return `${usesCount} of ${maxUses}`;
-	return `${usesCount} use${usesCount === 1 ? "" : "s"}`;
+export function couponUsesSummary(
+	usesCount: number,
+	maxUses: number | null,
+	t: PluginTranslate = englishTranslate,
+): string {
+	if (maxUses !== null) return t("{count} of {max}", { count: usesCount, max: maxUses });
+	return t(usesCount === 1 ? "{count} use" : "{count} uses", { count: usesCount });
 }
 
 /** The four lifecycle words this screen speaks. COMPUTED at render from the
@@ -361,20 +385,25 @@ export function couponStatus(
  * cap already does — no invented symbol.
  */
 function couponMinSpendSummary(
+	t: PluginTranslate,
 	c: Pick<CouponSummaryWire, "minSubtotalCents" | "currency">,
 ): string {
 	if (c.minSubtotalCents === null) return "—";
-	return formatCentsForDisplay(c.minSubtotalCents, c.currency);
+	return formatCentsForDisplay(t, c.minSubtotalCents, c.currency);
 }
 
 /** Display-format minor units: symbol-bearing when the coupon carries a
  *  currency; a PLAIN exact decimal when it does not (percentage coupons are
  *  currency-agnostic); a `CUR amount` fallback if the branding constructors
  *  reject the wire value (never throws into the render path). */
-function formatCentsForDisplay(minorUnits: number, currencyCode: string | null): string {
+function formatCentsForDisplay(
+	t: PluginTranslate,
+	minorUnits: number,
+	currencyCode: string | null,
+): string {
 	if (currencyCode === null) return formatMinorUnitsInput(minorUnits);
 	try {
-		return formatMoney(toCents(minorUnits), toCurrency(currencyCode), "en-US");
+		return formatMoney(toCents(minorUnits), toCurrency(currencyCode), moneyLocale(t));
 	} catch {
 		return `${currencyCode} ${formatMinorUnitsInput(minorUnits)}`;
 	}
@@ -382,7 +411,7 @@ function formatCentsForDisplay(minorUnits: number, currencyCode: string | null):
 
 // -- level 0: the coupons list -------------------------------------------------
 
-function couponsListLevel() {
+function couponsListLevel(t: PluginTranslate) {
 	return listLevel<AdminRulesSurface, CouponsFilterForm, CouponSummaryWire, CouponsRenderState>({
 		limit: PAGE_LIMIT,
 		filterFromValues(values) {
@@ -405,6 +434,7 @@ function couponsListLevel() {
 		},
 		render({ actions, path, filter, items, nextToken, firstPage, total, notice, renderState }) {
 			return couponsBlocks(
+				t,
 				actions,
 				path,
 				filter,
@@ -416,7 +446,7 @@ function couponsListLevel() {
 				renderState,
 			);
 		},
-		onError: () => couponsFailClosed(),
+		onError: () => couponsFailClosed(t),
 	});
 }
 
@@ -448,6 +478,7 @@ function toClientFilter(form: CouponsFilterForm): CouponsListFilter {
  * on this level has.
  */
 function couponsBlocks(
+	t: PluginTranslate,
 	actions: ScreenActions,
 	path: NavPath,
 	filter: CouponsFilterForm,
@@ -458,54 +489,60 @@ function couponsBlocks(
 	notice: Notice | undefined,
 	renderState: CouponsRenderState | undefined,
 ): Block[] {
-	if (renderState?.kind === "new-coupon") return newCouponScreen(renderState.draft, notice);
+	if (renderState?.kind === "new-coupon") return newCouponScreen(t, renderState.draft, notice);
 	// ONE part for the screen's one authored filter field (L-3).
-	const activeFilters = [filter.search !== undefined && `code: ${filter.search}`];
+	const activeFilters = [filter.search !== undefined && t("code: {code}", { code: filter.search })];
 	const summary = filterSummary(activeFilters);
-	const result = listResult({
-		actions,
-		path,
-		count: coupons.length,
-		filtered: summary !== undefined,
-		firstPage,
-		nextToken,
-		...(total !== undefined ? { total } : {}),
-		// Every filter here (`code`) is a service predicate — this screen never
-		// narrows a page it has already fetched.
-		countScope: "service-filtered",
-		noun: { one: "coupon", other: "coupons" },
-		empty: {
-			title: "No coupons yet",
-			description: "Create one to start discounting carts.",
-			blockId: "coupons:empty",
-			// E-2's way IN: the SAME verb and the SAME words as the promoted button
-			// above, because they are the same act and reach the same screen.
-			actions: [{ type: "button", action_id: ACTION_NEW, label: "New coupon", value: {} }],
+	const result = listResult(
+		{
+			actions,
+			path,
+			count: coupons.length,
+			filtered: summary !== undefined,
+			firstPage,
+			nextToken,
+			...(total !== undefined ? { total } : {}),
+			// Every filter here (`code`) is a service predicate — this screen never
+			// narrows a page it has already fetched.
+			countScope: "service-filtered",
+			noun: { one: t("coupon"), few: t("coupons"), other: t("coupons") },
+			empty: {
+				title: t("No coupons yet"),
+				description: t("Create one to start discounting carts."),
+				blockId: "coupons:empty",
+				// E-2's way IN: the SAME verb and the SAME words as the promoted button
+				// above, because they are the same act and reach the same screen.
+				actions: [{ type: "button", action_id: ACTION_NEW, label: t("New coupon"), value: {} }],
+			},
+			noMatch: {
+				title: t("No coupon matches that code"),
+				// The way IN is already on screen (the promoted "New coupon" button sits
+				// above), so this state offers only the undo — one act per state.
+				description: t("Nothing came back for that search. Clear it to go back to every coupon."),
+				blockId: "coupons:no-match",
+				emptyText: t("No coupon matches that code."),
+			},
 		},
-		noMatch: {
-			title: "No coupon matches that code",
-			// The way IN is already on screen (the promoted "New coupon" button sits
-			// above), so this state offers only the undo — one act per state.
-			description: "Nothing came back for that search. Clear it to go back to every coupon.",
-			blockId: "coupons:no-match",
-			emptyText: "No coupon matches that code.",
-		},
-	});
+		t,
+	);
 	const blocks: Block[] = [
-		{ type: "header", text: "Coupons", block_id: "coupons:hdr" },
-		listIntroLine(result.countLine, LIST_INTRO),
-		createCouponButton(),
+		{ type: "header", text: t("Coupons"), block_id: "coupons:hdr" },
+		listIntroLine(result.countLine, t(LIST_INTRO)),
+		createCouponButton(t),
 	];
 	if (notice !== undefined) blocks.push(noticeBanner(notice));
 
 	blocks.push(
-		filterPanel({
-			form: searchForm(actions, path, filter),
-			blockId: "coupons:filters",
-			activeFilters,
-			// 1 field ≤ the default inline threshold (2) — renders directly, no
-			// accordion (L-2).
-		}),
+		filterPanel(
+			{
+				form: searchForm(t, actions, path, filter),
+				blockId: "coupons:filters",
+				activeFilters,
+				// 1 field ≤ the default inline threshold (2) — renders directly, no
+				// accordion (L-2).
+			},
+			t,
+		),
 	);
 	if (summary !== undefined) {
 		blocks.push({
@@ -513,7 +550,7 @@ function couponsBlocks(
 			text: summary,
 			// The path rides in `value`, NOT `block_id` — a button echoes no
 			// `block_id` (L-6, B-1).
-			accessory: clearFiltersButton(actions, path),
+			accessory: clearFiltersButton(actions, path, t),
 			block_id: "coupons:filter-summary",
 		});
 	}
@@ -524,10 +561,10 @@ function couponsBlocks(
 	if (result.emptyBlock !== undefined) {
 		blocks.push(result.emptyBlock);
 	} else {
-		blocks.push(couponsTable(coupons, nextToken, result.emptyText));
+		blocks.push(couponsTable(t, coupons, nextToken, result.emptyText));
 		if (result.scanNote !== undefined) blocks.push(result.scanNote);
 	}
-	if (coupons.length > 0) blocks.push(openCouponForm(actions, path, coupons));
+	if (coupons.length > 0) blocks.push(openCouponForm(t, actions, path, coupons));
 	return blocks;
 }
 
@@ -535,11 +572,11 @@ function couponsBlocks(
  *  under the intro line. It carries no `value` — the create screen it opens
  *  is the root list's own, so there is no path to carry (L-6 binds at depth
  *  ≥ 1). */
-function createCouponButton(): ActionsBlock {
+function createCouponButton(t: PluginTranslate): ActionsBlock {
 	return {
 		type: "actions",
 		block_id: "coupons:create-action",
-		elements: [{ type: "button", action_id: ACTION_NEW, label: "New coupon", style: "primary" }],
+		elements: [{ type: "button", action_id: ACTION_NEW, label: t("New coupon"), style: "primary" }],
 	};
 }
 
@@ -551,20 +588,26 @@ function createCouponButton(): ActionsBlock {
  * The banner sits ABOVE the form on purpose: it is a refusal ("Coupon not
  * created"), and it explains the values the form below has just put back.
  */
-function newCouponScreen(draft: CouponDraft | undefined, notice: Notice | undefined): Block[] {
+function newCouponScreen(
+	t: PluginTranslate,
+	draft: CouponDraft | undefined,
+	notice: Notice | undefined,
+): Block[] {
 	const blocks: Block[] = [
-		{ type: "header", text: "New coupon", block_id: "coupons:new:hdr" },
+		{ type: "header", text: t("New coupon"), block_id: "coupons:new:hdr" },
 		// No path: this screen belongs to the ROOT list, and the cancel verb
 		// re-lists the level the operator came from.
-		backButton(ACTION_CANCEL_NEW, "← Back to coupons"),
+		backButton(ACTION_CANCEL_NEW, t("← Back to coupons")),
 	];
 	if (notice !== undefined) blocks.push(noticeBanner(notice));
 	blocks.push({
 		type: "context",
 		// 108 chars ≤ 140 (§1 — the page-level line on this screen).
-		text: "ID, code, type and currency are fixed at creation — to change them, retire this coupon and issue a new code.",
+		text: t(
+			"ID, code, type and currency are fixed at creation — to change them, retire this coupon and issue a new code.",
+		),
 	});
-	blocks.push(createCouponForm(draft));
+	blocks.push(createCouponForm(t, draft));
 	return blocks;
 }
 
@@ -610,6 +653,7 @@ function newCouponScreen(draft: CouponDraft | undefined, notice: Notice | undefi
  * `statusBanner` states the consequence in full.
  */
 function couponsTable(
+	t: PluginTranslate,
 	coupons: CouponSummaryWire[],
 	nextToken: string | undefined,
 	emptyText: string | undefined,
@@ -621,23 +665,23 @@ function couponsTable(
 		type: "table",
 		block_id: "coupons:list",
 		columns: [
-			{ key: "code", label: "Code", format: "code" }, // identity first (T-2)
-			{ key: "status", label: "Status" }, // computed, plain text — see above
+			{ key: "code", label: t("Code"), format: "code" }, // identity first (T-2)
+			{ key: "status", label: t("Status") }, // computed, plain text — see above
 			// `Type` column DELETED (T-5): `Discount` already reads `20% off` /
 			// `$5.00 off`, so a badge repeating `fixed_amount`/`percentage` would be
 			// a second, redundant lifecycle-shaped column.
-			{ key: "discount", label: "Discount" },
-			{ key: "window", label: "Valid" },
-			{ key: "uses", label: "Uses" },
-			{ key: "minSpend", label: "Min spend" }, // money LAST, pre-formatted (T-2, M-1)
+			{ key: "discount", label: t("Discount") },
+			{ key: "window", label: t("Valid") },
+			{ key: "uses", label: t("Uses") },
+			{ key: "minSpend", label: t("Min spend") }, // money LAST, pre-formatted (T-2, M-1)
 		],
 		rows: coupons.map((c) => ({
 			code: c.code,
-			status: couponStatus(c, now),
-			discount: couponDiscountSummary(c),
-			window: couponWindowSummary(c.startsAt, c.expiresAt),
-			uses: couponUsesSummary(c.usesCount, c.maxUses),
-			minSpend: couponMinSpendSummary(c),
+			status: t(couponStatus(c, now)),
+			discount: couponDiscountSummary(c, t),
+			window: couponWindowSummary(c.startsAt, c.expiresAt, t),
+			uses: couponUsesSummary(c.usesCount, c.maxUses, t),
+			minSpend: couponMinSpendSummary(t, c),
 		})),
 		page_action_id: COUPON_ACTIONS.page,
 		...(nextToken !== undefined ? { next_cursor: nextToken } : {}),
@@ -653,7 +697,12 @@ function couponsTable(
  * LAST so its digest matches — `filterPanel` recomputes it and throws on an
  * absent or stale one (B-3a).
  */
-function searchForm(actions: ScreenActions, path: NavPath, filter: CouponsFilterForm): FormBlock {
+function searchForm(
+	t: PluginTranslate,
+	actions: ScreenActions,
+	path: NavPath,
+	filter: CouponsFilterForm,
+): FormBlock {
 	return carriedForm({
 		namespace: "coupons:filter",
 		context: { [PATH_FIELD]: encodePath(path) },
@@ -663,12 +712,12 @@ function searchForm(actions: ScreenActions, path: NavPath, filter: CouponsFilter
 				{
 					type: "text_input",
 					action_id: "search",
-					label: "Code (exact match, case-insensitive)",
-					placeholder: "e.g. SUMMER25",
+					label: t("Code (exact match, case-insensitive)"),
+					placeholder: t("e.g. SUMMER25"),
 					...(filter.search !== undefined ? { initial_value: filter.search } : {}),
 				},
 			],
-			submit: { label: "Search", action_id: actions.applyFilter },
+			submit: { label: t("Search"), action_id: actions.applyFilter },
 		},
 	});
 }
@@ -681,6 +730,7 @@ function searchForm(actions: ScreenActions, path: NavPath, filter: CouponsFilter
  * safe at any row count.
  */
 function openCouponForm(
+	t: PluginTranslate,
 	actions: ScreenActions,
 	path: NavPath,
 	coupons: CouponSummaryWire[],
@@ -694,19 +744,19 @@ function openCouponForm(
 				{
 					type: "combobox",
 					action_id: "target",
-					label: "Open coupon",
-					placeholder: "Choose a coupon…",
+					label: t("Open coupon"),
+					placeholder: t("Choose a coupon…"),
 					options: [
-						{ value: NONE, label: "Choose a coupon…" },
+						{ value: NONE, label: t("Choose a coupon…") },
 						...coupons.map((c) => ({
 							value: encodePath([c.code]),
-							label: `${c.code} · ${couponDiscountSummary(c)} · ${couponUsesSummary(c.usesCount, c.maxUses)}`,
+							label: `${c.code} · ${couponDiscountSummary(c, t)} · ${couponUsesSummary(c.usesCount, c.maxUses, t)}`,
 						})),
 					],
 					initial_value: NONE,
 				},
 			],
-			submit: { label: "View / edit", action_id: actions.open },
+			submit: { label: t("View / edit"), action_id: actions.open },
 		},
 	});
 }
@@ -732,10 +782,10 @@ function openCouponForm(
  * (X-23), which also decides which economics branch `condition` reveals, so a
  * refused percentage coupon comes back as a percentage coupon.
  */
-function createCouponForm(draft?: CouponDraft): FormBlock {
+function createCouponForm(t: PluginTranslate, draft?: CouponDraft): FormBlock {
 	const typeOptions: SelectOption[] = [
-		{ value: "fixed_amount", label: "Fixed amount off" },
-		{ value: "percentage", label: "Percentage off" },
+		{ value: "fixed_amount", label: t("Fixed amount off") },
+		{ value: "percentage", label: t("Percentage off") },
 	];
 	const type = typeOptions.some((o) => o.value === draft?.type)
 		? (draft?.type ?? "fixed_amount")
@@ -755,28 +805,28 @@ function createCouponForm(draft?: CouponDraft): FormBlock {
 				{
 					type: "text_input",
 					action_id: "id",
-					label: "Coupon ID",
-					placeholder: "e.g. summer25",
+					label: t("Coupon ID"),
+					placeholder: t("e.g. summer25"),
 					...prefill(draft?.id),
 				},
 				{
 					type: "text_input",
 					action_id: "code",
-					label: "Code",
-					placeholder: "e.g. SUMMER25",
+					label: t("Code"),
+					placeholder: t("e.g. SUMMER25"),
 					...prefill(draft?.code),
 				},
 				{
 					type: "select",
 					action_id: "type",
-					label: "Type",
+					label: t("Type"),
 					options: typeOptions,
 					initial_value: type, // required for `condition` to evaluate (R-12b)
 				},
 				{
 					type: "text_input",
 					action_id: "amount",
-					label: "Amount off",
+					label: t("Amount off"),
 					placeholder: "5.00",
 					condition: { field: "type", eq: "fixed_amount" },
 					...prefill(draft?.amount),
@@ -784,7 +834,7 @@ function createCouponForm(draft?: CouponDraft): FormBlock {
 				{
 					type: "text_input",
 					action_id: "currency",
-					label: "Currency (ISO-4217)",
+					label: t("Currency (ISO-4217)"),
 					placeholder: "USD",
 					condition: { field: "type", eq: "fixed_amount" },
 					...prefill(draft?.currency),
@@ -792,7 +842,7 @@ function createCouponForm(draft?: CouponDraft): FormBlock {
 				{
 					type: "text_input",
 					action_id: "ratePercent",
-					label: "Rate (%)",
+					label: t("Rate (%)"),
 					placeholder: "7.25",
 					condition: { field: "type", eq: "percentage" },
 					...prefill(draft?.ratePercent),
@@ -800,13 +850,13 @@ function createCouponForm(draft?: CouponDraft): FormBlock {
 				{
 					type: "text_input",
 					action_id: "cap",
-					label: "Discount cap (optional)",
+					label: t("Discount cap (optional)"),
 					placeholder: "20.00",
 					condition: { field: "type", eq: "percentage" },
 					...prefill(draft?.cap),
 				},
 			],
-			submit: { label: "Create coupon", action_id: ACTION_CREATE },
+			submit: { label: t("Create coupon"), action_id: ACTION_CREATE },
 		},
 	});
 }
@@ -819,20 +869,21 @@ function prefill(value: string | undefined): { initial_value?: string } {
 	return value !== undefined && value.length > 0 ? { initial_value: value } : {};
 }
 
-function couponsFailClosed() {
+function couponsFailClosed(t: PluginTranslate) {
 	return failClosedResponse({
-		header: "Coupons",
-		title: "Coupons are unavailable",
+		header: t("Coupons"),
+		title: t("Coupons are unavailable"),
 		// E-7's normative blockquote, verbatim — never a single named cause (X-42).
-		description:
+		description: t(
 			"Coupons could not be loaded. Retry in a moment; if it keeps failing, this is a fault in the console itself — not your data.",
-		toast: "Could not load coupons",
+		),
+		toast: t("Could not load coupons"),
 	});
 }
 
 // -- level 1: a coupon's detail/edit leaf --------------------------------------
 
-function couponDetailLevel() {
+function couponDetailLevel(t: PluginTranslate) {
 	return leafLevel<AdminRulesSurface, CouponSummaryWire>({
 		// The detail load is the exact-code LIST search, not `GET /coupons/:code`
 		// — deliberately: the point-lookup serialization omits `startsAt`/
@@ -845,31 +896,32 @@ function couponDetailLevel() {
 			return page.coupons.find((c) => c.code === code) ?? page.coupons[0] ?? null;
 		},
 		render({ actions, path, id, detail, notice }) {
-			return detailBlocks(actions, path, id, detail, notice);
+			return detailBlocks(t, actions, path, id, detail, notice);
 		},
 		notFound({ actions, path, id }) {
 			return [
-				{ type: "header", text: "Coupon not found" },
-				backButton(actions.back, "← Back to coupons", path),
+				{ type: "header", text: t("Coupon not found") },
+				backButton(actions.back, t("← Back to coupons"), path),
 				{
 					type: "banner",
 					variant: "error",
-					title: "Coupon not found",
-					description: `No coupon matches "${id}" — it may have been deleted.`,
+					title: t("Coupon not found"),
+					description: t('No coupon matches "{id}" — it may have been deleted.', { id: id }),
 				},
 			];
 		},
-		onError: () => couponFailClosed(),
+		onError: () => couponFailClosed(t),
 	});
 }
 
-function couponFailClosed() {
+function couponFailClosed(t: PluginTranslate) {
 	return failClosedResponse({
-		header: "Coupon",
-		title: "This coupon is unavailable",
-		description:
+		header: t("Coupon"),
+		title: t("This coupon is unavailable"),
+		description: t(
 			"This coupon could not be loaded. Retry in a moment; if it keeps failing, this is a fault in the console itself — not your data.",
-		toast: "Could not load the coupon",
+		),
+		toast: t("Could not load the coupon"),
 	});
 }
 
@@ -890,6 +942,7 @@ function couponFailClosed() {
  * D-6 label.
  */
 function detailBlocks(
+	t: PluginTranslate,
 	actions: ScreenActions,
 	path: NavPath,
 	code: string,
@@ -902,11 +955,11 @@ function detailBlocks(
 	const blocks: Block[] = [
 		// M-10: the coupon's CODE is its human handle, so it is the header — the
 		// internal `id` never needs its own display row.
-		{ type: "header", text: `Coupon — ${code}` },
-		backButton(actions.back, "← Back to coupons", path),
+		{ type: "header", text: t("Coupon — {code}", { code: code }) },
+		backButton(actions.back, t("← Back to coupons"), path),
 	];
 	if (notice !== undefined) blocks.push(noticeBanner(notice));
-	const exception = statusBanner(status);
+	const exception = statusBanner(t, status);
 	if (exception !== undefined) blocks.push(exception);
 	blocks.push(
 		fields("coupons:identity", [
@@ -922,22 +975,22 @@ function detailBlocks(
 			// the header — and D-1a caps this strip at SIX entries (§12.2 pins the
 			// set). So the strip pays for its new first entry with its redundant
 			// one, and stays even in `fields`' row-major 2-column grid.
-			["Status", status],
-			["Discount", couponDiscountSummary(detail)],
-			["Type", detail.type],
-			["Uses", couponUsesSummary(detail.usesCount, detail.maxUses)],
-			["Currency", detail.currency ?? "— (currency-agnostic)"],
+			[t("Status"), t(status)],
+			[t("Discount"), couponDiscountSummary(detail, t)],
+			[t("Type"), t(detail.type)],
+			[t("Uses"), couponUsesSummary(detail.usesCount, detail.maxUses, t)],
+			[t("Currency"), detail.currency ?? t("— (currency-agnostic)")],
 			// THE LAST RAW WIRE TIMESTAMP IN THE CONSOLE, and the reason INC-13's
 			// rule had to ship as a separate assertion with this screen unwired
 			// from it. It reads `1 Jun 2026, 00:00 UTC` now, like every other
 			// instant on every other screen, and the label drops the `(UTC)`
 			// suffix because the value carries the zone itself (M-6).
-			["Created", formatTimestamp(detail.createdAt)],
+			[t("Created"), formatTimestamp(detail.createdAt, t.locale)],
 		]),
 	);
 	const panels: TabPanel[] = [
-		{ label: "Coupon", blocks: couponPanel(detail) },
-		{ label: "Redemptions", blocks: redemptionsPanel(detail) },
+		{ label: t("Coupon"), blocks: couponPanel(t, detail) },
+		{ label: t("Redemptions"), blocks: redemptionsPanel(t, detail) },
 	];
 	blocks.push({
 		type: "tab",
@@ -965,39 +1018,39 @@ function detailBlocks(
  * in the strip above: what checkout does with the code is what the operator
  * opened this screen to learn (`PM §E3`).
  */
-function statusBanner(status: CouponStatus): BannerBlock | undefined {
+function statusBanner(t: PluginTranslate, status: CouponStatus): BannerBlock | undefined {
 	if (status === "active") return undefined;
 	const description =
 		status === "scheduled"
-			? "Checkout refuses this code until its start date."
+			? t("Checkout refuses this code until its start date.")
 			: status === "expired"
-				? "Checkout refuses this code — its expiry date has passed."
-				: "Checkout refuses this code — it has reached its maximum number of uses.";
+				? t("Checkout refuses this code — its expiry date has passed.")
+				: t("Checkout refuses this code — it has reached its maximum number of uses.");
 	return {
 		type: "banner",
 		variant: "alert",
-		title: `This coupon is ${status}`,
+		title: t("This coupon is {status}", { status: t(status) }),
 		description,
 	};
 }
 
 // -- panel "Coupon" -------------------------------------------------------------
 
-function couponPanel(detail: CouponSummaryWire): Block[] {
+function couponPanel(t: PluginTranslate, detail: CouponSummaryWire): Block[] {
 	return [
 		// D-2a: the would-be `History` panel holds only Created (already in the
 		// identity strip), so these two round out the first panel's own `fields`
 		// instead of getting a panel of their own.
 		fields("coupons:more", [
 			[
-				"Minimum spend",
+				t("Minimum spend"),
 				detail.minSubtotalCents === null
-					? "— (none)"
-					: formatCentsForDisplay(detail.minSubtotalCents, detail.currency),
+					? t("— (none)")
+					: formatCentsForDisplay(t, detail.minSubtotalCents, detail.currency),
 			],
-			["Valid", couponWindowSummary(detail.startsAt, detail.expiresAt)],
+			[t("Valid"), couponWindowSummary(detail.startsAt, detail.expiresAt, t)],
 		]),
-		editGroup(detail),
+		editGroup(t, detail),
 	];
 }
 
@@ -1010,14 +1063,17 @@ function couponPanel(detail: CouponSummaryWire): Block[] {
  * decides the branch once, the same way `createCouponForm`'s `condition`
  * decides it reactively on create.
  */
-function editGroup(detail: CouponSummaryWire): Block {
+function editGroup(t: PluginTranslate, detail: CouponSummaryWire): Block {
 	return {
 		type: "accordion",
 		block_id: `coupons:${detail.id}:edit`,
 		// D-6: the label carries the answer that makes opening it unnecessary —
 		// which is what makes shipping this group CLOSED cost the reader nothing.
 		label: fitLabel(
-			`Edit — ${couponDiscountSummary(detail)} · ${couponWindowSummary(detail.startsAt, detail.expiresAt)}`,
+			t("Edit — {value1} · {value2}", {
+				value1: couponDiscountSummary(detail, t),
+				value2: couponWindowSummary(detail.startsAt, detail.expiresAt, t),
+			}),
 		),
 		// CLOSED — see {@link detailBlocks}. A render-time `default_open: false`,
 		// not a programmatic close: there is no open/close signal to read, and
@@ -1035,19 +1091,22 @@ function editGroup(detail: CouponSummaryWire): Block {
 			{
 				type: "banner",
 				variant: "alert",
-				title: "Saving replaces every field below",
+				title: t("Saving replaces every field below"),
 				// 118 chars ≤ 240 (X-11).
-				description:
+				description: t(
 					"This is a full replace: a blank optional field saves as unset, not unchanged. Values shown are the current ones.",
+				),
 			},
 			{
 				type: "context",
 				// 140 chars ≤ 200. The end-of-day reading is NOT cosmetic — the
 				// domain's window is `[startsAt, expiresAt)`, so a date that meant
 				// midnight would retire the code a whole day before its stated expiry.
-				text: "Dates are UTC. A coupon becomes valid at the start of its start date and stops at the END of its expiry date. Blank either one for no bound.",
+				text: t(
+					"Dates are UTC. A coupon becomes valid at the start of its start date and stops at the END of its expiry date. Blank either one for no bound.",
+				),
 			},
-			editCouponForm(detail),
+			editCouponForm(t, detail),
 		],
 	};
 }
@@ -1099,13 +1158,13 @@ const LIMITS_TOGGLE = "showLimits";
  * change token is `carriedForm`'s own prefill digest (`__v`, B-3a) — a second,
  * hand-rolled hash would be belt-and-braces B-3a already says not to add.
  */
-function editCouponForm(detail: CouponSummaryWire): FormBlock {
+function editCouponForm(t: PluginTranslate, detail: CouponSummaryWire): FormBlock {
 	const editFields: FormBlock["fields"] = [];
 	if (detail.type === "fixed_amount") {
 		editFields.push({
 			type: "text_input",
 			action_id: "amount",
-			label: `Amount off (${detail.currency ?? "?"})`,
+			label: t("Amount off ({value1})", { value1: detail.currency ?? "?" }),
 			...(detail.amountCents !== null
 				? { initial_value: formatMinorUnitsInput(detail.amountCents) }
 				: {}),
@@ -1114,7 +1173,7 @@ function editCouponForm(detail: CouponSummaryWire): FormBlock {
 		editFields.push({
 			type: "text_input",
 			action_id: "ratePercent",
-			label: "Rate (%)",
+			label: t("Rate (%)"),
 			...(detail.rateBps !== null ? { initial_value: formatBpsAsPercent(detail.rateBps) } : {}),
 		});
 	}
@@ -1123,22 +1182,22 @@ function editCouponForm(detail: CouponSummaryWire): FormBlock {
 	// hand-types `2026-08-01T00:00:00Z` — and nobody mistypes it into a silent
 	// parse failure either. It speaks DAYS, not instants; {@link resolveBound}
 	// decides which instant each edge of a day means.
-	editFields.push(dateField("startsAt", "Starts at (optional, UTC)", detail.startsAt));
-	editFields.push(dateField("expiresAt", "Expires at (optional, UTC)", detail.expiresAt));
+	editFields.push(dateField("startsAt", t("Starts at (optional, UTC)"), detail.startsAt));
+	editFields.push(dateField("expiresAt", t("Expires at (optional, UTC)"), detail.expiresAt));
 	// CLOSED on every render (the `false` is unconditional — the values it hides
 	// are all readable above it). A toggle's `description` is dropped by the
 	// renderer, so the label alone has to say what it reveals.
 	editFields.push({
 		type: "toggle",
 		action_id: LIMITS_TOGGLE,
-		label: "Edit spend and use limits",
+		label: t("Edit spend and use limits"),
 		initial_value: false,
 	});
 	if (detail.type === "percentage") {
 		editFields.push(
 			limitField(
 				"cap",
-				"Discount cap (optional)",
+				t("Discount cap (optional)"),
 				detail.capCents === null ? undefined : formatMinorUnitsInput(detail.capCents),
 			),
 		);
@@ -1146,21 +1205,21 @@ function editCouponForm(detail: CouponSummaryWire): FormBlock {
 	editFields.push(
 		limitField(
 			"minSubtotal",
-			"Minimum spend (optional)",
+			t("Minimum spend (optional)"),
 			detail.minSubtotalCents === null ? undefined : formatMinorUnitsInput(detail.minSubtotalCents),
 		),
 	);
 	editFields.push(
 		limitField(
 			"maxUses",
-			"Max uses (optional)",
+			t("Max uses (optional)"),
 			detail.maxUses === null ? undefined : String(detail.maxUses),
 		),
 	);
 	editFields.push(
 		limitField(
 			"maxUsesPerCustomer",
-			"Max uses per customer (optional)",
+			t("Max uses per customer (optional)"),
 			detail.maxUsesPerCustomer === null ? undefined : String(detail.maxUsesPerCustomer),
 		),
 	);
@@ -1175,7 +1234,7 @@ function editCouponForm(detail: CouponSummaryWire): FormBlock {
 		form: {
 			type: "form",
 			fields: editFields,
-			submit: { label: "Save coupon", action_id: ACTION_SAVE },
+			submit: { label: t("Save coupon"), action_id: ACTION_SAVE },
 		},
 	});
 }
@@ -1273,38 +1332,42 @@ function carriedInstant(raw: string | undefined): string | null {
 
 // -- panel "Redemptions" --------------------------------------------------------
 
-function redemptionsPanel(detail: CouponSummaryWire): Block[] {
+function redemptionsPanel(t: PluginTranslate, detail: CouponSummaryWire): Block[] {
 	const remaining =
-		detail.maxUses === null ? "unlimited" : String(Math.max(0, detail.maxUses - detail.usesCount));
+		detail.maxUses === null
+			? t("unlimited")
+			: String(Math.max(0, detail.maxUses - detail.usesCount));
 	const blocks: Block[] = [
 		fields("coupons:uses", [
-			["Redemptions", String(detail.usesCount)],
-			["Max uses", detail.maxUses === null ? "unlimited" : String(detail.maxUses)],
+			[t("Redemptions"), String(detail.usesCount)],
+			[t("Max uses"), detail.maxUses === null ? t("unlimited") : String(detail.maxUses)],
 			[
-				"Max per customer",
-				detail.maxUsesPerCustomer === null ? "unlimited" : String(detail.maxUsesPerCustomer),
+				t("Max per customer"),
+				detail.maxUsesPerCustomer === null ? t("unlimited") : String(detail.maxUsesPerCustomer),
 			],
 			// M-11a: "Remaining" alone is not a label — name the axis. The §12.2
 			// listing's bare "Remaining" conflicts with M-11a/X-43; the rule wins
 			// (N-1) and is reported as a listing defect in the PR.
-			["Remaining redemptions", remaining],
+			[t("Remaining redemptions"), remaining],
 		]),
 	];
 	if (detail.maxUses !== null) {
-		blocks.push(redemptionsMeter(detail));
+		blocks.push(redemptionsMeter(t, detail));
 	}
 	blocks.push({
 		type: "context",
 		// 163 chars ≤ 200.
-		text: "Orders already placed keep their snapshotted discount regardless of edits here. Lowering max uses to at or below the current count exhausts the coupon immediately.",
+		text: t(
+			"Orders already placed keep their snapshotted discount regardless of edits here. Lowering max uses to at or below the current count exhausts the coupon immediately.",
+		),
 	});
 	// Delete lives HERE, beside the count that gates it (DA-2, forbid-if-redeemed).
 	if (detail.usesCount === 0) {
-		blocks.push(deleteCouponActions(detail));
+		blocks.push(deleteCouponActions(t, detail));
 	} else {
 		blocks.push({
 			type: "context",
-			text: withheldDeleteContext(detail.usesCount),
+			text: withheldDeleteContext(t, detail.usesCount),
 		});
 	}
 	return blocks;
@@ -1314,35 +1377,37 @@ function redemptionsPanel(detail: CouponSummaryWire): Block[] {
  *  M-8 (only mandatory when `value`/`max` are money) — included anyway for a
  *  readable readout. Only rendered when `maxUses` is set: a `meter` over a
  *  synthetic or absent max is forbidden (§2, M-8's zero-denominator note). */
-function redemptionsMeter(detail: CouponSummaryWire): MeterBlock {
+function redemptionsMeter(t: PluginTranslate, detail: CouponSummaryWire): MeterBlock {
 	const max = detail.maxUses ?? 0;
 	return {
 		type: "meter",
-		label: "Redemptions",
+		label: t("Redemptions"),
 		value: detail.usesCount,
 		max,
-		custom_value: `${detail.usesCount} of ${max}`,
+		custom_value: t("{usesCount} of {max}", { usesCount: detail.usesCount, max: max }),
 	};
 }
 
-function deleteCouponActions(detail: CouponSummaryWire): ActionsBlock {
+function deleteCouponActions(t: PluginTranslate, detail: CouponSummaryWire): ActionsBlock {
 	const button: ButtonElement = {
 		type: "button",
 		action_id: ACTION_DELETE,
 		// The BUTTON stays a generic verb phrase; the code lives in the confirm
 		// title instead (M-7 — an id/handle never sits in a button/submit label).
-		label: "Delete coupon",
+		label: t("Delete coupon"),
 		style: "danger",
 		value: { couponId: detail.id, code: detail.code },
 		confirm: {
 			// fitLabel: a merchant-chosen code has no length cap on the wire, so
 			// the title is truncated the same way a data-derived accordion label
 			// is (§1's 60-char confirm.title budget, X-11).
-			title: fitLabel(`Delete ${detail.code}?`),
+			title: fitLabel(t("Delete {code}?", { code: detail.code })),
 			// 112 chars ≤ 200, trimmed from the former 301-char text.
-			text: "Only a never-redeemed coupon can be deleted. In-flight carts recompute without it; placed orders are unaffected.",
-			confirm: "Yes, delete",
-			deny: "Keep it",
+			text: t(
+				"Only a never-redeemed coupon can be deleted. In-flight carts recompute without it; placed orders are unaffected.",
+			),
+			confirm: t("Yes, delete"),
+			deny: t("Keep it"),
 			style: "danger",
 		},
 	};
@@ -1351,8 +1416,11 @@ function deleteCouponActions(detail: CouponSummaryWire): ActionsBlock {
 
 /** DA-7's normative blockquote, parametrized. No "deliberately"/"there is
  *  no"/"we do not" (X-41); names the alternative (DA-7a). */
-function withheldDeleteContext(usesCount: number): string {
-	return `This coupon has been redeemed ${usesCount} time${usesCount === 1 ? "" : "s"} — deletion is blocked to keep the redemption audit trail. To retire it, set its expiry to a past date.`;
+function withheldDeleteContext(t: PluginTranslate, usesCount: number): string {
+	return t(
+		"This coupon has been redeemed {usesCount} time{value2} — deletion is blocked to keep the redemption audit trail. To retire it, set its expiry to a past date.",
+		{ usesCount: usesCount, value2: usesCount === 1 ? "" : "s" },
+	);
 }
 
 // -- form parsing (exact integer math; NO floats — CLAUDE.md) -------------------
@@ -1465,6 +1533,7 @@ function limitsDisclosed(values: Record<string, unknown>): boolean {
  * is immutable (`mode: "edit"` skips it).
  */
 function parseEconomics(
+	t: PluginTranslate,
 	type: "fixed_amount" | "percentage",
 	values: Record<string, unknown>,
 	mode: "create" | "edit",
@@ -1487,21 +1556,22 @@ function parseEconomics(
 		if (rateRaw.length > 0 || capRaw.length > 0) {
 			return {
 				ok: false,
-				message: "Leave the percentage-only fields (rate, cap) blank for a fixed_amount coupon.",
+				message: t("Leave the percentage-only fields (rate, cap) blank for a fixed_amount coupon."),
 			};
 		}
 		const amountCents = parseMinorUnitsInput(amountRaw, { allowZero: false });
 		if (amountCents === null) {
 			return {
 				ok: false,
-				message:
+				message: t(
 					"Amount off must be a positive number like 5.00 (up to two decimal places) — a fixed_amount coupon cannot leave it unset.",
+				),
 			};
 		}
 		let currency: string | null = null;
 		if (mode === "create") {
 			if (!/^[A-Z]{3}$/.test(currencyRaw)) {
-				return { ok: false, message: "Currency must be a 3-letter ISO-4217 code like USD." };
+				return { ok: false, message: t("Currency must be a 3-letter ISO-4217 code like USD.") };
 			}
 			currency = currencyRaw;
 		}
@@ -1512,16 +1582,18 @@ function parseEconomics(
 	if (amountRaw.length > 0 || (mode === "create" && currencyRaw.length > 0)) {
 		return {
 			ok: false,
-			message:
+			message: t(
 				"Leave the fixed-amount-only fields (amount, currency) blank for a percentage coupon.",
+			),
 		};
 	}
 	const rateBps = parsePercentToBps(rateRaw);
 	if (rateBps === null || rateBps === 0) {
 		return {
 			ok: false,
-			message:
+			message: t(
 				"Rate must be a positive percent like 10 or 7.25 (up to two decimal places) — a percentage coupon cannot leave it unset.",
+			),
 		};
 	}
 	let capCents: number | null = null;
@@ -1530,7 +1602,7 @@ function parseEconomics(
 		if (capCents === null) {
 			return {
 				ok: false,
-				message: "Discount cap must be a positive number like 20.00, or blank for no cap.",
+				message: t("Discount cap must be a positive number like 20.00, or blank for no cap."),
 			};
 		}
 	}
@@ -1552,7 +1624,11 @@ type ParsedShared = { ok: true; fields: SharedFields } | { ok: false; message: s
  *  EDIT form authors these — the create form omits them entirely, so a freshly
  *  created coupon is valid immediately, forever, unlimited and unrestricted
  *  (§12.2). */
-function parseSharedFields(values: Record<string, unknown>, current: CurrentValues): ParsedShared {
+function parseSharedFields(
+	t: PluginTranslate,
+	values: Record<string, unknown>,
+	current: CurrentValues,
+): ParsedShared {
 	// Three of the four gated bounds live here; the window fields above them are
 	// always visible, so only these read the disclosure.
 	const disclosed = limitsDisclosed(values);
@@ -1563,26 +1639,26 @@ function parseSharedFields(values: Record<string, unknown>, current: CurrentValu
 		if (minSubtotalCents === null) {
 			return {
 				ok: false,
-				message: "Minimum spend must be a number like 35.00, or blank for none.",
+				message: t("Minimum spend must be a number like 35.00, or blank for none."),
 			};
 		}
 	}
 	const startsAt = resolveBound(values, "startsAt", current.startsAt, "start");
 	if (startsAt.ok === false) {
-		return { ok: false, message: `Starts at ${DATE_HINT}` };
+		return { ok: false, message: t("Starts at {dateHint}", { dateHint: t(DATE_HINT) }) };
 	}
 	const expiresAt = resolveBound(values, "expiresAt", current.expiresAt, "end");
 	if (expiresAt.ok === false) {
-		return { ok: false, message: `Expires at ${DATE_HINT}` };
+		return { ok: false, message: t("Expires at {dateHint}", { dateHint: t(DATE_HINT) }) };
 	}
 	if (startsAt.value !== null && expiresAt.value !== null && startsAt.value >= expiresAt.value) {
-		return { ok: false, message: "Expires at must be on or after starts at." };
+		return { ok: false, message: t("Expires at must be on or after starts at.") };
 	}
 	const maxUses = parseCountInput(submittedOr(values, "maxUses", current.maxUses, disclosed));
 	if (maxUses.ok === false) {
 		return {
 			ok: false,
-			message: "Max uses must be a whole number of 1 or more, or blank for unlimited.",
+			message: t("Max uses must be a whole number of 1 or more, or blank for unlimited."),
 		};
 	}
 	const maxUsesPerCustomer = parseCountInput(
@@ -1591,7 +1667,9 @@ function parseSharedFields(values: Record<string, unknown>, current: CurrentValu
 	if (maxUsesPerCustomer.ok === false) {
 		return {
 			ok: false,
-			message: "Max uses per customer must be a whole number of 1 or more, or blank for unlimited.",
+			message: t(
+				"Max uses per customer must be a whole number of 1 or more, or blank for unlimited.",
+			),
 		};
 	}
 	return {
@@ -1695,7 +1773,7 @@ function parseCountInput(raw: string): { ok: true; value: number | null } | { ok
 
 // -- custom action: create a coupon --------------------------------------------
 
-function createCouponAction() {
+function createCouponAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface, CouponsRenderState>(
 		async ({ input, client, showList }) => {
 			const values = input.values ?? {};
@@ -1706,19 +1784,19 @@ function createCouponAction() {
 			const err = (description: string) =>
 				showList(
 					undefined,
-					{ variant: "error", title: "Coupon not created", description },
+					{ variant: "error", title: t("Coupon not created"), description },
 					{ kind: "new-coupon", draft },
 				);
 			const id = (readString(values.id) ?? "").trim();
 			const code = (readString(values.code) ?? "").trim();
 			const type = readString(values.type) ?? "";
 			if (id.length === 0 || code.length === 0) {
-				return err("Enter both a coupon ID and a code.");
+				return err(t("Enter both a coupon ID and a code."));
 			}
 			if (type !== "fixed_amount" && type !== "percentage") {
-				return err("Choose a valid coupon type.");
+				return err(t("Choose a valid coupon type."));
 			}
-			const econ = parseEconomics(type, values, "create", NO_CURRENT);
+			const econ = parseEconomics(t, type, values, "create", NO_CURRENT);
 			if (!econ.ok) return err(econ.message);
 			// The five shared axes have no field on this form (§12.2) — a freshly
 			// created coupon is valid immediately, forever, unlimited, unrestricted.
@@ -1740,8 +1818,8 @@ function createCouponAction() {
 			// editing one field); success drops it, which is what returns the
 			// operator to the list.
 			return result.ok
-				? showList(undefined, createCouponNotice(result, code))
-				: showList(undefined, createCouponNotice(result, code), { kind: "new-coupon", draft });
+				? showList(undefined, createCouponNotice(t, result, code))
+				: showList(undefined, createCouponNotice(t, result, code), { kind: "new-coupon", draft });
 		},
 	);
 }
@@ -1760,24 +1838,31 @@ function couponDraft(values: Record<string, unknown>): CouponDraft {
 	};
 }
 
-function createCouponNotice(result: RulesCreateResult<unknown>, code: string): Notice {
+function createCouponNotice(
+	t: PluginTranslate,
+	result: RulesCreateResult<unknown>,
+	code: string,
+): Notice {
 	if (result.ok) {
 		return {
 			variant: "default",
-			title: "Coupon created",
-			description: `"${code}" was added and is live per its validity window.`,
+			title: t("Coupon created"),
+			description: t('"{code}" was added and is live per its validity window.', { code: code }),
 		};
 	}
 	return {
 		variant: "error",
-		title: "Coupon not created",
-		description: `Could not create "${code}" — check the coupon ID and code aren't already in use, then try again.`,
+		title: t("Coupon not created"),
+		description: t(
+			'Could not create "{code}" — check the coupon ID and code aren\'t already in use, then try again.',
+			{ code: code },
+		),
 	};
 }
 
 // -- custom action: save a coupon (LWW full replace) ----------------------------
 
-function saveCouponAction() {
+function saveCouponAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface>(async ({ input, carried, client, showLeaf, showList }) => {
 		const values = input.values ?? {};
 		const couponId = carried?.couponId;
@@ -1790,19 +1875,21 @@ function saveCouponAction() {
 		) {
 			return showList(undefined, {
 				variant: "error",
-				title: "Coupon not saved",
-				description: "That action could not be read — nothing was changed. Reload and try again.",
+				title: t("Coupon not saved"),
+				description: t(
+					"That action could not be read — nothing was changed. Reload and try again.",
+				),
 			});
 		}
 		const err = (description: string) =>
-			showLeaf([code], { variant: "error", title: "Coupon not saved", description });
+			showLeaf([code], { variant: "error", title: t("Coupon not saved"), description });
 		// The coupon's current optional values, as the form itself carried them —
 		// the fallback that keeps a field which never reached this submit
 		// (a `condition`-hidden bound) at the value it was hiding.
 		const current = currentValues(carried);
-		const econ = parseEconomics(type, values, "edit", current);
+		const econ = parseEconomics(t, type, values, "edit", current);
 		if (!econ.ok) return err(econ.message);
-		const shared = parseSharedFields(values, current);
+		const shared = parseSharedFields(t, values, current);
 		if (!shared.ok) return err(shared.message);
 		// EVERY editable key, explicitly — the inactive type's economics as
 		// explicit nulls (they are inapplicable-null by construction; type is
@@ -1814,11 +1901,12 @@ function saveCouponAction() {
 			...shared.fields,
 		};
 		const result = await client.updateCoupon(couponId, edit);
-		return saveCouponOutcome(result, code, showLeaf, showList);
+		return saveCouponOutcome(t, result, code, showLeaf, showList);
 	});
 }
 
 function saveCouponOutcome(
+	t: PluginTranslate,
 	result: RulesUpdateResult<unknown>,
 	code: string,
 	showLeaf: CustomActionApi<AdminRulesSurface>["showLeaf"],
@@ -1827,39 +1915,41 @@ function saveCouponOutcome(
 	if (result.ok) {
 		return showLeaf([code], {
 			variant: "default",
-			title: "Coupon saved",
-			description:
+			title: t("Coupon saved"),
+			description: t(
 				"Every field was replaced with the submitted values (last write wins). Orders already placed keep their snapshotted discount.",
+			),
 		});
 	}
 	if (result.reason === "not_found") {
 		return showList(undefined, {
 			variant: "error",
-			title: "Coupon not found",
-			description: "This coupon no longer exists — it may have been deleted.",
+			title: t("Coupon not found"),
+			description: t("This coupon no longer exists — it may have been deleted."),
 		});
 	}
 	return showLeaf([code], {
 		variant: "error",
-		title: "Coupon not saved",
-		description: "The change could not be saved — retry in a moment.",
+		title: t("Coupon not saved"),
+		description: t("The change could not be saved — retry in a moment."),
 	});
 }
 
 // -- custom action: delete a coupon (forbid-if-redeemed) ------------------------
 
-function deleteCouponAction() {
+function deleteCouponAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface>(async ({ input, client, showLeaf, showList }) => {
 		const payload = asRecord(input.value);
 		const couponId = readString(payload?.couponId);
 		const code = readString(payload?.code);
 		if (couponId === undefined || code === undefined) return showList();
 		const result = await client.deleteCoupon(couponId);
-		return deleteCouponOutcome(result, code, showLeaf, showList);
+		return deleteCouponOutcome(t, result, code, showLeaf, showList);
 	});
 }
 
 function deleteCouponOutcome(
+	t: PluginTranslate,
 	result: RulesDeleteResult,
 	code: string,
 	showLeaf: CustomActionApi<AdminRulesSurface>["showLeaf"],
@@ -1868,29 +1958,33 @@ function deleteCouponOutcome(
 	if (result.ok) {
 		return showList(undefined, {
 			variant: "default",
-			title: "Coupon deleted",
-			description: `"${code}" was removed. In-flight carts recompute without it; orders already placed keep their snapshotted discount.`,
+			title: t("Coupon deleted"),
+			description: t(
+				'"{code}" was removed. In-flight carts recompute without it; orders already placed keep their snapshotted discount.',
+				{ code: code },
+			),
 		});
 	}
 	if (result.reason === "not_found") {
 		return showList(undefined, {
 			variant: "default",
-			title: "Already deleted",
-			description: "This coupon was already removed.",
+			title: t("Already deleted"),
+			description: t("This coupon was already removed."),
 		});
 	}
 	if (result.reason === "in_use") {
 		return showLeaf([code], {
 			variant: "error",
-			title: "Coupon not deleted",
-			description:
+			title: t("Coupon not deleted"),
+			description: t(
 				"This coupon has been redeemed — deletion is blocked to preserve the redemption audit trail. To retire it, set its expiry to a past date instead.",
+			),
 		});
 	}
 	return showLeaf([code], {
 		variant: "error",
-		title: "Coupon not deleted",
-		description: "The coupon could not be deleted — retry in a moment.",
+		title: t("Coupon not deleted"),
+		description: t("The coupon could not be deleted — retry in a moment."),
 	});
 }
 

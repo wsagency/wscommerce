@@ -44,29 +44,10 @@
  *    and is strictly better than the old pass-through that put a non-UTC offset
  *    on screen for X-13 to flag.
  *
- * LOCALIZATION (G6) — READ THE CLAIM NARROWLY. THE CONSOLE IS NOT LOCALIZED.
- * {@link DATE_LOCALE} is pinned to `en-GB` and nothing threads a viewer locale
- * to it; every operator sees `8 Jul 2026, 10:30 UTC` regardless of their own.
- * What this module delivers is SINGLE-POINT LOCALIZABILITY: because every
- * string comes from `Intl.DateTimeFormat` rather than hand-assembled month
- * names or a concatenated `(UTC)`, the day when a real locale IS threaded
- * through, one constant moves and the numerals, month, separators, ordering AND
- * the zone label all follow. A hard-coded suffix would have had to be found and
- * translated in seven label strings across three screens instead.
- *
- * THE SPEC'S FORMAT IS A CLAIM ABOUT `en-GB`, NOT ABOUT ICU. Probed on the
- * option bag below, a trailing literal `UTC` is NOT universal:
- *
- *    en-GB  `8 Jul 2026, 10:30 UTC`          the pinned rendering
- *    el-GR  `8 Ιουλ 2026, 10:30 (Συντονισμένη Παγκόσμια Ώρα)`   spelled out
- *    fa-IR  `۱۷ تیر ۱۴۰۵، ۱۰:۳۰ (UTC)`        parenthesised
- *    zh-TW  `2026年7月8日 10:30 [UTC]`          bracketed
- *    vi-VN  `10:30 UTC 8 thg 7, 2026`         time run FIRST
- *
- * So `8 Jul 2026, 10:30 UTC` holds exactly as long as the locale stays pinned.
- * Whoever threads a real locale must revisit the acceptance criterion itself —
- * the right reading of it is "the zone is stated in the value", which all five
- * satisfy, not "the string ends in the characters U-T-C", which three do not.
+ * LOCALIZATION. The optional viewer locale renders English with `en-GB` and
+ * Croatian with `hr-HR`. English remains the default for existing consumers.
+ * Both languages keep the same UTC instant and minute precision; Intl supplies
+ * translated month names, separators and the zone label.
  *
  * BIDI — what is NOT delivered. This module does not wrap its output in
  * `U+2068 FSI` / `U+2069 PDI`. ICU bidi-balances WITHIN the string it returns,
@@ -82,10 +63,10 @@
  * IO-FREE — pure `Intl` + string work, safe inside the workerd sandbox (G7).
  */
 
-/** THE single point the console's date rendering is localizable at — pinned
- *  today, and the one constant a future locale-aware console has to thread.
- *  `en-GB` is chosen for its day-first, spelled-month SHAPE (`8 Jul 2026`,
- *  which cannot be misread the way `7/8/2026` can), not for its country. */
+import { adminLocaleTag, normalizeAdminLocale } from "./locale.js";
+
+/** The English default keeps the original day-first, spelled-month shape.
+ * Croatian display selects `hr-HR` without changing the stored date or zone. */
 export const DATE_LOCALE = "en-GB";
 
 /** One whole day in milliseconds. Absorbed from the two private copies
@@ -138,9 +119,16 @@ const DAY_FORMAT = new Intl.DateTimeFormat(DATE_LOCALE, {
  * the one path in the console that can still put an ISO-shaped string on
  * screen; the suites assert against it rather than assuming it away.
  */
-export function formatTimestamp(iso: string): string {
+export function formatTimestamp(iso: string, locale: unknown = "en"): string {
 	const at = new Date(iso);
-	return Number.isNaN(at.getTime()) ? iso : TIMESTAMP_FORMAT.format(at);
+	if (Number.isNaN(at.getTime())) return iso;
+	return normalizeAdminLocale(locale) === "en"
+		? TIMESTAMP_FORMAT.format(at)
+		: new Intl.DateTimeFormat(adminLocaleTag(locale, "date"), {
+				...UTC_ONLY,
+				...DATE_PARTS,
+				...TIME_PARTS,
+			}).format(at);
 }
 
 /**
@@ -158,14 +146,20 @@ export function formatTimestamp(iso: string): string {
  * of stating "placed" twice in two formats: the H1 and the identity strip now
  * say the same words, the strip simply says more of them.
  */
-export function formatDate(iso: string): string {
+export function formatDate(iso: string, locale: unknown = "en"): string {
 	const at = new Date(iso);
 	// CAPPED AT 10 CHARACTERS, unlike `formatTimestamp`'s pass-through, and the
 	// difference is the surface: this one feeds the order detail's H1, the
 	// largest type on the page, where unbounded unrecognised text would be a
 	// worse failure than a stub. 10 is the width of the `YYYY-MM-DD` this would
 	// have emitted for a real-but-unparseable wire value.
-	return Number.isNaN(at.getTime()) ? iso.slice(0, 10) : DATE_FORMAT.format(at);
+	if (Number.isNaN(at.getTime())) return iso.slice(0, 10);
+	return normalizeAdminLocale(locale) === "en"
+		? DATE_FORMAT.format(at)
+		: new Intl.DateTimeFormat(adminLocaleTag(locale, "date"), {
+				...UTC_ONLY,
+				...DATE_PARTS,
+			}).format(at);
 }
 
 /**
@@ -178,10 +172,17 @@ export function formatDate(iso: string): string {
  * anything is rendered, and a helper that accepted both would invite a caller
  * to render a time of day on a screen that presents none.
  */
-export function formatDay(day: string, withYear: boolean): string {
+export function formatDay(day: string, withYear: boolean, locale: unknown = "en"): string {
 	const at = new Date(`${day}T00:00:00.000Z`);
 	if (Number.isNaN(at.getTime())) return day;
-	return withYear ? DATE_FORMAT.format(at) : DAY_FORMAT.format(at);
+	if (normalizeAdminLocale(locale) === "en")
+		return withYear ? DATE_FORMAT.format(at) : DAY_FORMAT.format(at);
+	return new Intl.DateTimeFormat(adminLocaleTag(locale, "date"), {
+		...UTC_ONLY,
+		day: "numeric",
+		month: "short",
+		...(withYear ? { year: "numeric" } : {}),
+	}).format(at);
 }
 
 /** The `YYYY-MM-DD` (UTC) a moment falls on. */

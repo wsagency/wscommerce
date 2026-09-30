@@ -15,6 +15,7 @@
 import { ACCOUNT_ORDERS_ROUTE, type AccountOrdersResult } from "@otta-sh/plugin";
 import { getPublicPluginApiRouteHandler } from "emdash/plugin-utils";
 import Notice from "../../../components/Notice.astro";
+import { itemCount } from "../../../lib/messages.js";
 import Base from "../../../layouts/Base.astro";
 import {
 	ACCOUNT_NO_STORE,
@@ -24,6 +25,9 @@ import {
 } from "../../../lib/account.js";
 import { cartErrorMessage } from "../../../lib/error-messages.js";
 import { dispatchOttaRoute, isBusyResult, markBusy } from "../../../lib/otta-api.js";
+import { storefrontPresentation } from "../../../lib/messages.js";
+
+const { locale, t } = storefrontPresentation(Astro);
 
 Astro.response.headers.set("Cache-Control", ACCOUNT_NO_STORE);
 
@@ -50,29 +54,28 @@ const rows =
 	orders?.map((order) => ({
 		id: order.id,
 		href: `/account/orders/${encodeURIComponent(order.id)}`,
-		state: orderStateLabel(order.state),
+		state: orderStateLabel(order.state, locale),
 		items: order.lines.reduce((sum, line) => sum + line.quantity, 0),
-		total: orderMoney(order.totals.totalCents, order.totals.currency),
+		total: orderMoney(order.totals.totalCents, order.totals.currency, locale),
 	})) ?? [];
 ---
 
-<Base title="Your orders">
+<Base title={t("Your orders")}>
 	<div class="head-row">
-		<h1 class="title">Your orders</h1>
+		<h1 class="title">{t("Your orders")}</h1>
 		<form method="POST" action="/account/logout">
-			<button type="submit" class="u-btn u-btn-ghost">Sign out</button>
+			<button type="submit" class="u-btn u-btn-ghost">{t("Sign out")}</button>
 		</form>
 	</div>
 
 	{
 		orders === null ? (
 			<div class="notice-slot" role="alert">
-				<Notice>{cartErrorMessage(busy ? "BUSY" : "SERVICE_UNAVAILABLE")}</Notice>
+				<Notice>{cartErrorMessage(busy ? "BUSY" : "SERVICE_UNAVAILABLE", locale)}</Notice>
 			</div>
 		) : rows.length === 0 ? (
 			<p class="empty">
-				No orders yet. Orders you place with this email address — including as a guest — appear
-				here. <a href="/products">Browse products</a>
+				{t("No orders yet. Orders you place with this email address — including as a guest — appear here.")} <a href="/products">{t("Browse products")}</a>
 			</p>
 		) : (
 			<ul class="orders">
@@ -82,7 +85,7 @@ const rows =
 							{row.id}
 						</a>
 						<span class="state">{row.state}</span>
-						<span class="items">{row.items === 1 ? "1 item" : `${row.items} items`}</span>
+						<span class="items">{itemCount(row.items, locale)}</span>
 						<span class="total u-mono">{row.total}</span>
 					</li>
 				))}

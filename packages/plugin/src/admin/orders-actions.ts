@@ -1,3 +1,4 @@
+import { englishTranslate, type PluginTranslate } from "./localization.js";
 /**
  * The Orders WRITE path, as structured actions (ADR-0015 Decision 2).
  *
@@ -169,17 +170,20 @@ export type OrdersActionPayload = Readonly<Record<string, string>>;
 type OrdersAction = (
 	client: AdminOrdersSurface,
 	payload: OrdersActionPayload,
+	t: PluginTranslate,
 ) => Promise<OrdersActionResult>;
 
 /**
  * DA-3b: a payload that fails to decode gets an `error` notice, never a silent
  * success and never a redirect with no explanation.
  */
-const UNREADABLE: Notice = {
-	variant: "error",
-	title: "That action could not be read",
-	description: "Nothing was changed. Reload the order and try again.",
-};
+function unreadableNotice(t: PluginTranslate): Notice {
+	return {
+		variant: "error",
+		title: t("That action could not be read"),
+		description: t("Nothing was changed. Reload the order and try again."),
+	};
+}
 
 /**
  * A MISSING WATERMARK IS AN UNREADABLE PAYLOAD, NOT A REASON TO SKIP DA-3a.
@@ -195,7 +199,7 @@ const UNREADABLE: Notice = {
  * not a state, and no comparison against it can be meaningful.
  *
  * THE RULE IS ABSOLUTE ON THIS SCREEN, and that is checkable. Every site holding a
- * watermark answers an absent one with {@link UNREADABLE} and NO re-read: the ten
+ * watermark answers an absent one with {@link unreadableNotice} and NO re-read: the ten
  * transitions and {@link cancelOrderAction} through this helper, and
  * {@link refundOrderAction} through {@link parseCents} — the refund watermark is a
  * MINOR-UNITS LEDGER TOTAL rather than a state name, so it cannot route through
@@ -248,25 +252,29 @@ const applied = (notice: Notice | null): OrdersActionResult => ({ ok: true, noti
  * is nothing to hand back.
  */
 function transitionAction(toState: string): OrdersAction {
-	return async (client, payload) => {
+	return async (client, payload, t) => {
 		const orderId = readString(payload["orderId"]);
-		if (orderId === undefined) return applied(UNREADABLE);
+		if (orderId === undefined) return applied(unreadableNotice(t));
 		const observedState = readWatermark(payload["state"]);
-		if (observedState === undefined) return applied(UNREADABLE);
+		if (observedState === undefined) return applied(unreadableNotice(t));
 		const live = await client.getOrder(orderId).catch(() => null);
 		if (live === null) {
 			return applied({
 				variant: "error",
-				title: "Nothing was changed",
-				description:
+				title: t("Nothing was changed"),
+				description: t(
 					"This order could not be re-checked before the status change, so nothing was applied. Reload and try again.",
+				),
 			});
 		}
 		if (live.order.state !== observedState) {
 			return applied({
 				variant: "error",
-				title: "The order changed — nothing was applied",
-				description: `It was ${observedState} when you started and is now ${live.order.state}. Check the order below before changing its status.`,
+				title: t("The order changed — nothing was applied"),
+				description: t(
+					"It was {observedState} when you started and is now {state}. Check the order below before changing its status.",
+					{ observedState: observedState, state: live.order.state },
+				),
 			});
 		}
 		const key = `admin-transition:${orderId}:${toState}`;
@@ -274,9 +282,10 @@ function transitionAction(toState: string): OrdersAction {
 		if (!result.ok) {
 			return applied({
 				variant: "error",
-				title: "Status change failed",
-				description:
+				title: t("Status change failed"),
+				description: t(
 					"That status change could not be applied — check the order state, then retry in a moment.",
+				),
 			});
 		}
 		if (!result.transitioned) {
@@ -284,8 +293,8 @@ function transitionAction(toState: string): OrdersAction {
 			// Not a failure: surface a non-error notice rather than a silent success.
 			return applied({
 				variant: "default",
-				title: "No change",
-				description: "The order is already in that state.",
+				title: t("No change"),
+				description: t("The order is already in that state."),
 			});
 		}
 		return applied(null);
@@ -294,9 +303,9 @@ function transitionAction(toState: string): OrdersAction {
 
 // -- notes --------------------------------------------------------------------
 
-const addNoteAction: OrdersAction = async (client, payload) => {
+const addNoteAction: OrdersAction = async (client, payload, t) => {
 	const orderId = readString(payload["orderId"]);
-	if (orderId === undefined) return applied(UNREADABLE);
+	if (orderId === undefined) return applied(unreadableNotice(t));
 	const author = (readString(payload["author"]) ?? "").trim();
 	const body = (readString(payload["body"]) ?? "").trim();
 	// Local guard: a blank note never leaves the plugin (the domain rejects it
@@ -304,8 +313,8 @@ const addNoteAction: OrdersAction = async (client, payload) => {
 	if (author.length === 0 || body.length === 0) {
 		return applied({
 			variant: "error",
-			title: "Note not added",
-			description: "Enter both an author and a note body.",
+			title: t("Note not added"),
+			description: t("Enter both an author and a note body."),
 		});
 	}
 	// Content-derived key (F-2a): a double-submit of the same note is a no-op,
@@ -315,15 +324,15 @@ const addNoteAction: OrdersAction = async (client, payload) => {
 	if (!result.ok) {
 		return applied({
 			variant: "error",
-			title: "Note not added",
-			description: "That note could not be saved — check the order, then retry in a moment.",
+			title: t("Note not added"),
+			description: t("That note could not be saved — check the order, then retry in a moment."),
 		});
 	}
 	if (!result.appended) {
 		return applied({
 			variant: "default",
-			title: "Already added",
-			description: "That exact note is already on this order.",
+			title: t("Already added"),
+			description: t("That exact note is already on this order."),
 		});
 	}
 	return applied(null);
@@ -331,9 +340,9 @@ const addNoteAction: OrdersAction = async (client, payload) => {
 
 // -- reconciliation -----------------------------------------------------------
 
-const resolveReconciliationAction: OrdersAction = async (client, payload) => {
+const resolveReconciliationAction: OrdersAction = async (client, payload, t) => {
 	const orderId = readString(payload["orderId"]);
-	if (orderId === undefined) return applied(UNREADABLE);
+	if (orderId === undefined) return applied(unreadableNotice(t));
 	// The flag AS DISPLAYED when the form rendered — the compare-and-clear key.
 	const expectedFlag = readString(payload["expectedFlag"]) ?? "";
 	const outcome = readString(payload["outcome"]) ?? "";
@@ -342,8 +351,8 @@ const resolveReconciliationAction: OrdersAction = async (client, payload) => {
 	if (reason.length === 0 || resolvedBy.length === 0) {
 		return applied({
 			variant: "error",
-			title: "Not resolved",
-			description: "Enter both a reason and who is resolving it.",
+			title: t("Not resolved"),
+			description: t("Enter both a reason and who is resolving it."),
 		});
 	}
 	const key = `admin-resolve-reconciliation:${orderId}`;
@@ -359,45 +368,47 @@ const resolveReconciliationAction: OrdersAction = async (client, payload) => {
 			result.reason === "RECONCILIATION_FLAG_CHANGED"
 				? {
 						variant: "error",
-						title: "The reconciliation state changed — reload",
-						description:
+						title: t("The reconciliation state changed — reload"),
+						description: t(
 							"A new anomaly was flagged on this order after you opened it. Nothing was cleared. Review the flag shown below and resolve again.",
+						),
 					}
 				: {
 						variant: "error",
-						title: "Not resolved",
-						description:
+						title: t("Not resolved"),
+						description: t(
 							"That reconciliation could not be resolved — check the order, then retry in a moment.",
+						),
 					},
 		);
 	}
 	if (!result.resolved) {
 		return applied({
 			variant: "default",
-			title: "Already resolved",
-			description: "This order's reconciliation flag was already cleared.",
+			title: t("Already resolved"),
+			description: t("This order's reconciliation flag was already cleared."),
 		});
 	}
 	return applied({
 		variant: "default",
-		title: "Reconciliation resolved",
-		description: "The flag is cleared and your disposition was recorded.",
+		title: t("Reconciliation resolved"),
+		description: t("The flag is cleared and your disposition was recorded."),
 	});
 };
 
 // -- fulfilment ---------------------------------------------------------------
 
-const recordFulfillmentAction: OrdersAction = async (client, payload) => {
+const recordFulfillmentAction: OrdersAction = async (client, payload, t) => {
 	const orderId = readString(payload["orderId"]);
-	if (orderId === undefined) return applied(UNREADABLE);
+	if (orderId === undefined) return applied(unreadableNotice(t));
 	const carrier = (readString(payload["carrier"]) ?? "").trim();
 	const trackingNumber = (readString(payload["trackingNumber"]) ?? "").trim();
 	const recordedBy = (readString(payload["recordedBy"]) ?? "").trim();
 	if (carrier.length === 0 || trackingNumber.length === 0 || recordedBy.length === 0) {
 		return applied({
 			variant: "error",
-			title: "Not shipped",
-			description: "Enter the carrier, tracking number, and who is recording it.",
+			title: t("Not shipped"),
+			description: t("Enter the carrier, tracking number, and who is recording it."),
 		});
 	}
 	const trackingUrl = (readString(payload["trackingUrl"]) ?? "").trim();
@@ -407,8 +418,8 @@ const recordFulfillmentAction: OrdersAction = async (client, payload) => {
 	if (trackingUrl.length > 0 && !/^https?:\/\/\S+$/i.test(trackingUrl)) {
 		return applied({
 			variant: "error",
-			title: "Not shipped",
-			description: "The tracking URL must be a web link starting with http:// or https://.",
+			title: t("Not shipped"),
+			description: t("The tracking URL must be a web link starting with http:// or https://."),
 		});
 	}
 	// A date field yields YYYY-MM-DD; the service wants a full ISO datetime.
@@ -430,29 +441,31 @@ const recordFulfillmentAction: OrdersAction = async (client, payload) => {
 			result.reason === "NOT_FULFILLABLE"
 				? {
 						variant: "error",
-						title: "Order can’t be shipped right now",
-						description:
+						title: t("Order can’t be shipped right now"),
+						description: t(
 							"This order is no longer “processing” — it may have shipped or been cancelled. Reload and check its status.",
+						),
 					}
 				: {
 						variant: "error",
-						title: "Not shipped",
-						description:
+						title: t("Not shipped"),
+						description: t(
 							"That fulfilment could not be recorded — check the order, then retry in a moment.",
+						),
 					},
 		);
 	}
 	if (!result.recorded) {
 		return applied({
 			variant: "default",
-			title: "Already shipped",
-			description: "This order was already shipped; its recorded tracking is shown above.",
+			title: t("Already shipped"),
+			description: t("This order was already shipped; its recorded tracking is shown above."),
 		});
 	}
 	return applied({
 		variant: "default",
-		title: "Order shipped",
-		description: "Fulfilment recorded — the buyer has been emailed their tracking.",
+		title: t("Order shipped"),
+		description: t("Fulfilment recorded — the buyer has been emailed their tracking."),
 	});
 };
 
@@ -474,9 +487,9 @@ const recordFulfillmentAction: OrdersAction = async (client, payload) => {
  * (see {@link OrdersActionResult}). What each refusal owes them is a notice that
  * names WHAT happened and WHY, which is what every branch below returns.
  */
-const cancelOrderAction: OrdersAction = async (client, payload) => {
+const cancelOrderAction: OrdersAction = async (client, payload, t) => {
 	const orderId = readString(payload["orderId"]);
-	if (orderId === undefined) return applied(UNREADABLE);
+	if (orderId === undefined) return applied(unreadableNotice(t));
 	const reason = readString(payload["reason"]) ?? "";
 	const detail = (readString(payload["detail"]) ?? "").trim();
 	const cancelledBy = (readString(payload["cancelledBy"]) ?? "").trim();
@@ -484,23 +497,27 @@ const cancelOrderAction: OrdersAction = async (client, payload) => {
 	// Every decoded value is UNTRUSTED operator-round-tripped input (B-1), so the
 	// closed set and the watermark's PRESENCE are both re-checked here.
 	if (!CANCEL_REASON_LABELS.has(reason) || observedState === undefined) {
-		return applied(UNREADABLE);
+		return applied(unreadableNotice(t));
 	}
 	// DA-3a: re-read before writing.
 	const live = await client.getOrder(orderId).catch(() => null);
 	if (live === null) {
 		return applied({
 			variant: "error",
-			title: "Nothing was cancelled",
-			description:
+			title: t("Nothing was cancelled"),
+			description: t(
 				"This order could not be re-checked before cancelling, so nothing was applied. Reload and try again.",
+			),
 		});
 	}
 	if (live.order.state !== observedState) {
 		return applied({
 			variant: "error",
-			title: "The order changed — nothing was cancelled",
-			description: `It was ${observedState} when you started and is now ${live.order.state} — someone else moved it since you started. Check the order below, then cancel again if you still want to.`,
+			title: t("The order changed — nothing was cancelled"),
+			description: t(
+				"It was {observedState} when you started and is now {state} — someone else moved it since you started. Check the order below, then cancel again if you still want to.",
+				{ observedState: observedState, state: live.order.state },
+			),
 		});
 	}
 	const key = `admin-cancel:${orderId}`;
@@ -521,29 +538,31 @@ const cancelOrderAction: OrdersAction = async (client, payload) => {
 			result.reason === "NOT_CANCELLABLE"
 				? {
 						variant: "error",
-						title: "Order can’t be cancelled right now",
-						description:
+						title: t("Order can’t be cancelled right now"),
+						description: t(
 							"This order can no longer be cancelled — it may have shipped, or been cancelled without a reason on file. Reload and check its status.",
+						),
 					}
 				: {
 						variant: "error",
-						title: "Not cancelled",
-						description:
+						title: t("Not cancelled"),
+						description: t(
 							"That cancellation could not be recorded — check the order, then retry in a moment.",
+						),
 					},
 		);
 	}
 	if (!result.cancelled) {
 		return applied({
 			variant: "default",
-			title: "Already cancelled",
-			description: "This order was already cancelled; its recorded reason is shown above.",
+			title: t("Already cancelled"),
+			description: t("This order was already cancelled; its recorded reason is shown above."),
 		});
 	}
 	return applied({
 		variant: "default",
-		title: "Order cancelled",
-		description: "The cancellation was recorded and the buyer has been emailed.",
+		title: t("Order cancelled"),
+		description: t("The cancellation was recorded and the buyer has been emailed."),
 	});
 };
 
@@ -561,15 +580,22 @@ const cancelOrderAction: OrdersAction = async (client, payload) => {
  * 76 characters it is nowhere near the 240 budget — so this was never length-driven.
  */
 function staleLedgerNotice(
+	t: PluginTranslate,
 	submittedAmountCents: number,
 	live: RefundsSummaryWire,
 	cur: string,
 ): Notice {
 	return {
 		variant: "error",
-		title: "The refund ledger changed — nothing was refunded",
+		title: t("The refund ledger changed — nothing was refunded"),
 		description: fit(
-			`${formatTotal(submittedAmountCents, cur)} was staged and was not recorded — someone else refunded this order since you started. ${formatTotal(live.remainingCents, cur)} now remains refundable; re-enter an amount below to try again.`,
+			t(
+				"{amount} was staged and was not recorded — someone else refunded this order since you started. {remaining} now remains refundable; re-enter an amount below to try again.",
+				{
+					amount: formatTotal(submittedAmountCents, cur, t.locale),
+					remaining: formatTotal(live.remainingCents, cur, t.locale),
+				},
+			),
 			BANNER_BUDGET,
 		),
 	};
@@ -623,9 +649,9 @@ function staleLedgerNotice(
  * Attribution is therefore enforced by the surface alone — recorded, with its known
  * gap, in the same amendment.
  */
-const refundOrderAction: OrdersAction = async (client, payload) => {
+const refundOrderAction: OrdersAction = async (client, payload, t) => {
 	const orderId = readString(payload["orderId"]);
-	if (orderId === undefined) return applied(UNREADABLE);
+	if (orderId === undefined) return applied(unreadableNotice(t));
 	const amountCents = parseCents(payload["amountCents"]);
 	const observedSoFar = parseCents(payload["refundedSoFarCents"]);
 	const currency = (readString(payload["currency"]) ?? "").trim();
@@ -638,16 +664,17 @@ const refundOrderAction: OrdersAction = async (client, payload) => {
 	// than one that points at a field. M-3/B-2 rides here too: `amountCents` must be
 	// a plain integer minor-units string, so no float is ever laundered into cents.
 	if (amountCents === null || amountCents <= 0 || observedSoFar === null || currency.length === 0) {
-		return applied(UNREADABLE);
+		return applied(unreadableNotice(t));
 	}
 	// DA-3a: re-read, then compare against the watermark the operator SAW.
 	const live = await client.getRefunds(orderId).catch(() => null);
 	if (live === null) {
 		return applied({
 			variant: "error",
-			title: "Nothing was refunded",
-			description:
+			title: t("Nothing was refunded"),
+			description: t(
 				"The refund ledger could not be re-checked, so nothing was applied. Reload and try again.",
+			),
 		});
 	}
 	const liveCur = live.currency.length > 0 ? live.currency : currency;
@@ -655,7 +682,7 @@ const refundOrderAction: OrdersAction = async (client, payload) => {
 		// The genuinely CONCURRENT case: the ledger moved between the confirm being
 		// drawn and this click. This is the ONLY window now checked server-side, and
 		// the surface's own pre-dialog validation cannot see it.
-		return applied(staleLedgerNotice(amountCents, live, liveCur));
+		return applied(staleLedgerNotice(t, amountCents, live, liveCur));
 	}
 	// The observed watermark is the third key component (F-2a) — NOT a nonce.
 	const baseKey = `admin-refund:${orderId}:${amountCents}:${observedSoFar}`;
@@ -678,37 +705,40 @@ const refundOrderAction: OrdersAction = async (client, payload) => {
 	// The write was ATTEMPTED past this point, so every branch below is an outcome
 	// to read rather than an input to correct — and on `GATEWAY_UNVERIFIED` the
 	// outcome is UNKNOWN, which is why its copy says not to retry.
-	if (!result.ok) return applied(refundFailureNotice(result.reason));
+	if (!result.ok) return applied(refundFailureNotice(t, result.reason));
 	if (result.duplicate) {
 		// A benign replay: the SAME amount against the SAME watermark, i.e. a
 		// double-click. A different amount would have produced a different key.
 		return applied({
 			variant: "default",
-			title: "Already refunded",
-			description:
+			title: t("Already refunded"),
+			description: t(
 				"This refund was already recorded (a duplicate submission); the ledger above is unchanged.",
+			),
 		});
 	}
 	if (result.fullyRefunded) {
 		return applied({
 			variant: "default",
-			title: "Refund complete",
-			description:
+			title: t("Refund complete"),
+			description: t(
 				"The refund was recorded and the order is now fully refunded — the buyer has been emailed.",
+			),
 		});
 	}
 	return applied({
 		variant: "default",
-		title: "Refund recorded",
-		description:
+		title: t("Refund recorded"),
+		description: t(
 			"The refund was recorded. The order stays in its current status; Money → Refunds shows what remains.",
+		),
 	});
 };
 
 /** GENERIC, em-dash-correct notices for a refund failure — keyed off the service's
  *  typed reason, NEVER the raw status/URL. The ambiguous-timeout case is explicit:
  *  do NOT retry, re-check the provider first (ADR-0008 error taxonomy). */
-function refundFailureNotice(reason: string | undefined): Notice {
+function refundFailureNotice(t: PluginTranslate, reason: string | undefined): Notice {
 	switch (reason) {
 		case "REFUND_EXCEEDS_TOTAL":
 		case "REFUND_EXCEEDS_CAPTURED":
@@ -718,82 +748,90 @@ function refundFailureNotice(reason: string | undefined): Notice {
 				// service saying no to the amount that check let through, and an
 				// operator reading two titles for one refusal has to work out whether
 				// they hit two different limits.
-				title: REFUND_TOO_HIGH_TITLE,
-				description:
+				title: t(REFUND_TOO_HIGH_TITLE),
+				description: t(
 					"That is more than the remaining refundable amount for this order. Reload to see the current remaining total.",
+				),
 			};
 		case "PROVIDER_ALREADY_REFUNDED":
 			return {
 				variant: "error",
-				title: "Provider already refunded",
-				description:
+				title: t("Provider already refunded"),
+				description: t(
 					"Your payment provider shows this order already refunded (possibly from its dashboard). Nothing was issued — reconcile the provider before trying again.",
+				),
 			};
 		case "GATEWAY_RETRYABLE":
 			return {
 				variant: "error",
-				title: "Temporary problem",
-				description:
+				title: t("Temporary problem"),
+				description: t(
 					"The payment provider could not be reached. Nothing was refunded — try again in a moment.",
+				),
 			};
 		case "GATEWAY_TERMINAL":
 			return {
 				variant: "error",
-				title: "Refund rejected",
-				description:
+				title: t("Refund rejected"),
+				description: t(
 					"The payment provider rejected this refund. Check the order in your provider dashboard.",
+				),
 			};
 		case "GATEWAY_UNVERIFIED":
 			return {
 				variant: "error",
-				title: "Refund status unknown",
-				description:
+				title: t("Refund status unknown"),
+				description: t(
 					"The refund request timed out and its outcome is unknown. Do NOT retry — check your provider dashboard first, then reconcile.",
+				),
 			};
 		case "GATEWAY_PENDING":
 			return {
 				variant: "error",
-				title: "Refund awaiting completion",
-				description:
+				title: t("Refund awaiting completion"),
+				description: t(
 					"The payment provider accepted the refund, but it is pending or requires customer action. Check your provider dashboard. Its amount remains reserved; do not issue it again.",
+				),
 			};
 		case "IDEMPOTENCY_KEY_REUSED":
 			return {
 				variant: "error",
-				title: "Not refunded",
-				description:
+				title: t("Not refunded"),
+				description: t(
 					"This request's key was already used for a different refund, so nothing was refunded. Reload to see the current ledger, then try again.",
+				),
 			};
 		case "CURRENCY_MISMATCH":
 			return {
 				variant: "error",
-				title: "Not refunded",
-				description: "The refund currency does not match the order. Reload and try again.",
+				title: t("Not refunded"),
+				description: t("The refund currency does not match the order. Reload and try again."),
 			};
 		default:
 			return {
 				variant: "error",
-				title: "Not refunded",
-				description:
+				title: t("Not refunded"),
+				description: t(
 					"That refund could not be processed — check the order, then retry in a moment.",
+				),
 			};
 	}
 }
 
 // -- dispatch -----------------------------------------------------------------
 
-const acceptCODAction: OrdersAction = async (client, payload) => {
+const acceptCODAction: OrdersAction = async (client, payload, t) => {
 	const orderId = readString(payload["orderId"]);
 	const state = readWatermark(payload["state"]);
 	const acceptedBy = readString(payload["acceptedBy"])?.trim();
 	if (!orderId || !state || !acceptedBy || client.acceptCODOrder === undefined)
-		return applied(UNREADABLE);
+		return applied(unreadableNotice(t));
 	const live = await client.getOrder(orderId);
 	if (live === null || live.order.state !== state)
 		return applied({
 			variant: "error",
-			title: "Order changed — reload",
-			description: "Review the current order before accepting it for dispatch.",
+			title: t("Order changed — reload"),
+			description: t("Review the current order before accepting it for dispatch."),
 		});
 	const result = await client.acceptCODOrder(
 		orderId,
@@ -804,19 +842,20 @@ const acceptCODAction: OrdersAction = async (client, payload) => {
 		result.ok
 			? {
 					variant: "default",
-					title: result.applied ? "COD accepted for dispatch" : "COD already accepted",
-					description: "Stock is committed. Payment remains unpaid until a receipt is recorded.",
+					title: result.applied ? t("COD accepted for dispatch") : t("COD already accepted"),
+					description: t("Stock is committed. Payment remains unpaid until a receipt is recorded."),
 				}
 			: {
 					variant: "error",
-					title: "COD not accepted",
-					description:
+					title: t("COD not accepted"),
+					description: t(
 						"Only a pending physical COD order within its deadline can be accepted. Reload and review its status.",
+					),
 				},
 	);
 };
 
-const confirmOfflineAction: OrdersAction = async (client, payload) => {
+const confirmOfflineAction: OrdersAction = async (client, payload, t) => {
 	const orderId = readString(payload["orderId"]);
 	const state = readWatermark(payload["state"]);
 	const receiptRef = readString(payload["receiptRef"])?.trim();
@@ -835,16 +874,17 @@ const confirmOfflineAction: OrdersAction = async (client, payload) => {
 	)
 		return applied({
 			variant: "error",
-			title: "Receipt not recorded",
-			description:
+			title: t("Receipt not recorded"),
+			description: t(
 				"Enter a receipt reference (at most 100 characters), exact amount in minor units, currency, and recorder.",
+			),
 		});
 	const live = await client.getOrder(orderId);
 	if (live === null || live.order.state !== state)
 		return applied({
 			variant: "error",
-			title: "Order changed — reload",
-			description: "Review the current order and receipt before recording payment.",
+			title: t("Order changed — reload"),
+			description: t("Review the current order and receipt before recording payment."),
 		});
 	const result = await client.confirmOfflinePayment(
 		orderId,
@@ -855,19 +895,24 @@ const confirmOfflineAction: OrdersAction = async (client, payload) => {
 		result.ok
 			? {
 					variant: "default",
-					title: result.applied ? "Payment receipt recorded" : "Receipt already recorded",
-					description:
+					title: result.applied ? t("Payment receipt recorded") : t("Receipt already recorded"),
+					description: t(
 						"The frozen order amount is captured once. Fulfillment status is preserved for accepted COD.",
+					),
 				}
 			: {
 					variant: "error",
-					title: "Receipt not recorded",
+					title: t("Receipt not recorded"),
 					description:
 						result.reason === "AMOUNT_MISMATCH"
-							? "The receipt amount and currency must exactly match the frozen order total."
+							? t("The receipt amount and currency must exactly match the frozen order total.")
 							: result.reason === "RECEIPT_CONFLICT" || result.reason === "IDEMPOTENCY_KEY_REUSED"
-								? "That receipt or command key is already bound. Review the existing receipt before retrying."
-								: "The order is not payable automatically. Check its deadline/status and use manual reconciliation for a late or cancelled-order receipt.",
+								? t(
+										"That receipt or command key is already bound. Review the existing receipt before retrying.",
+									)
+								: t(
+										"The order is not payable automatically. Check its deadline/status and use manual reconciliation for a late or cancelled-order receipt.",
+									),
 				},
 	);
 };
@@ -924,8 +969,9 @@ export async function dispatchOrdersAction(
 	actionId: string,
 	payload: OrdersActionPayload,
 	client: AdminOrdersSurface,
+	t: PluginTranslate = englishTranslate,
 ): Promise<OrdersActionResult | undefined> {
 	const action = ORDERS_ACTIONS_BY_ID[actionId];
 	if (action === undefined) return undefined;
-	return await action(client, payload);
+	return await action(client, payload, t);
 }

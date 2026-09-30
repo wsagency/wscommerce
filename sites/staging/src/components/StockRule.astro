@@ -19,6 +19,7 @@
 import type { AvailabilityToken } from "@otta-sh/plugin";
 import type { HTMLAttributes } from "astro/types";
 import { restProps } from "../lib/rest-props.js";
+import { storefrontPresentation } from "../lib/messages.js";
 
 interface Props extends HTMLAttributes<"span"> {
 	/** The view model's own token. `null` — not purchasable at all — renders
@@ -29,10 +30,12 @@ interface Props extends HTMLAttributes<"span"> {
 	label?: string;
 }
 
+const { t } = storefrontPresentation(Astro);
+
 const { availability, label, class: className, ...rest } = Astro.props;
 
 const state = availability === "in_stock" ? "in" : "out";
-const text = label ?? (availability === "in_stock" ? "In stock" : "Sold out");
+const text = label ?? (availability === "in_stock" ? t("In stock") : t("Sold out"));
 ---
 
 {

@@ -25,6 +25,7 @@
  */
 import { ABSENT } from "./copy.js";
 import { cents, currency, type Cents, type Currency } from "./money.js";
+import { adminLocaleTag } from "./locale.js";
 
 export function formatMoney(amount: Cents, currencyCode: Currency, locale: string): string {
 	const format = new Intl.NumberFormat(locale, { style: "currency", currency: currencyCode });
@@ -93,12 +94,16 @@ export const MONEY_LOCALE = "en-US";
  * render. Absence that is genuinely a display state (a refund with no recorded
  * `createdAt`) is the CALLER's `??` and is visible where it happens.
  */
-export function formatAmount(minorUnits: number, currencyCode: string): string {
+export function formatAmount(
+	minorUnits: number,
+	currencyCode: string,
+	locale: unknown = "en",
+): string {
 	try {
 		const code = currency(currencyCode);
 		return minorUnits < 0
-			? `−${formatMoney(cents(Math.abs(minorUnits)), code, MONEY_LOCALE)}`
-			: formatMoney(cents(minorUnits), code, MONEY_LOCALE);
+			? `−${formatMoney(cents(Math.abs(minorUnits)), code, adminLocaleTag(locale))}`
+			: formatMoney(cents(minorUnits), code, adminLocaleTag(locale));
 	} catch {
 		return UNFORMATTABLE;
 	}
@@ -130,7 +135,8 @@ export function formatAmount(minorUnits: number, currencyCode: string): string {
 export function formatOptionalAmount(
 	minorUnits: number | null,
 	currencyCode: string | null,
+	locale: unknown = "en",
 ): string {
 	if (minorUnits === null || currencyCode === null) return UNFORMATTABLE;
-	return formatAmount(minorUnits, currencyCode);
+	return formatAmount(minorUnits, currencyCode, locale);
 }

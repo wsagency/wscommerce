@@ -5,7 +5,7 @@
  * that regress silently and are worth a build-breaking assertion.
  *
  * The layout's PROP AND SLOT CONTRACT is pinned here too. Every page in the
- * site renders through it, and the confirmation page's `no-referrer` policy
+ * site renders through it, and the confirmation page's `same-origin` policy
  * and bounded meta-refresh poll BOTH depend on the named `head` slot reaching
  * <head> — losing it degrades a security control to a comment.
  */
@@ -70,7 +70,7 @@ describe("Base layout — a dead content store costs the chrome, not the respons
 		// `settings.title` already takes rather than growing a second rule (and a
 		// second string) for the store's name.
 		expect(frontmatter).toMatch(/settings: \{ title\?: string; tagline\?: string \} = \{\}/);
-		expect(frontmatter).toContain('settings.title ?? "Otta"');
+		expect(frontmatter).toContain('demoSettings(settings, locale).title ?? "WSCommerce"');
 	});
 
 	test("the nav falls back to this theme's own routes, and ONLY on a thrown read", () => {
@@ -78,12 +78,14 @@ describe("Base layout — a dead content store costs the chrome, not the respons
 		// The routes it names are defined by this theme, so they resolve whatever
 		// the content store is doing — which is the whole justification for
 		// substituting them for an operator's menu.
-		expect(source).toContain("FALLBACK_MENU_ITEMS");
+		expect(source).toContain("fallbackMenuItems");
 		// The gate: a menu that comes back `null` is a store with no `primary`
 		// menu, which is a real answer and the operator's. Only the CATCH arm
 		// substitutes. `?? []` in the try arm is what keeps those two apart.
-		expect(frontmatter).toMatch(/navItems = \(await getMenu\("primary"\)\)\?\.items \?\? \[\]/);
-		expect(frontmatter).toMatch(/catch[\s\S]*?navItems = FALLBACK_MENU_ITEMS/);
+		expect(frontmatter).toMatch(
+			/navItems = demoMenu\(\(await getMenu\("primary"\)\)\?\.items \?\? \[\], locale\)/,
+		);
+		expect(frontmatter).toMatch(/catch[\s\S]*?navItems = fallbackMenuItems\(locale\)/);
 	});
 
 	test("both failures are logged — a silent fallback is an outage nobody sees", () => {
@@ -120,7 +122,7 @@ describe("Base layout — the theme foundation", () => {
 	});
 
 	test("the footer credits both halves and sets the currency in the data face", () => {
-		expect(markup).toContain("Otta — content by EmDash, commerce by Otta.");
+		expect(markup).toContain('t("WSCommerce — content by EmDash, commerce by WSCommerce.")');
 		const footer = markup.slice(markup.indexOf("<footer"));
 		expect(footer).toMatch(/class="[^"]*mono/);
 	});

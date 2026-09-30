@@ -24,6 +24,8 @@
  * browser.
  */
 import { ABSENT } from "./copy.js";
+import { adminMessage } from "./admin-messages.js";
+import { formatAdminQuantity } from "./locale.js";
 
 /** The `On hand` cell for a row with no readable count. Also what the detail's
  *  `Stock on hand` shows when the sku carries no inventory record. */
@@ -59,11 +61,17 @@ export const LOW_STOCK_SUFFIX = "Low";
  * A missing `threshold` costs the `Low` band and nothing else: a count still
  * renders and `0` still reads `Out of stock`, neither of which needs one.
  */
-export function onHandCell(onHand: number | null | undefined, threshold: number | null): string {
+export function onHandCell(
+	onHand: number | null | undefined,
+	threshold: number | null,
+	locale: unknown = "en",
+): string {
 	if (onHand === undefined || onHand === null) return ON_HAND_UNKNOWN;
-	if (onHand <= 0) return `${onHand} · ${OUT_OF_STOCK_SUFFIX}`;
-	if (threshold !== null && onHand <= threshold) return `${onHand} · ${LOW_STOCK_SUFFIX}`;
-	return String(onHand);
+	if (onHand <= 0)
+		return `${formatAdminQuantity(onHand, locale)} · ${adminMessage(locale, "Out of stock")}`;
+	if (threshold !== null && onHand <= threshold)
+		return `${formatAdminQuantity(onHand, locale)} · ${adminMessage(locale, "Low")}`;
+	return formatAdminQuantity(onHand, locale);
 }
 
 /** The lifecycle facts `statusLabel` reads. A structural subset on purpose:
@@ -89,11 +97,11 @@ export interface ProductLifecycle {
  * there would be a lie — the service's catalog read filters commerce-incomplete
  * rows — so this mirrors that exact filter.
  */
-export function statusLabel(p: ProductLifecycle): string {
-	if (p.deletedAt !== null) return "deleted";
-	if (!p.active) return "inactive";
+export function statusLabel(p: ProductLifecycle, locale: unknown = "en"): string {
+	if (p.deletedAt !== null) return adminMessage(locale, "deleted");
+	if (!p.active) return adminMessage(locale, "inactive");
 	const sellable = p.sku !== null && p.priceCents !== null && p.currency !== null;
-	return sellable ? "active" : "active (not priced)";
+	return adminMessage(locale, sellable ? "active" : "active (not priced)");
 }
 
 /**
@@ -149,6 +157,6 @@ export function stockTone(
 
 /** Human label for the out-of-stock policy (read-only display). Only `"deny"`
  *  exists this slice; any other stored value renders verbatim (forward-safe). */
-export function inventoryPolicyLabel(policy: string): string {
-	return policy === "deny" ? "Deny (stop selling at zero stock)" : policy;
+export function inventoryPolicyLabel(policy: string, locale: unknown = "en"): string {
+	return policy === "deny" ? adminMessage(locale, "Deny (stop selling at zero stock)") : policy;
 }

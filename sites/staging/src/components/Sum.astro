@@ -28,6 +28,7 @@ import type { HTMLAttributes } from "astro/types";
 import { isUncalculated, sumRowText, uncalculatedFootnote, type SumRow } from "../lib/totals.js";
 import PriceTag from "./PriceTag.astro";
 import { restProps } from "../lib/rest-props.js";
+import { storefrontPresentation } from "../lib/messages.js";
 
 interface Props extends HTMLAttributes<"div"> {
 	/** Subtotal, discount, shipping, tax — in the order they should read. */
@@ -43,17 +44,19 @@ interface Props extends HTMLAttributes<"div"> {
 	footnote?: string | null;
 }
 
+const { locale, t } = storefrontPresentation(Astro);
+
 const {
 	rows,
 	total,
-	totalLabel = "Total",
+	totalLabel = t("Total"),
 	excludesUncalculated = false,
 	footnote,
 	class: className,
 	...rest
 } = Astro.props;
 
-const note = footnote !== undefined ? footnote : uncalculatedFootnote(rows, excludesUncalculated);
+const note = footnote !== undefined ? footnote : uncalculatedFootnote(rows, excludesUncalculated, locale);
 ---
 
 <div class:list={["sum", className]} {...restProps(rest)}>
@@ -62,7 +65,7 @@ const note = footnote !== undefined ? footnote : uncalculatedFootnote(rows, excl
 			<div class="row">
 				<span class="u-label label">{row.label}</span>
 				{isUncalculated(row.amount) ? (
-					<span class="u-mono uncalc">{sumRowText(row)}</span>
+					<span class="u-mono uncalc">{sumRowText(row, locale)}</span>
 				) : (
 					<PriceTag formatted={row.amount.label} size="sm" />
 				)}
@@ -73,7 +76,7 @@ const note = footnote !== undefined ? footnote : uncalculatedFootnote(rows, excl
 		<span class="u-label label">{totalLabel}</span>
 		{
 			isUncalculated(total) ? (
-				<span class="u-mono uncalc">{sumRowText({ label: totalLabel, amount: total })}</span>
+				<span class="u-mono uncalc">{sumRowText({ label: totalLabel, amount: total }, locale)}</span>
 			) : (
 				<PriceTag formatted={total.label} size="lg" />
 			)

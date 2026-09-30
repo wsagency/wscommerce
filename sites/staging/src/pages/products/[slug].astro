@@ -39,11 +39,15 @@ import Notice from "../../components/Notice.astro";
 import PriceTag from "../../components/PriceTag.astro";
 import QtyField from "../../components/QtyField.astro";
 import StockRule from "../../components/StockRule.astro";
+import { demoProduct } from "../../lib/demo-content.js";
 import Base from "../../layouts/Base.astro";
 import { cartErrorMessage } from "../../lib/error-messages.js";
 import { holdNote } from "../../lib/hold.js";
 import { toCmsProductContent, type ProductEntryData } from "../../lib/products.js";
 import { BUSY, dispatchOttaRoute, isBusyResult, markBusy } from "../../lib/otta-api.js";
+import { storefrontPresentation } from "../../lib/messages.js";
+
+const { locale, t } = storefrontPresentation(Astro);
 
 const { slug } = Astro.params;
 if (slug === undefined) return Astro.redirect("/products");
@@ -124,7 +128,7 @@ const result =
 		? await dispatchOttaRoute<PdpRouteResult>(
 				getPublicPluginApiRouteHandler(Astro.locals),
 				STOREFRONT_PRODUCT_ROUTE,
-				{ content, ...(Astro.url.searchParams.get("sku") === null ? {} : { sku: Astro.url.searchParams.get("sku") }) },
+				{ content, locale, ...(Astro.url.searchParams.get("sku") === null ? {} : { sku: Astro.url.searchParams.get("sku") }) },
 				Astro.url,
 			)
 		: null;
@@ -157,13 +161,15 @@ const inStock = product?.availability === "in_stock";
    they are not sold out — the page does not know. Only the explicit token
    dims the art and closes the buy path. */
 const soldOut = product?.availability === "out_of_stock";
+const displayContent = content === null ? null : demoProduct(content, locale);
+
 ---
 
 {/* An unpriced or degraded product carries no currency, and the footer
     then names none rather than guessing (§7). */}
 <Base
-	title={content?.title ?? (contentUnavailable ? "Product unavailable" : "Product not found")}
-	description={content?.description}
+	title={displayContent?.title ?? (contentUnavailable ? t("Product unavailable") : t("Product not found"))}
+	description={displayContent?.description}
 	currency={product?.price?.currency ?? null}
 >
 	{
@@ -187,17 +193,17 @@ const soldOut = product?.availability === "out_of_stock";
 				   had happened. The Notice carries the second sentence rather
 				   than repeating the first. */
 				<div class="empty">
-					<h1 class="title empty-title">This product is unavailable.</h1>
+					<h1 class="title empty-title">{t("This product is unavailable.")}</h1>
 					<div class="empty-notice">
-						<Notice>Try again in a moment.</Notice>
+						<Notice>{t("Try again in a moment.")}</Notice>
 					</div>
 					<a class="u-btn u-btn-ghost" href="/products">
-						Back to all products
+						{t("Back to all products")}
 					</a>
 				</div>
 			) : (
 				<div class="empty">
-					<h1 class="title empty-title">Product not found.</h1>
+					<h1 class="title empty-title">{t("Product not found.")}</h1>
 					<p class="empty-copy">
 						{/* States the fact and stops. The page knows the address
 						    resolves to nothing; it does NOT know why, and "it may
@@ -205,31 +211,31 @@ const soldOut = product?.availability === "out_of_stock";
 						    product that may simply never have existed — or tells a
 						    shopper chasing a live link that the thing they came for
 						    is gone, on no evidence. */}
-						Nothing here under that address.
+						{t("Nothing here under that address.")}
 					</p>
 					<a class="u-btn u-btn-ghost" href="/products">
-						Back to all products
+						{t("Back to all products")}
 					</a>
 				</div>
 			)
 		) : (
 			<>
 				<p class="crumb">
-					<a href="/products">← All products</a>
+					<a href="/products">{t("← All products")}</a>
 				</p>
 
 				{/* The WRAPPER carries the spacing, not a class on the component —
 				    see the note on the media panel below. */}
 				{degraded && (
 					<div class="notice-slot">
-						<Notice lead={busy ? cartErrorMessage(BUSY) : "Prices and stock are unavailable right now."}>
-							Check back in a moment — everything else on this page is up to date.
+						<Notice lead={busy ? cartErrorMessage(BUSY, locale) : t("Prices and stock are unavailable right now.")}>
+							{t("Check back in a moment — everything else on this page is up to date.")}
 						</Notice>
 					</div>
 				)}
 				{error !== null && (
 					<div class="notice-slot">
-						<Notice>{cartErrorMessage(error)}</Notice>
+						<Notice>{cartErrorMessage(error, locale)}</Notice>
 					</div>
 				)}
 
@@ -249,7 +255,7 @@ const soldOut = product?.availability === "out_of_stock";
 						<MediaPanel
 							slug={art}
 							image={image}
-							alt={content.title}
+							alt={displayContent!.title}
 							ratio="4 / 5"
 							dimmed={soldOut}
 						/>
@@ -257,8 +263,8 @@ const soldOut = product?.availability === "out_of_stock";
 
 					<div class="side">
 						<div>
-							<h1 class="title">{content.title}</h1>
-							{content.description && <p class="desc">{content.description}</p>}
+							<h1 class="title">{displayContent!.title}</h1>
+							{displayContent!.description && <p class="desc">{displayContent!.description}</p>}
 						</div>
 
 						{purchasable && product?.price ? (
@@ -267,7 +273,7 @@ const soldOut = product?.availability === "out_of_stock";
 								    between each — the whole decision in one block. */}
 								<div class="spec">
 									<div class="spec-row">
-										<span class="u-label">Price</span>
+										<span class="u-label">{t("Price")}</span>
 										<PriceTag
 											formatted={product.price.formatted}
 											size="lg"
@@ -275,12 +281,12 @@ const soldOut = product?.availability === "out_of_stock";
 										/>
 									</div>
 									<div class="spec-row">
-										<span class="u-label">Stock</span>
+										<span class="u-label">{t("Stock")}</span>
 										<StockRule availability={product.availability} />
 									</div>
 									{product.sku !== null && (
 										<div class="spec-row">
-											<span class="u-label">SKU</span>
+											<span class="u-label">{t("SKU")}</span>
 											<span class="u-mono sku">{product.sku}</span>
 										</div>
 									)}
@@ -288,15 +294,15 @@ const soldOut = product?.availability === "out_of_stock";
 
 								{product.variants && product.variants.length > 0 && (
 									<form method="GET" action={Astro.url.pathname} class="variant-choice">
-										<label for="product-variant">Choose a variant</label>
+										<label for="product-variant">{t("Choose a variant")}</label>
 										<select id="product-variant" name="sku">
 											{product.baseOption && <option value={product.baseOption.sku} selected={product.selectedVariantId === null}>{product.baseOption.title}</option>}
-											{product.variants.map((variant) => <option value={variant.sku} selected={variant.selected}>{variant.title} — {variant.price.formatted}{variant.availability === "out_of_stock" ? " (Sold out)" : ""}</option>)}
+											{product.variants.map((variant) => <option value={variant.sku} selected={variant.selected}>{variant.title} — {variant.price.formatted}{variant.availability === "out_of_stock" ? ` (${t("Sold out")})` : ""}</option>)}
 										</select>
-										<button class="u-btn u-btn-ghost" type="submit">Choose variant</button>
+										<button class="u-btn u-btn-ghost" type="submit">{t("Choose variant")}</button>
 									</form>
 								)}
-								{product.priceTaxMode === "inclusive" && <p class="u-label">Price includes applicable VAT.</p>}
+								{product.priceTaxMode === "inclusive" && <p class="u-label">{t("Price includes applicable VAT.")}</p>}
 
 								{addToCart && inStock && (
 									<div class="buy-block">
@@ -319,7 +325,7 @@ const soldOut = product?.availability === "out_of_stock";
 											/>
 											<QtyField name="qty" value={1} min={1} />
 											<button class="u-btn" type="submit">
-												Add to cart
+												{t("Add to cart")}
 											</button>
 										</form>
 										{/* The hold is worth telling a shopper about, and §10
@@ -331,7 +337,7 @@ const soldOut = product?.availability === "out_of_stock";
 										    hard-coded default: that was false on any store
 										    whose operator changed the setting. */}
 										<p class="hold-note">
-											{holdNote(cartHoldMinutes)}
+											{holdNote(cartHoldMinutes, locale)}
 										</p>
 									</div>
 								)}
@@ -356,14 +362,14 @@ const soldOut = product?.availability === "out_of_stock";
 									<div class="buy-block">
 										<div>
 											<a class="u-btn u-btn-ghost" href="/products">
-												See what's in stock
+												{t("See what's in stock")}
 											</a>
 										</div>
 									</div>
 								)}
 							</>
 						) : (
-							!degraded && <p class="note">Not currently available for purchase</p>
+							!degraded && <p class="note">{t("Not currently available for purchase")}</p>
 						)}
 					</div>
 				</div>

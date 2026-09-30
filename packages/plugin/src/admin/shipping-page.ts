@@ -1,3 +1,4 @@
+import { moneyLocale, requestTranslator, type PluginTranslate } from "./localization.js";
 import { COUNTRY_CODES, parseZoneRegions, validateZoneRegionsInput } from "@otta-sh/domain";
 import { formatMoney } from "../presentation/format-money.js";
 import { cents as toCents, currency as toCurrency } from "../presentation/money.js";
@@ -261,11 +262,13 @@ function methodsFilterFromValues(values: Record<string, unknown>): MethodsFilter
 	return { currency, invalid: !CURRENCY_CODE_SHAPE.test(currency) };
 }
 
-const BAD_CURRENCY_NOTICE: Notice = {
-	variant: "error",
-	title: "Prices not shown",
-	description: "Enter a 3-letter currency code like USD.",
-};
+function badCurrencyNotice(t: PluginTranslate): Notice {
+	return {
+		variant: "error",
+		title: t("Prices not shown"),
+		description: t("Enter a 3-letter currency code like USD."),
+	};
+}
 
 /** L-7's "nothing selected yet" sentinel — never `""` (F-6a/X-23: a `select`/
  *  `combobox` option value must never be the empty string). */
@@ -278,55 +281,60 @@ function isRegistryAccordion(nextToken: string | undefined, itemCount: number): 
 }
 
 export function createShippingPageHandler(): RouteHandler<ShippingPageInput> {
-	return createListDetailHandler<ShippingRenderState>({
-		actions: SHIPPING_ACTIONS,
-		// THE TIER IS THE FACTORY'S DECISION, not this screen's (work order 02,
-		// INC-B10c-i): `makeAdminClients` hands back either the `ctx.http` client
-		// this line used to construct or the in-process one over the plugin's own
-		// document store, and the page cannot tell which — everything below is
-		// typed against `AdminRulesSurface`, the structural surface both answer to.
-		//
-		// NO TOKENS: `X-Internal-Token` / `X-Service-Token` were transport
-		// credentials for the commerce service, and there is no service to
-		// authenticate to (ADR-0014 D3, INC-D3a).
-		async createClient(ctx) {
-			const clients = await makeAdminClients(ctx);
-			return clients.rules;
-		},
-		// The zones level's per-row "View methods" BUTTON and the methods
-		// level's per-row "View rates" BUTTON (§12.7) carry the FULL encoded
-		// target path in `value.target` — a button carries no `block_id` (B-1),
-		// so `parseOpen` must read `input.value?.target`. The L-9 FALLBACK
-		// tables' standalone combobox drill-in (L-7) instead fires a
-		// `form_submit`, whose target rides in `input.values.target`. One
-		// `parseOpen` resolves either, at any depth.
-		parseOpen(input) {
-			const encoded = readString(asRecord(input.value)?.target) ?? readString(input.values?.target);
-			if (encoded === undefined) return undefined;
-			const targetPath = decodePath(encoded);
-			return targetPath === null ? undefined : { targetPath };
-		},
-		levels: [zonesLevel(), methodsLevel(), ratesLevel()],
-		customActions: {
-			[ACTION_CREATE_ZONE]: createZoneAction(),
-			[ACTION_SAVE_ZONE]: saveZoneAction(),
-			[ACTION_DELETE_ZONE]: deleteZoneAction(),
-			[ACTION_OPEN_CREATE_ZONE]: openCreateZoneAction(),
-			[ACTION_CREATE_METHOD]: createMethodAction(),
-			[ACTION_SAVE_METHOD]: saveMethodAction(),
-			[ACTION_DELETE_METHOD]: deleteMethodAction(),
-			[ACTION_OPEN_CREATE_METHOD]: openCreateMethodAction(),
-			[ACTION_CREATE_RATE]: createRateAction(),
-			[ACTION_SAVE_RATE]: saveRateAction(),
-			[ACTION_DELETE_RATE]: deleteRateAction(),
-			[ACTION_CANCEL_NEW]: cancelNewAction(),
-		},
-	});
+	return async (routeCtx, ctx) => {
+		const t = requestTranslator(routeCtx);
+		return createListDetailHandler<ShippingRenderState>({
+			actions: SHIPPING_ACTIONS,
+			translate: t,
+			// THE TIER IS THE FACTORY'S DECISION, not this screen's (work order 02,
+			// INC-B10c-i): `makeAdminClients` hands back either the `ctx.http` client
+			// this line used to construct or the in-process one over the plugin's own
+			// document store, and the page cannot tell which — everything below is
+			// typed against `AdminRulesSurface`, the structural surface both answer to.
+			//
+			// NO TOKENS: `X-Internal-Token` / `X-Service-Token` were transport
+			// credentials for the commerce service, and there is no service to
+			// authenticate to (ADR-0014 D3, INC-D3a).
+			async createClient(clientCtx) {
+				const clients = await makeAdminClients(clientCtx);
+				return clients.rules;
+			},
+			// The zones level's per-row "View methods" BUTTON and the methods
+			// level's per-row "View rates" BUTTON (§12.7) carry the FULL encoded
+			// target path in `value.target` — a button carries no `block_id` (B-1),
+			// so `parseOpen` must read `input.value?.target`. The L-9 FALLBACK
+			// tables' standalone combobox drill-in (L-7) instead fires a
+			// `form_submit`, whose target rides in `input.values.target`. One
+			// `parseOpen` resolves either, at any depth.
+			parseOpen(input) {
+				const encoded =
+					readString(asRecord(input.value)?.target) ?? readString(input.values?.target);
+				if (encoded === undefined) return undefined;
+				const targetPath = decodePath(encoded);
+				return targetPath === null ? undefined : { targetPath };
+			},
+			levels: [zonesLevel(t), methodsLevel(t), ratesLevel(t)],
+			customActions: {
+				[ACTION_CREATE_ZONE]: createZoneAction(t),
+				[ACTION_SAVE_ZONE]: saveZoneAction(t),
+				[ACTION_DELETE_ZONE]: deleteZoneAction(t),
+				[ACTION_OPEN_CREATE_ZONE]: openCreateZoneAction(),
+				[ACTION_CREATE_METHOD]: createMethodAction(t),
+				[ACTION_SAVE_METHOD]: saveMethodAction(t),
+				[ACTION_DELETE_METHOD]: deleteMethodAction(t),
+				[ACTION_OPEN_CREATE_METHOD]: openCreateMethodAction(),
+				[ACTION_CREATE_RATE]: createRateAction(t),
+				[ACTION_SAVE_RATE]: saveRateAction(t),
+				[ACTION_DELETE_RATE]: deleteRateAction(t),
+				[ACTION_CANCEL_NEW]: cancelNewAction(),
+			},
+		})(routeCtx, ctx);
+	};
 }
 
 // -- level 0: shipping zones ---------------------------------------------------
 
-function zonesLevel() {
+function zonesLevel(t: PluginTranslate) {
 	return listLevel<AdminRulesSurface, Record<string, never>, ShippingZoneWire, ShippingRenderState>(
 		{
 			// No service-side pagination on the zones registry (`GET
@@ -339,9 +347,9 @@ function zonesLevel() {
 				return { items: zones, nextCursor: null };
 			},
 			render({ items, nextToken, notice, renderState }) {
-				return zonesBlocks(items, nextToken, notice, renderState);
+				return zonesBlocks(t, items, nextToken, notice, renderState);
 			},
-			onError: () => zonesFailClosed(),
+			onError: () => zonesFailClosed(t),
 		},
 	);
 }
@@ -356,33 +364,35 @@ function zonesLevel() {
  * button-drill-in idiom the per-row "View methods" already uses (§12.7).
  */
 function zonesBlocks(
+	t: PluginTranslate,
 	zones: ShippingZoneWire[],
 	nextToken: string | undefined,
 	notice: Notice | undefined,
 	renderState: ShippingRenderState | undefined,
 ): Block[] {
-	if (renderState?.kind === "new-zone") return newZoneScreen(renderState.draft, notice);
+	if (renderState?.kind === "new-zone") return newZoneScreen(t, renderState.draft, notice);
 	const blocks: Block[] = [
-		{ type: "header", text: "Shipping zones" },
+		{ type: "header", text: t("Shipping zones") },
 		{
 			type: "context",
-			text: "A zone groups the shipping methods you offer for a set of destinations.",
+			text: t("A zone groups the shipping methods you offer for a set of destinations."),
 		},
-		createActionBlock("ship:create-zone-action", ACTION_OPEN_CREATE_ZONE, "New shipping zone"),
+		createActionBlock("ship:create-zone-action", ACTION_OPEN_CREATE_ZONE, t("New shipping zone")),
 	];
 	if (notice !== undefined) blocks.push(noticeBanner(notice));
-	blocks.push(...zoneRegionWarnings(zones));
+	blocks.push(...zoneRegionWarnings(t, zones));
 
 	if (zones.length === 0) {
 		blocks.push(
 			emptyState({
-				title: "No shipping zones yet",
-				description:
+				title: t("No shipping zones yet"),
+				description: t(
 					"Create a zone to start grouping the shipping methods you offer by destination.",
+				),
 				size: "base",
 				// Same verb and same words as the button above: one act, named once.
 				actions: [
-					{ type: "button", action_id: ACTION_OPEN_CREATE_ZONE, label: "New shipping zone" },
+					{ type: "button", action_id: ACTION_OPEN_CREATE_ZONE, label: t("New shipping zone") },
 				],
 			}),
 		);
@@ -390,10 +400,10 @@ function zonesBlocks(
 	}
 
 	if (isRegistryAccordion(nextToken, zones.length)) {
-		for (const zone of zones) blocks.push(zoneAccordion(zone));
+		for (const zone of zones) blocks.push(zoneAccordion(t, zone));
 	} else {
-		blocks.push(zonesFallbackTable(zones));
-		blocks.push(openZoneForm(zones));
+		blocks.push(zonesFallbackTable(t, zones));
+		blocks.push(openZoneForm(t, zones));
 	}
 	return blocks;
 }
@@ -427,7 +437,7 @@ function createActionBlock(
 
 /** One zone's per-row group (L-9): edit form, the "View methods" drill-in
  *  (§12.7), and delete — all collapsed (L-9's own "zero open groups" rule). */
-function zoneAccordion(zone: ShippingZoneWire): AccordionBlock {
+function zoneAccordion(t: PluginTranslate, zone: ShippingZoneWire): AccordionBlock {
 	return {
 		type: "accordion",
 		label: `${zone.id} — ${zone.name}`,
@@ -440,22 +450,22 @@ function zoneAccordion(zone: ShippingZoneWire): AccordionBlock {
 		// just a string with no grammar to violate.
 		block_id: `ship:zone:${zone.id}`,
 		blocks: [
-			{ type: "context", text: zoneMatchSummary(zone.regions) },
-			editZoneForm(zone),
+			{ type: "context", text: zoneMatchSummary(t, zone.regions) },
+			editZoneForm(t, zone),
 			{
 				type: "actions",
 				elements: [
 					{
 						type: "button",
 						action_id: SHIPPING_ACTIONS.open,
-						label: "View methods",
+						label: t("View methods"),
 						// FULL target path, never a bare id — required at any drill depth
 						// (§12.7), and load-bearing at depth 3 for this screen's rates level.
 						value: { target: encodePath([zone.id]) },
 					},
 				],
 			},
-			deleteZoneActions(zone),
+			deleteZoneActions(t, zone),
 		],
 	};
 }
@@ -466,7 +476,7 @@ function zoneAccordion(zone: ShippingZoneWire): AccordionBlock {
  *  `AdminRulesSurface.updateZone`'s doc). `zoneId` rides invisibly in the
  *  carrier, not as a visible field (F-2, F-3 — no more single-option
  *  "carrier" select). */
-function editZoneForm(zone: ShippingZoneWire): FormBlock {
+function editZoneForm(t: PluginTranslate, zone: ShippingZoneWire): FormBlock {
 	return carriedForm({
 		namespace: "ship:zone-save",
 		context: { zoneId: zone.id },
@@ -476,36 +486,38 @@ function editZoneForm(zone: ShippingZoneWire): FormBlock {
 				{
 					type: "text_input",
 					action_id: "name",
-					label: "Name",
+					label: t("Name"),
 					initial_value: zone.name,
-					placeholder: "e.g. United States",
+					placeholder: t("e.g. United States"),
 				},
 				{
 					type: "text_input",
 					action_id: "regions",
-					label: "Regions (comma-separated, blank = none)",
+					label: t("Regions (comma-separated, blank = none)"),
 					initial_value: formatRegionsForInput(zone.regions),
 				},
 			],
 			// A verb phrase naming the result, no id (M-7) — the enclosing
 			// accordion's label already names the zone.
-			submit: { label: "Save zone", action_id: ACTION_SAVE_ZONE },
+			submit: { label: t("Save zone"), action_id: ACTION_SAVE_ZONE },
 		},
 	});
 }
 
-function deleteZoneActions(zone: ShippingZoneWire): ActionsBlock {
+function deleteZoneActions(t: PluginTranslate, zone: ShippingZoneWire): ActionsBlock {
 	const button: ButtonElement = {
 		type: "button",
 		action_id: ACTION_DELETE_ZONE,
-		label: "Delete zone", // no id (M-7) — the accordion label already names it
+		label: t("Delete zone"), // no id (M-7) — the accordion label already names it
 		style: "danger",
 		value: { zoneId: zone.id },
 		confirm: {
-			title: `Delete zone ${zone.id}?`,
-			text: "This only works while the zone has no shipping methods — delete those first if this fails. This cannot be undone.",
-			confirm: "Yes, delete",
-			deny: "Keep it",
+			title: t("Delete zone {id}?", { id: zone.id }),
+			text: t(
+				"This only works while the zone has no shipping methods — delete those first if this fails. This cannot be undone.",
+			),
+			confirm: t("Yes, delete"),
+			deny: t("Keep it"),
 			style: "danger",
 		},
 	};
@@ -516,25 +528,31 @@ function deleteZoneActions(zone: ShippingZoneWire): ActionsBlock {
  *  context · the form, the shape every other non-list level on this console
  *  already has. The banner sits above the form because it explains the values
  *  the form below has just put back. */
-function newZoneScreen(draft: ZoneDraft | undefined, notice: Notice | undefined): Block[] {
+function newZoneScreen(
+	t: PluginTranslate,
+	draft: ZoneDraft | undefined,
+	notice: Notice | undefined,
+): Block[] {
 	const blocks: Block[] = [
-		{ type: "header", text: "New shipping zone" },
+		{ type: "header", text: t("New shipping zone") },
 		// No path: this screen belongs to the ROOT registry.
-		backButton(ACTION_CANCEL_NEW, "← Back to shipping zones"),
+		backButton(ACTION_CANCEL_NEW, t("← Back to shipping zones")),
 	];
 	if (notice !== undefined) blocks.push(noticeBanner(notice));
 	blocks.push({
 		type: "context",
-		text: "Regions are ISO codes: a country (US) or state/province (US-CA). Addresses match exactly; the most specific zone wins.",
+		text: t(
+			"Regions are ISO codes: a country (US) or state/province (US-CA). Addresses match exactly; the most specific zone wins.",
+		),
 	});
-	blocks.push(createZoneForm(draft));
+	blocks.push(createZoneForm(t, draft));
 	return blocks;
 }
 
 /** `draft` is the refusal path (DA-3a-i): what was submitted comes back as
  *  `initial_value`, so a rejected duplicate id costs one edit and not three
  *  retypes. */
-function createZoneForm(draft?: ZoneDraft): FormBlock {
+function createZoneForm(t: PluginTranslate, draft?: ZoneDraft): FormBlock {
 	return carriedForm({
 		namespace: "ship:zone-create",
 		form: {
@@ -543,26 +561,26 @@ function createZoneForm(draft?: ZoneDraft): FormBlock {
 				{
 					type: "text_input",
 					action_id: "id",
-					label: "Zone ID",
-					placeholder: "e.g. us",
+					label: t("Zone ID"),
+					placeholder: t("e.g. us"),
 					...prefill(draft?.id),
 				},
 				{
 					type: "text_input",
 					action_id: "name",
-					label: "Name",
-					placeholder: "e.g. United States",
+					label: t("Name"),
+					placeholder: t("e.g. United States"),
 					...prefill(draft?.name),
 				},
 				{
 					type: "text_input",
 					action_id: "regions",
-					label: "Regions (comma-separated, blank = none)",
-					placeholder: "e.g. US",
+					label: t("Regions (comma-separated, blank = none)"),
+					placeholder: t("e.g. US"),
 					...prefill(draft?.regions),
 				},
 			],
-			submit: { label: "Create zone", action_id: ACTION_CREATE_ZONE },
+			submit: { label: t("Create zone"), action_id: ACTION_CREATE_ZONE },
 		},
 	});
 }
@@ -576,17 +594,17 @@ function prefill(value: string | undefined): { initial_value?: string } {
 
 /** L-9 fallback (>25 rows, or an incomplete page): table + L-7 drill-in.
  *  T-7/L-9b: every L-9 fallback table sets `empty_text`. */
-function zonesFallbackTable(zones: ShippingZoneWire[]): TableBlock {
+function zonesFallbackTable(t: PluginTranslate, zones: ShippingZoneWire[]): TableBlock {
 	return {
 		type: "table",
 		columns: [
-			{ key: "id", label: "Zone ID", format: "code" },
-			{ key: "name", label: "Name" },
-			{ key: "regions", label: "Regions" },
+			{ key: "id", label: t("Zone ID"), format: "code" },
+			{ key: "name", label: t("Name") },
+			{ key: "regions", label: t("Regions") },
 		],
-		rows: zones.map((z) => ({ id: z.id, name: z.name, regions: regionsSummary(z.regions) })),
+		rows: zones.map((z) => ({ id: z.id, name: z.name, regions: regionsSummary(t, z.regions) })),
 		page_action_id: SHIPPING_ACTIONS.page, // never fires: the registry has no paging
-		empty_text: "No shipping zones yet — create one below.",
+		empty_text: t("No shipping zones yet — create one below."),
 	};
 }
 
@@ -595,7 +613,7 @@ function zonesFallbackTable(zones: ShippingZoneWire[]): TableBlock {
  *  ALWAYS a `combobox`: the option value is an opaque encoded path, and a
  *  `select` would render that in its trigger (R-17a, X-22). The label is the
  *  zone's name plus its regions as a disambiguator — never the id (M-7). */
-function openZoneForm(zones: ShippingZoneWire[]): FormBlock {
+function openZoneForm(t: PluginTranslate, zones: ShippingZoneWire[]): FormBlock {
 	// Wrapped in `carriedForm` even though `NONE` is a constant sentinel, never
 	// record-derived data (R-12a — a record picker never prefills, so there is
 	// no staleness for a change token to guard against): every prefilling
@@ -609,35 +627,36 @@ function openZoneForm(zones: ShippingZoneWire[]): FormBlock {
 				{
 					type: "combobox",
 					action_id: "target",
-					label: "Open zone",
+					label: t("Open zone"),
 					options: [
-						{ value: NONE, label: "Choose a zone…" },
+						{ value: NONE, label: t("Choose a zone…") },
 						...zones.map((z) => ({
 							value: encodePath([z.id]),
-							label: `${z.name} — ${regionsSummary(z.regions)}`,
+							label: `${z.name} — ${regionsSummary(t, z.regions)}`,
 						})),
 					],
 					initial_value: NONE,
 				},
 			],
-			submit: { label: "Open", action_id: SHIPPING_ACTIONS.open },
+			submit: { label: t("Open"), action_id: SHIPPING_ACTIONS.open },
 		},
 	});
 }
 
-function zonesFailClosed() {
+function zonesFailClosed(t: PluginTranslate) {
 	return failClosedResponse({
-		header: "Shipping zones",
-		title: "Shipping zones are unavailable",
-		description:
+		header: t("Shipping zones"),
+		title: t("Shipping zones are unavailable"),
+		description: t(
 			"Shipping zones could not be loaded. Retry in a moment; if it keeps failing, this is a fault in the console itself — not your data.",
-		toast: "Could not load shipping zones",
+		),
+		toast: t("Could not load shipping zones"),
 	});
 }
 
 // -- level 1: a zone's shipping methods -----------------------------------------
 
-function methodsLevel() {
+function methodsLevel(t: PluginTranslate) {
 	return listLevel<AdminRulesSurface, MethodsFilterForm, MethodRow, ShippingRenderState>({
 		limit: 200,
 		filterFromValues: methodsFilterFromValues,
@@ -658,15 +677,15 @@ function methodsLevel() {
 		},
 		render({ path, filter, items, nextToken, notice, renderState }) {
 			const zoneId = path[0] ?? "";
-			const blocks = methodsBlocks(zoneId, filter, items, nextToken, notice, renderState);
+			const blocks = methodsBlocks(t, zoneId, filter, items, nextToken, notice, renderState);
 			const zone = METHODS_ZONE.get(items);
-			const warnings = zone === undefined ? [] : zoneRegionWarnings([zone]);
+			const warnings = zone === undefined ? [] : zoneRegionWarnings(t, [zone]);
 			if (warnings.length === 0 || renderState?.kind === "new-method") return blocks;
 			// Under the intro, above the rows — the same place the landing puts them.
 			const at = blocks.findIndex((b) => b.type === "actions");
 			return [...blocks.slice(0, at + 1), ...warnings, ...blocks.slice(at + 1)];
 		},
-		onError: () => methodsFailClosed(),
+		onError: () => methodsFailClosed(t),
 	});
 }
 
@@ -769,16 +788,16 @@ async function methodPrice(
  * context line, with the currency it qualifies — which is also where G1 wants
  * the currency named, rather than as an ISO code per row.
  */
-function methodPriceLabel(price: MethodPrice): string {
+function methodPriceLabel(t: PluginTranslate, price: MethodPrice): string {
 	switch (price.kind) {
 		case "amount":
-			return formatCentsForDisplay(price.rate.amountCents, price.rate.currency);
+			return formatCentsForDisplay(t, price.rate.amountCents, price.rate.currency);
 		case "none":
-			return "No rate set";
+			return t("No rate set");
 		case "unknown":
-			return "Price unavailable";
+			return t("Price unavailable");
 		case "not-priced":
-			return "Price not loaded";
+			return t("Price not loaded");
 	}
 }
 
@@ -786,17 +805,23 @@ function methodPriceLabel(price: MethodPrice): string {
  *  AND what an unpriced row means in it — the whole of `No rate set`'s scope,
  *  stated once (G1, X-11's 140-char page-context budget: 138). Off that branch
  *  it claims no currency, because nothing was priced in one. */
-function methodsContextText(currency: string, pricesShown: boolean): string {
+function methodsContextText(t: PluginTranslate, currency: string, pricesShown: boolean): string {
 	// The wire values stay `flat_rate`/`free_shipping` (see `methodTypeField`);
 	// only the operator-facing copy is human.
-	const types =
-		'"Flat rate" always charges its rate; "Free shipping" charges nothing above its threshold.';
+	const types = t(
+		'"Flat rate" always charges its rate; "Free shipping" charges nothing above its threshold.',
+	);
 	return pricesShown
-		? `${types} Prices in ${currency} — "No rate set" means no ${currency} rate.`
+		? t('{types} Prices in {currency} — "No rate set" means no {currency3} rate.', {
+				types: types,
+				currency: currency,
+				currency3: currency,
+			})
 		: types;
 }
 
 function methodsBlocks(
+	t: PluginTranslate,
 	zoneId: string,
 	filter: MethodsFilterForm,
 	methods: MethodRow[],
@@ -810,12 +835,12 @@ function methodsBlocks(
 	const accordionBranch = isRegistryAccordion(nextToken, methods.length);
 	const pricesShown = accordionBranch && methods.length > 0 && !filter.invalid;
 	if (renderState?.kind === "new-method") {
-		return newMethodScreen(zoneId, renderState.draft, notice);
+		return newMethodScreen(t, zoneId, renderState.draft, notice);
 	}
 	const blocks: Block[] = [
-		{ type: "header", text: `Shipping methods — ${zoneId}` },
-		backButton(SHIPPING_ACTIONS.back, "← Back to zones", [zoneId]),
-		{ type: "context", text: methodsContextText(filter.currency, pricesShown) },
+		{ type: "header", text: t("Shipping methods — {zoneId}", { zoneId: zoneId }) },
+		backButton(SHIPPING_ACTIONS.back, t("← Back to zones"), [zoneId]),
+		{ type: "context", text: methodsContextText(t, filter.currency, pricesShown) },
 		// INC-14: the create action, promoted from an accordion at the very
 		// bottom to a button under the intro line. It carries the drill path
 		// (L-6) — this level is depth 1, so without it the create screen would
@@ -823,27 +848,27 @@ function methodsBlocks(
 		createActionBlock(
 			`ship:create-method-action:${zoneId}`,
 			ACTION_OPEN_CREATE_METHOD,
-			"New shipping method",
+			t("New shipping method"),
 			[zoneId],
 		),
 	];
 	if (notice !== undefined) blocks.push(noticeBanner(notice));
 	// G5: a rejected filter is a banner inside a 200, never a refused render —
 	// the method list is unaffected by it and stays on screen, editable.
-	if (filter.invalid) blocks.push(noticeBanner(BAD_CURRENCY_NOTICE));
+	if (filter.invalid) blocks.push(noticeBanner(badCurrencyNotice(t)));
 
 	if (methods.length === 0) {
 		blocks.push(
 			emptyState({
-				title: "No shipping methods yet",
-				description: "Add a method to start offering shipping for this zone.",
+				title: t("No shipping methods yet"),
+				description: t("Add a method to start offering shipping for this zone."),
 				size: "base",
 				// Same verb and same words as the button above.
 				actions: [
 					{
 						type: "button",
 						action_id: ACTION_OPEN_CREATE_METHOD,
-						label: "New shipping method",
+						label: t("New shipping method"),
 						value: { [PATH_FIELD]: encodePath([zoneId]) },
 					},
 				],
@@ -857,11 +882,11 @@ function methodsBlocks(
 		// column's currency, so it ships with the priced branch and not with the
 		// table branch, which prices nothing. It renders on a REJECTED currency
 		// too — that is the field the operator has to fix.
-		blocks.push(methodCurrencyForm(zoneId, filter));
-		for (const method of methods) blocks.push(methodAccordion(zoneId, method));
+		blocks.push(methodCurrencyForm(t, zoneId, filter));
+		for (const method of methods) blocks.push(methodAccordion(t, zoneId, method));
 	} else {
-		blocks.push(methodsFallbackTable(methods));
-		blocks.push(openMethodForm(zoneId, methods));
+		blocks.push(methodsFallbackTable(t, methods));
+		blocks.push(openMethodForm(t, zoneId, methods));
 	}
 	return blocks;
 }
@@ -871,7 +896,11 @@ function methodsBlocks(
  *  deliberately, so the control an operator learns here is the control they
  *  meet there. Carries the depth-1 drill path INVISIBLY (L-6), so
  *  `apply-filter` re-lists THIS zone's methods and not the root. */
-function methodCurrencyForm(zoneId: string, filter: MethodsFilterForm): FormBlock {
+function methodCurrencyForm(
+	t: PluginTranslate,
+	zoneId: string,
+	filter: MethodsFilterForm,
+): FormBlock {
 	return carriedForm({
 		namespace: "ship:method-currency",
 		context: { [PATH_FIELD]: encodePath([zoneId]) },
@@ -881,11 +910,11 @@ function methodCurrencyForm(zoneId: string, filter: MethodsFilterForm): FormBloc
 				{
 					type: "text_input",
 					action_id: "currency",
-					label: "Price currency (ISO-4217, e.g. USD)",
+					label: t("Price currency (ISO-4217, e.g. USD)"),
 					initial_value: filter.currency,
 				},
 			],
-			submit: { label: "Apply filters", action_id: SHIPPING_ACTIONS.applyFilter },
+			submit: { label: t("Apply filters"), action_id: SHIPPING_ACTIONS.applyFilter },
 		},
 	});
 }
@@ -894,15 +923,15 @@ function methodCurrencyForm(zoneId: string, filter: MethodsFilterForm): FormBloc
  *  option labels verbatim. The WIRE VALUE is untouched — `flat_rate` /
  *  `free_shipping` still go over `ctx.http` and still come back; only the copy
  *  an operator reads is human. */
-function methodTypeName(type: string): string {
-	return type === "free_shipping" ? "Free shipping" : "Flat rate";
+function methodTypeName(t: PluginTranslate, type: string): string {
+	return type === "free_shipping" ? t("Free shipping") : t("Flat rate");
 }
 
 /** {@link methodTypeName} lowercased for mid-label use (D-6) — never a bare
  *  code, and never the select's raw value (that wart is confined to the
  *  `select` trigger itself, R-17a). */
-function methodTypeLabel(type: string): string {
-	return type === "free_shipping" ? "free shipping" : "flat rate";
+function methodTypeLabel(t: PluginTranslate, type: string): string {
+	return type === "free_shipping" ? t("free shipping") : t("flat rate");
 }
 
 /**
@@ -914,65 +943,75 @@ function methodTypeLabel(type: string): string {
  * (the slug, which varies in length, moves to second position — in FULL: a
  * method id is a readable natural key, not an opaque uuid).
  */
-function methodAccordion(zoneId: string, method: MethodRow): AccordionBlock {
+function methodAccordion(t: PluginTranslate, zoneId: string, method: MethodRow): AccordionBlock {
 	return {
 		type: "accordion",
-		label: `${methodPriceLabel(method.price)} — ${method.name} · ${method.id} · ${methodTypeLabel(method.type)}`,
+		label: `${methodPriceLabel(t, method.price)} — ${method.name} · ${method.id} · ${methodTypeLabel(t, method.type)}`,
 		default_open: false,
 		block_id: `ship:method:${zoneId}:${method.id}`,
 		blocks: [
-			editMethodForm(zoneId, method),
+			editMethodForm(t, zoneId, method),
 			{
 				type: "actions",
 				elements: [
 					{
 						type: "button",
 						action_id: SHIPPING_ACTIONS.open,
-						label: "View rates",
+						label: t("View rates"),
 						value: { target: encodePath([zoneId, method.id]) },
 					},
 				],
 			},
-			deleteMethodActions(zoneId, method),
+			deleteMethodActions(t, zoneId, method),
 		],
 	};
 }
 
-function methodTypeField(actionId: string, initial: string): FormBlock["fields"][number] {
+function methodTypeField(
+	t: PluginTranslate,
+	actionId: string,
+	initial: string,
+): FormBlock["fields"][number] {
 	const options: SelectOption[] = [
-		{ value: "flat_rate", label: "Flat rate" },
-		{ value: "free_shipping", label: "Free shipping (threshold-based)" },
+		{ value: "flat_rate", label: t("Flat rate") },
+		{ value: "free_shipping", label: t("Free shipping (threshold-based)") },
 	];
-	return { type: "select", action_id: actionId, label: "Type", options, initial_value: initial };
+	return { type: "select", action_id: actionId, label: t("Type"), options, initial_value: initial };
 }
 
-function editMethodForm(zoneId: string, method: ShippingMethodWire): FormBlock {
+function editMethodForm(t: PluginTranslate, zoneId: string, method: ShippingMethodWire): FormBlock {
 	return carriedForm({
 		namespace: "ship:method-save",
 		context: { zoneId, methodId: method.id },
 		form: {
 			type: "form",
 			fields: [
-				{ type: "text_input", action_id: "name", label: "Name", initial_value: method.name },
-				methodTypeField("type", method.type),
+				{ type: "text_input", action_id: "name", label: t("Name"), initial_value: method.name },
+				methodTypeField(t, "type", method.type),
 			],
-			submit: { label: "Save method", action_id: ACTION_SAVE_METHOD },
+			submit: { label: t("Save method"), action_id: ACTION_SAVE_METHOD },
 		},
 	});
 }
 
-function deleteMethodActions(zoneId: string, method: ShippingMethodWire): ActionsBlock {
+function deleteMethodActions(
+	t: PluginTranslate,
+	zoneId: string,
+	method: ShippingMethodWire,
+): ActionsBlock {
 	const button: ButtonElement = {
 		type: "button",
 		action_id: ACTION_DELETE_METHOD,
-		label: "Delete method",
+		label: t("Delete method"),
 		style: "danger",
 		value: { zoneId, methodId: method.id },
 		confirm: {
-			title: `Delete method ${method.id}?`,
-			text: "This only works while the method has no rates — delete those first if this fails. This cannot be undone.",
-			confirm: "Yes, delete",
-			deny: "Keep it",
+			title: t("Delete method {id}?", { id: method.id }),
+			text: t(
+				"This only works while the method has no rates — delete those first if this fails. This cannot be undone.",
+			),
+			confirm: t("Yes, delete"),
+			deny: t("Keep it"),
 			style: "danger",
 		},
 	};
@@ -982,23 +1021,24 @@ function deleteMethodActions(zoneId: string, method: ShippingMethodWire): Action
 /** The "New shipping method" create screen (INC-14) — what the promoted button
  *  and the empty state's own action both drill into. */
 function newMethodScreen(
+	t: PluginTranslate,
 	zoneId: string,
 	draft: MethodDraft | undefined,
 	notice: Notice | undefined,
 ): Block[] {
 	const blocks: Block[] = [
-		{ type: "header", text: `New shipping method — ${zoneId}` },
-		backButton(ACTION_CANCEL_NEW, "← Back to shipping methods", [zoneId]),
+		{ type: "header", text: t("New shipping method — {zoneId}", { zoneId: zoneId }) },
+		backButton(ACTION_CANCEL_NEW, t("← Back to shipping methods"), [zoneId]),
 	];
 	if (notice !== undefined) blocks.push(noticeBanner(notice));
-	blocks.push(createMethodForm(zoneId, draft));
+	blocks.push(createMethodForm(t, zoneId, draft));
 	return blocks;
 }
 
 /** `draft` is the refusal path (DA-3a-i). `type` is resolved against the
  *  select's own options first (X-23), so an unknown value falls back to the
  *  default rather than rendering a blank trigger. */
-function createMethodForm(zoneId: string, draft?: MethodDraft): FormBlock {
+function createMethodForm(t: PluginTranslate, zoneId: string, draft?: MethodDraft): FormBlock {
 	const type =
 		draft?.type === "free_shipping" || draft?.type === "flat_rate" ? draft.type : "flat_rate";
 	return carriedForm({
@@ -1010,43 +1050,47 @@ function createMethodForm(zoneId: string, draft?: MethodDraft): FormBlock {
 				{
 					type: "text_input",
 					action_id: "id",
-					label: "Method ID",
-					placeholder: "e.g. standard",
+					label: t("Method ID"),
+					placeholder: t("e.g. standard"),
 					...prefill(draft?.id),
 				},
 				{
 					type: "text_input",
 					action_id: "name",
-					label: "Name",
-					placeholder: "e.g. Standard shipping",
+					label: t("Name"),
+					placeholder: t("e.g. Standard shipping"),
 					...prefill(draft?.name),
 				},
-				methodTypeField("type", type),
+				methodTypeField(t, "type", type),
 			],
-			submit: { label: "Add method", action_id: ACTION_CREATE_METHOD },
+			submit: { label: t("Add method"), action_id: ACTION_CREATE_METHOD },
 		},
 	});
 }
 
-function methodsFallbackTable(methods: ShippingMethodWire[]): TableBlock {
+function methodsFallbackTable(t: PluginTranslate, methods: ShippingMethodWire[]): TableBlock {
 	return {
 		type: "table",
 		columns: [
-			{ key: "id", label: "Method ID", format: "code" },
-			{ key: "name", label: "Name" },
+			{ key: "id", label: t("Method ID"), format: "code" },
+			{ key: "name", label: t("Name") },
 			// `Type` keeps its badge (T-5's own exception): a two-value closed set
 			// (flat_rate/free_shipping) genuinely distinguished at a glance, and
 			// this level's only badge column. The badge reads the HUMAN name — the
 			// raw enum was the last operator-facing place this screen leaked one.
-			{ key: "type", label: "Type", format: "badge" },
+			{ key: "type", label: t("Type"), format: "badge" },
 		],
-		rows: methods.map((m) => ({ id: m.id, name: m.name, type: methodTypeName(m.type) })),
+		rows: methods.map((m) => ({ id: m.id, name: m.name, type: methodTypeName(t, m.type) })),
 		page_action_id: SHIPPING_ACTIONS.page, // never fires: no paging at this level
-		empty_text: "No shipping methods yet for this zone.",
+		empty_text: t("No shipping methods yet for this zone."),
 	};
 }
 
-function openMethodForm(zoneId: string, methods: ShippingMethodWire[]): FormBlock {
+function openMethodForm(
+	t: PluginTranslate,
+	zoneId: string,
+	methods: ShippingMethodWire[],
+): FormBlock {
 	// See `openZoneForm`'s note: carried even though `NONE` is a constant.
 	return carriedForm({
 		namespace: "ship:open-method",
@@ -1057,35 +1101,36 @@ function openMethodForm(zoneId: string, methods: ShippingMethodWire[]): FormBloc
 				{
 					type: "combobox",
 					action_id: "target",
-					label: "Open method",
+					label: t("Open method"),
 					options: [
-						{ value: NONE, label: "Choose a method…" },
+						{ value: NONE, label: t("Choose a method…") },
 						...methods.map((m) => ({
 							value: encodePath([zoneId, m.id]),
-							label: `${m.name} (${methodTypeLabel(m.type)})`,
+							label: `${m.name} (${methodTypeLabel(t, m.type)})`,
 						})),
 					],
 					initial_value: NONE,
 				},
 			],
-			submit: { label: "Open", action_id: SHIPPING_ACTIONS.open },
+			submit: { label: t("Open"), action_id: SHIPPING_ACTIONS.open },
 		},
 	});
 }
 
-function methodsFailClosed() {
+function methodsFailClosed(t: PluginTranslate) {
 	return failClosedResponse({
-		header: "Shipping methods",
-		title: "Shipping methods are unavailable",
-		description:
+		header: t("Shipping methods"),
+		title: t("Shipping methods are unavailable"),
+		description: t(
 			"Shipping methods could not be loaded. Retry in a moment; if it keeps failing, this is a fault in the console itself — not your data.",
-		toast: "Could not load shipping methods",
+		),
+		toast: t("Could not load shipping methods"),
 	});
 }
 
 // -- level 2: a method's rates (currency-keyed, L-9a EXEMPT from the accordion list) --
 
-function ratesLevel() {
+function ratesLevel(t: PluginTranslate) {
 	return listLevel<AdminRulesSurface, RatesFilterForm, ShippingRateWire>({
 		limit: 1, // a rate is keyed by (methodId, currency) — at most one row per filter
 		filterFromValues: currencyFromValues,
@@ -1098,13 +1143,14 @@ function ratesLevel() {
 		render({ path, filter, items, notice }) {
 			const zoneId = path[0] ?? "";
 			const methodId = path[1] ?? "";
-			return ratesBlocks(zoneId, methodId, filter, items, notice);
+			return ratesBlocks(t, zoneId, methodId, filter, items, notice);
 		},
-		onError: () => ratesFailClosed(),
+		onError: () => ratesFailClosed(t),
 	});
 }
 
 function ratesBlocks(
+	t: PluginTranslate,
 	zoneId: string,
 	methodId: string,
 	filter: RatesFilterForm,
@@ -1112,23 +1158,23 @@ function ratesBlocks(
 	notice: Notice | undefined,
 ): Block[] {
 	const blocks: Block[] = [
-		{ type: "header", text: `Shipping rates — ${methodId}` },
-		backButton(SHIPPING_ACTIONS.back, "← Back to methods", [zoneId, methodId]),
+		{ type: "header", text: t("Shipping rates — {methodId}", { methodId: methodId }) },
+		backButton(SHIPPING_ACTIONS.back, t("← Back to methods"), [zoneId, methodId]),
 		{
 			type: "context",
-			text: "A rate is keyed by currency — one method can price differently per currency.",
+			text: t("A rate is keyed by currency — one method can price differently per currency."),
 		},
 	];
 	if (notice !== undefined) blocks.push(noticeBanner(notice));
 
-	blocks.push(currencyFilterForm(zoneId, methodId, filter));
+	blocks.push(currencyFilterForm(t, zoneId, methodId, filter));
 	if (filter.currency !== DEFAULT_RATE_CURRENCY) {
-		const summary = filterSummary([`currency: ${filter.currency}`]);
+		const summary = filterSummary([t("currency: {currency}", { currency: filter.currency })]);
 		if (summary !== undefined) {
 			const clearButton: ButtonElement = {
 				type: "button",
 				action_id: SHIPPING_ACTIONS.applyFilter,
-				label: "Clear filters",
+				label: t("Clear filters"),
 				value: { [PATH_FIELD]: encodePath([zoneId, methodId]) },
 			};
 			blocks.push({ type: "section", text: summary, accessory: clearButton });
@@ -1139,18 +1185,23 @@ function ratesBlocks(
 	if (row === undefined) {
 		blocks.push({
 			type: "context",
-			text: "No rate set for that currency yet — use the form below.",
+			text: t("No rate set for that currency yet — use the form below."),
 		});
-		blocks.push(createRateForm(zoneId, methodId, filter));
+		blocks.push(createRateForm(t, zoneId, methodId, filter));
 	} else {
-		blocks.push(rateFields(methodId, row));
-		blocks.push(editRateForm(zoneId, methodId, row));
-		blocks.push(deleteRateActions(zoneId, methodId, row));
+		blocks.push(rateFields(t, methodId, row));
+		blocks.push(editRateForm(t, zoneId, methodId, row));
+		blocks.push(deleteRateActions(t, zoneId, methodId, row));
 	}
 	return blocks;
 }
 
-function currencyFilterForm(zoneId: string, methodId: string, filter: RatesFilterForm): FormBlock {
+function currencyFilterForm(
+	t: PluginTranslate,
+	zoneId: string,
+	methodId: string,
+	filter: RatesFilterForm,
+): FormBlock {
 	// L-2: a single filter field renders INLINE (no accordion). Carries the
 	// depth-2 drill path INVISIBLY via the carrier so `apply-filter` re-lists
 	// THIS method's rates, never the root — required at depth > 0 (L-6).
@@ -1163,37 +1214,42 @@ function currencyFilterForm(zoneId: string, methodId: string, filter: RatesFilte
 				{
 					type: "text_input",
 					action_id: "currency",
-					label: "Currency (ISO-4217, e.g. USD)",
+					label: t("Currency (ISO-4217, e.g. USD)"),
 					initial_value: filter.currency,
 				},
 			],
 			// L-5 wants the standard verb phrase, not "Look up rate".
-			submit: { label: "Apply filters", action_id: SHIPPING_ACTIONS.applyFilter },
+			submit: { label: t("Apply filters"), action_id: SHIPPING_ACTIONS.applyFilter },
 		},
 	});
 }
 
 /** A 0-or-1-row lookup is `fields`, not a 1-row `table` (P-3, L-9a). */
-function rateFields(methodId: string, row: ShippingRateWire): FieldsBlock {
+function rateFields(t: PluginTranslate, methodId: string, row: ShippingRateWire): FieldsBlock {
 	return {
 		type: "fields",
 		block_id: "shipping:rate",
 		fields: [
-			{ label: "Currency", value: row.currency },
-			{ label: "Amount", value: formatCentsForDisplay(row.amountCents, row.currency) },
+			{ label: t("Currency"), value: row.currency },
+			{ label: t("Amount"), value: formatCentsForDisplay(t, row.amountCents, row.currency) },
 			{
-				label: "Free-shipping threshold",
+				label: t("Free-shipping threshold"),
 				value:
 					row.minSubtotalCents === null
-						? "No minimum"
-						: formatCentsForDisplay(row.minSubtotalCents, row.currency),
+						? t("No minimum")
+						: formatCentsForDisplay(t, row.minSubtotalCents, row.currency),
 			},
-			{ label: "Method", value: methodId },
+			{ label: t("Method"), value: methodId },
 		],
 	};
 }
 
-function createRateForm(zoneId: string, methodId: string, filter: RatesFilterForm): FormBlock {
+function createRateForm(
+	t: PluginTranslate,
+	zoneId: string,
+	methodId: string,
+	filter: RatesFilterForm,
+): FormBlock {
 	return carriedForm({
 		namespace: "ship:rate-create",
 		context: { zoneId, methodId },
@@ -1203,23 +1259,23 @@ function createRateForm(zoneId: string, methodId: string, filter: RatesFilterFor
 				{
 					type: "text_input",
 					action_id: "currency",
-					label: "Currency (ISO-4217, e.g. USD)",
+					label: t("Currency (ISO-4217, e.g. USD)"),
 					initial_value: filter.currency,
 				},
 				{
 					type: "text_input",
 					action_id: "amount",
-					label: "Amount (up to 2 decimals, e.g. 4.99 — 0 is allowed)",
+					label: t("Amount (up to 2 decimals, e.g. 4.99 — 0 is allowed)"),
 					placeholder: "4.99",
 				},
 				{
 					type: "text_input",
 					action_id: "minSubtotal",
-					label: "Free-shipping threshold (blank = none)",
+					label: t("Free-shipping threshold (blank = none)"),
 					placeholder: "35.00",
 				},
 			],
-			submit: { label: "Add rate", action_id: ACTION_CREATE_RATE },
+			submit: { label: t("Add rate"), action_id: ACTION_CREATE_RATE },
 		},
 	});
 }
@@ -1233,7 +1289,12 @@ function createRateForm(zoneId: string, methodId: string, filter: RatesFilterFor
  * `minSubtotalCents` is required-nullable on the wire, so the form always
  * submits it (blank ⇒ explicit clear).
  */
-function editRateForm(zoneId: string, methodId: string, row: ShippingRateWire): FormBlock {
+function editRateForm(
+	t: PluginTranslate,
+	zoneId: string,
+	methodId: string,
+	row: ShippingRateWire,
+): FormBlock {
 	return carriedForm({
 		namespace: "ship:rate-save",
 		context: {
@@ -1248,54 +1309,65 @@ function editRateForm(zoneId: string, methodId: string, row: ShippingRateWire): 
 				{
 					type: "text_input",
 					action_id: "amount",
-					label: `Amount for ${row.currency} (up to 2 decimals)`,
+					label: t("Amount for {currency} (up to 2 decimals)", { currency: row.currency }),
 					initial_value: formatMinorUnitsInput(row.amountCents),
 				},
 				{
 					type: "text_input",
 					action_id: "minSubtotal",
-					label: "Free-shipping threshold (blank = none)",
+					label: t("Free-shipping threshold (blank = none)"),
 					...(row.minSubtotalCents !== null
 						? { initial_value: formatMinorUnitsInput(row.minSubtotalCents) }
 						: {}),
 				},
 			],
-			submit: { label: "Save rate", action_id: ACTION_SAVE_RATE },
+			submit: { label: t("Save rate"), action_id: ACTION_SAVE_RATE },
 		},
 	});
 }
 
-function deleteRateActions(zoneId: string, methodId: string, row: ShippingRateWire): ActionsBlock {
+function deleteRateActions(
+	t: PluginTranslate,
+	zoneId: string,
+	methodId: string,
+	row: ShippingRateWire,
+): ActionsBlock {
 	const button: ButtonElement = {
 		type: "button",
 		action_id: ACTION_DELETE_RATE,
-		label: "Delete rate",
+		label: t("Delete rate"),
 		style: "danger",
 		value: { zoneId, methodId, currency: row.currency },
 		confirm: {
-			title: `Delete the ${row.currency} rate for ${methodId}?`,
-			text: "In-flight carts recompute their shipping without this rate the next time they're touched. Orders already placed are unaffected — an order snapshots the shipping fee it was charged at purchase time.",
-			confirm: "Yes, delete",
-			deny: "Keep it",
+			title: t("Delete the {currency} rate for {methodId}?", {
+				currency: row.currency,
+				methodId: methodId,
+			}),
+			text: t(
+				"In-flight carts recompute their shipping without this rate the next time they're touched. Orders already placed are unaffected — an order snapshots the shipping fee it was charged at purchase time.",
+			),
+			confirm: t("Yes, delete"),
+			deny: t("Keep it"),
 			style: "danger",
 		},
 	};
 	return { type: "actions", elements: [button] };
 }
 
-function ratesFailClosed() {
+function ratesFailClosed(t: PluginTranslate) {
 	return failClosedResponse({
-		header: "Shipping rates",
-		title: "Shipping rates are unavailable",
-		description:
+		header: t("Shipping rates"),
+		title: t("Shipping rates are unavailable"),
+		description: t(
 			"Shipping rates could not be loaded. Retry in a moment; if it keeps failing, this is a fault in the console itself — not your data.",
-		toast: "Could not load shipping rates",
+		),
+		toast: t("Could not load shipping rates"),
 	});
 }
 
 // -- custom action: create a zone ------------------------------------------------
 
-function createZoneAction() {
+function createZoneAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface, ShippingRenderState>(
 		async ({ input, client, showList }) => {
 			const values = input.values ?? {};
@@ -1313,18 +1385,21 @@ function createZoneAction() {
 					undefined,
 					{
 						variant: "error",
-						title: "Zone not created",
-						description: "Enter both a zone ID and a name.",
+						title: t("Zone not created"),
+						description: t("Enter both a zone ID and a name."),
 					},
 					{ kind: "new-zone", draft },
 				);
 			}
-			const checked = await checkZoneRegions(client, readString(values.regions) ?? "", null);
+			const checked = await checkZoneRegions(t, client, readString(values.regions) ?? "", null);
 			if (!checked.ok) {
-				return showList(undefined, checked.notice("Zone not created"), { kind: "new-zone", draft });
+				return showList(undefined, checked.notice(t("Zone not created")), {
+					kind: "new-zone",
+					draft,
+				});
 			}
 			const result = await client.createZone({ id, name, regions: checked.codes });
-			const notice = createZoneNotice(result, id, name);
+			const notice = createZoneNotice(t, result, id, name);
 			// A SERVICE refusal keeps the draft too (a duplicate id is one edit
 			// away); success drops it, which is what returns the operator to the
 			// registry.
@@ -1336,6 +1411,7 @@ function createZoneAction() {
 }
 
 function createZoneNotice(
+	t: PluginTranslate,
 	result: RulesCreateResult<ShippingZoneWire>,
 	id: string,
 	name: string,
@@ -1343,20 +1419,23 @@ function createZoneNotice(
 	if (result.ok) {
 		return {
 			variant: "default",
-			title: "Zone created",
-			description: `"${name}" (${id}) was added.`,
+			title: t("Zone created"),
+			description: t('"{name}" ({id}) was added.', { name: name, id: id }),
 		};
 	}
 	return {
 		variant: "error",
-		title: "Zone not created",
-		description: `Could not create "${id}" — check the zone ID isn't already in use, then try again.`,
+		title: t("Zone not created"),
+		description: t(
+			'Could not create "{id}" — check the zone ID isn\'t already in use, then try again.',
+			{ id: id },
+		),
 	};
 }
 
 // -- custom action: edit a zone (LWW) ---------------------------------------------
 
-function saveZoneAction() {
+function saveZoneAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface>(async ({ input, carried, client, showList }) => {
 		const zoneId = carried?.zoneId;
 		if (zoneId === undefined) return showList();
@@ -1365,69 +1444,75 @@ function saveZoneAction() {
 		if (name.length === 0) {
 			return showList(undefined, {
 				variant: "error",
-				title: "Zone not saved",
-				description: "Name cannot be blank.",
+				title: t("Zone not saved"),
+				description: t("Name cannot be blank."),
 			});
 		}
-		const checked = await checkZoneRegions(client, readString(values.regions) ?? "", zoneId);
-		if (!checked.ok) return showList(undefined, checked.notice("Zone not saved"));
+		const checked = await checkZoneRegions(t, client, readString(values.regions) ?? "", zoneId);
+		if (!checked.ok) return showList(undefined, checked.notice(t("Zone not saved")));
 		const result = await client.updateZone(zoneId, { name, regions: checked.codes });
-		return showList(undefined, saveZoneNotice(result));
+		return showList(undefined, saveZoneNotice(t, result));
 	});
 }
 
-function saveZoneNotice(result: RulesUpdateResult<ShippingZoneWire>): Notice {
+function saveZoneNotice(t: PluginTranslate, result: RulesUpdateResult<ShippingZoneWire>): Notice {
 	if (result.ok) {
-		return { variant: "default", title: "Zone saved", description: "The zone was updated." };
+		return { variant: "default", title: t("Zone saved"), description: t("The zone was updated.") };
 	}
 	if (result.reason === "not_found") {
 		return {
 			variant: "error",
-			title: "Zone not found",
-			description: "This zone no longer exists — it may have already been deleted.",
+			title: t("Zone not found"),
+			description: t("This zone no longer exists — it may have already been deleted."),
 		};
 	}
 	return {
 		variant: "error",
-		title: "Zone not saved",
-		description: "The change could not be saved — retry in a moment.",
+		title: t("Zone not saved"),
+		description: t("The change could not be saved — retry in a moment."),
 	};
 }
 
 // -- custom action: delete a zone (forbid-if-methods) ------------------------------
 
-function deleteZoneAction() {
+function deleteZoneAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface>(async ({ input, client, showList }) => {
 		const payload = asRecord(input.value);
 		const zoneId = readString(payload?.zoneId);
 		if (zoneId === undefined) return showList();
 		const result = await client.deleteZone(zoneId);
-		return showList(undefined, deleteZoneNotice(result));
+		return showList(undefined, deleteZoneNotice(t, result));
 	});
 }
 
-function deleteZoneNotice(result: RulesDeleteResult): Notice {
+function deleteZoneNotice(t: PluginTranslate, result: RulesDeleteResult): Notice {
 	if (result.ok) {
-		return { variant: "default", title: "Zone deleted", description: "The zone was removed." };
+		return {
+			variant: "default",
+			title: t("Zone deleted"),
+			description: t("The zone was removed."),
+		};
 	}
 	if (result.reason === "not_found") {
 		return {
 			variant: "default",
-			title: "Already deleted",
-			description: "This zone was already removed.",
+			title: t("Already deleted"),
+			description: t("This zone was already removed."),
 		};
 	}
 	if (result.reason === "in_use") {
 		return {
 			variant: "error",
-			title: "Zone not deleted",
-			description: "This zone still has shipping methods — delete its methods first, then retry.",
+			title: t("Zone not deleted"),
+			description: t(
+				"This zone still has shipping methods — delete its methods first, then retry.",
+			),
 		};
 	}
 	return {
 		variant: "error",
-		title: "Zone not deleted",
-		description: "The zone could not be deleted — retry in a moment.",
+		title: t("Zone not deleted"),
+		description: t("The zone could not be deleted — retry in a moment."),
 	};
 }
 
@@ -1452,7 +1537,7 @@ function cancelNewAction() {
 
 // -- custom action: create a method -----------------------------------------------
 
-function createMethodAction() {
+function createMethodAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface, ShippingRenderState>(
 		async ({ input, carried, client, showList }) => {
 			const zoneId = carried?.zoneId;
@@ -1477,14 +1562,14 @@ function createMethodAction() {
 					[zoneId],
 					{
 						variant: "error",
-						title: "Method not created",
-						description: "Enter a method ID, a name, and a valid type.",
+						title: t("Method not created"),
+						description: t("Enter a method ID, a name, and a valid type."),
 					},
 					{ kind: "new-method", draft },
 				);
 			}
 			const result = await client.createMethod(zoneId, { id, name, type });
-			const notice = createMethodNotice(result, id, name);
+			const notice = createMethodNotice(t, result, id, name);
 			return result.ok
 				? showList([zoneId], notice)
 				: showList([zoneId], notice, { kind: "new-method", draft });
@@ -1493,6 +1578,7 @@ function createMethodAction() {
 }
 
 function createMethodNotice(
+	t: PluginTranslate,
 	result: RulesCreateResult<ShippingMethodWire>,
 	id: string,
 	name: string,
@@ -1500,20 +1586,23 @@ function createMethodNotice(
 	if (result.ok) {
 		return {
 			variant: "default",
-			title: "Method created",
-			description: `"${name}" (${id}) was added.`,
+			title: t("Method created"),
+			description: t('"{name}" ({id}) was added.', { name: name, id: id }),
 		};
 	}
 	return {
 		variant: "error",
-		title: "Method not created",
-		description: `Could not create "${id}" — check the method ID isn't already in use, then try again.`,
+		title: t("Method not created"),
+		description: t(
+			'Could not create "{id}" — check the method ID isn\'t already in use, then try again.',
+			{ id: id },
+		),
 	};
 }
 
 // -- custom action: edit a method (LWW) --------------------------------------------
 
-function saveMethodAction() {
+function saveMethodAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface>(async ({ input, carried, client, showList }) => {
 		const zoneId = carried?.zoneId;
 		const methodId = carried?.methodId;
@@ -1524,68 +1613,79 @@ function saveMethodAction() {
 		if (name.length === 0 || (type !== "flat_rate" && type !== "free_shipping")) {
 			return showList([zoneId], {
 				variant: "error",
-				title: "Method not saved",
-				description: "Enter a name and a valid type.",
+				title: t("Method not saved"),
+				description: t("Enter a name and a valid type."),
 			});
 		}
 		const result = await client.updateMethod(methodId, { name, type });
-		return showList([zoneId], saveMethodNotice(result));
+		return showList([zoneId], saveMethodNotice(t, result));
 	});
 }
 
-function saveMethodNotice(result: RulesUpdateResult<ShippingMethodWire>): Notice {
+function saveMethodNotice(
+	t: PluginTranslate,
+	result: RulesUpdateResult<ShippingMethodWire>,
+): Notice {
 	if (result.ok) {
-		return { variant: "default", title: "Method saved", description: "The method was updated." };
+		return {
+			variant: "default",
+			title: t("Method saved"),
+			description: t("The method was updated."),
+		};
 	}
 	if (result.reason === "not_found") {
 		return {
 			variant: "error",
-			title: "Method not found",
-			description: "This method no longer exists — it may have already been deleted.",
+			title: t("Method not found"),
+			description: t("This method no longer exists — it may have already been deleted."),
 		};
 	}
 	return {
 		variant: "error",
-		title: "Method not saved",
-		description: "The change could not be saved — retry in a moment.",
+		title: t("Method not saved"),
+		description: t("The change could not be saved — retry in a moment."),
 	};
 }
 
 // -- custom action: delete a method (forbid-if-rates) -------------------------------
 
-function deleteMethodAction() {
+function deleteMethodAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface>(async ({ input, client, showList }) => {
 		const payload = asRecord(input.value);
 		const zoneId = readString(payload?.zoneId);
 		const methodId = readString(payload?.methodId);
 		if (zoneId === undefined || methodId === undefined) return showList();
 		const result = await client.deleteMethod(methodId);
-		return showList([zoneId], deleteMethodNotice(result));
+		return showList([zoneId], deleteMethodNotice(t, result));
 	});
 }
 
-function deleteMethodNotice(result: RulesDeleteResult): Notice {
+function deleteMethodNotice(t: PluginTranslate, result: RulesDeleteResult): Notice {
 	if (result.ok) {
-		return { variant: "default", title: "Method deleted", description: "The method was removed." };
+		return {
+			variant: "default",
+			title: t("Method deleted"),
+			description: t("The method was removed."),
+		};
 	}
 	if (result.reason === "not_found") {
 		return {
 			variant: "default",
-			title: "Already deleted",
-			description: "This method was already removed.",
+			title: t("Already deleted"),
+			description: t("This method was already removed."),
 		};
 	}
 	if (result.reason === "in_use") {
 		return {
 			variant: "error",
-			title: "Method not deleted",
-			description: "This method still has rates — delete its rates first, then retry.",
+			title: t("Method not deleted"),
+			description: t("This method still has rates — delete its rates first, then retry."),
 		};
 	}
 	return {
 		variant: "error",
-		title: "Method not deleted",
-		description: "The method could not be deleted — retry in a moment.",
+		title: t("Method not deleted"),
+		description: t("The method could not be deleted — retry in a moment."),
 	};
 }
 
@@ -1602,7 +1702,7 @@ function openCreateMethodAction() {
 
 // -- custom action: create a rate ---------------------------------------------------
 
-function createRateAction() {
+function createRateAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface>(async ({ input, carried, client, showList }) => {
 		const zoneId = carried?.zoneId;
 		const methodId = carried?.methodId;
@@ -1612,16 +1712,18 @@ function createRateAction() {
 		if (!/^[A-Z]{3}$/.test(currency)) {
 			return showList([zoneId, methodId], {
 				variant: "error",
-				title: "Rate not created",
-				description: "Currency must be a 3-letter ISO-4217 code like USD.",
+				title: t("Rate not created"),
+				description: t("Currency must be a 3-letter ISO-4217 code like USD."),
 			});
 		}
 		const amountCents = parseAmountInput(readString(values.amount) ?? "");
 		if (amountCents === null) {
 			return showList([zoneId, methodId], {
 				variant: "error",
-				title: "Rate not created",
-				description: "Amount must be 0 or a positive number like 4.99 (up to two decimal places).",
+				title: t("Rate not created"),
+				description: t(
+					"Amount must be 0 or a positive number like 4.99 (up to two decimal places).",
+				),
 			});
 		}
 		const minSubtotalRaw = (readString(values.minSubtotal) ?? "").trim();
@@ -1631,35 +1733,43 @@ function createRateAction() {
 			if (minSubtotalCents === null) {
 				return showList([zoneId, methodId], {
 					variant: "error",
-					title: "Rate not created",
-					description:
+					title: t("Rate not created"),
+					description: t(
 						"Free-shipping threshold must be 0 or a positive number like 35.00, or blank for none.",
+					),
 				});
 			}
 		}
 		const result = await client.createRate(methodId, { currency, amountCents, minSubtotalCents });
-		return showList([zoneId, methodId], createRateNotice(result, currency));
+		return showList([zoneId, methodId], createRateNotice(t, result, currency));
 	});
 }
 
-function createRateNotice(result: RulesCreateResult<ShippingRateWire>, currency: string): Notice {
+function createRateNotice(
+	t: PluginTranslate,
+	result: RulesCreateResult<ShippingRateWire>,
+	currency: string,
+): Notice {
 	if (result.ok) {
 		return {
 			variant: "default",
-			title: "Rate created",
-			description: `The ${currency} rate was added.`,
+			title: t("Rate created"),
+			description: t("The {currency} rate was added.", { currency: currency }),
 		};
 	}
 	return {
 		variant: "error",
-		title: "Rate not created",
-		description: `Could not create a ${currency} rate — check a rate for this currency doesn't already exist, then try again.`,
+		title: t("Rate not created"),
+		description: t(
+			"Could not create a {currency} rate — check a rate for this currency doesn't already exist, then try again.",
+			{ currency: currency },
+		),
 	};
 }
 
 // -- custom action: edit a rate (CAS on amountCents) ---------------------------------
 
-function saveRateAction() {
+function saveRateAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface>(async ({ input, carried, client, showList }) => {
 		const zoneId = carried?.zoneId;
 		const methodId = carried?.methodId;
@@ -1679,8 +1789,10 @@ function saveRateAction() {
 		if (amountCents === null) {
 			return showList([zoneId, methodId], {
 				variant: "error",
-				title: "Rate not saved",
-				description: "Amount must be 0 or a positive number like 4.99 (up to two decimal places).",
+				title: t("Rate not saved"),
+				description: t(
+					"Amount must be 0 or a positive number like 4.99 (up to two decimal places).",
+				),
 			});
 		}
 		const minSubtotalRaw = (readString(values.minSubtotal) ?? "").trim();
@@ -1690,9 +1802,10 @@ function saveRateAction() {
 			if (minSubtotalCents === null) {
 				return showList([zoneId, methodId], {
 					variant: "error",
-					title: "Rate not saved",
-					description:
+					title: t("Rate not saved"),
+					description: t(
 						"Free-shipping threshold must be 0 or a positive number like 35.00, or blank for none.",
+					),
 				});
 			}
 		}
@@ -1701,43 +1814,47 @@ function saveRateAction() {
 			minSubtotalCents,
 			expectedAmountCents,
 		});
-		return showList([zoneId, methodId], saveRateNotice(result));
+		return showList([zoneId, methodId], saveRateNotice(t, result));
 	});
 }
 
-function saveRateNotice(result: RulesCasUpdateResult<ShippingRateWire>): Notice {
+function saveRateNotice(
+	t: PluginTranslate,
+	result: RulesCasUpdateResult<ShippingRateWire>,
+): Notice {
 	if (result.ok) {
 		return {
 			variant: "default",
-			title: "Rate saved",
-			description: "The shipping rate was updated.",
+			title: t("Rate saved"),
+			description: t("The shipping rate was updated."),
 		};
 	}
 	if (result.reason === "stale") {
 		return {
 			variant: "error",
-			title: "This rate changed since you loaded it — reload",
-			description:
+			title: t("This rate changed since you loaded it — reload"),
+			description: t(
 				"Your edit was NOT applied — the latest value is shown below. Re-apply your change and save again.",
+			),
 		};
 	}
 	if (result.reason === "not_found") {
 		return {
 			variant: "error",
-			title: "Rate not found",
-			description: "This shipping rate no longer exists — it may have already been deleted.",
+			title: t("Rate not found"),
+			description: t("This shipping rate no longer exists — it may have already been deleted."),
 		};
 	}
 	return {
 		variant: "error",
-		title: "Rate not saved",
-		description: "The change could not be saved — retry in a moment.",
+		title: t("Rate not saved"),
+		description: t("The change could not be saved — retry in a moment."),
 	};
 }
 
 // -- custom action: delete a rate ------------------------------------------------------
 
-function deleteRateAction() {
+function deleteRateAction(t: PluginTranslate) {
 	return customAction<AdminRulesSurface>(async ({ input, client, showList }) => {
 		const payload = asRecord(input.value);
 		const zoneId = readString(payload?.zoneId);
@@ -1745,29 +1862,29 @@ function deleteRateAction() {
 		const currency = readString(payload?.currency);
 		if (zoneId === undefined || methodId === undefined || currency === undefined) return showList();
 		const result = await client.deleteRate(methodId, currency);
-		return showList([zoneId, methodId], deleteRateNotice(result));
+		return showList([zoneId, methodId], deleteRateNotice(t, result));
 	});
 }
 
-function deleteRateNotice(result: RulesDeleteResult): Notice {
+function deleteRateNotice(t: PluginTranslate, result: RulesDeleteResult): Notice {
 	if (result.ok) {
 		return {
 			variant: "default",
-			title: "Rate deleted",
-			description: "The shipping rate was removed.",
+			title: t("Rate deleted"),
+			description: t("The shipping rate was removed."),
 		};
 	}
 	if (result.reason === "not_found") {
 		return {
 			variant: "default",
-			title: "Already deleted",
-			description: "This shipping rate was already removed.",
+			title: t("Already deleted"),
+			description: t("This shipping rate was already removed."),
 		};
 	}
 	return {
 		variant: "error",
-		title: "Rate not deleted",
-		description: "The rate could not be deleted — retry in a moment.",
+		title: t("Rate not deleted"),
+		description: t("The rate could not be deleted — retry in a moment."),
 	};
 }
 
@@ -1783,6 +1900,7 @@ function deleteRateNotice(result: RulesDeleteResult): Notice {
  * Blank ⇒ `null` (no regions — a zone that matches no address).
  */
 async function checkZoneRegions(
+	t: PluginTranslate,
 	client: AdminRulesSurface,
 	raw: string,
 	selfId: string | null,
@@ -1791,13 +1909,16 @@ async function checkZoneRegions(
 > {
 	const validated = validateZoneRegionsInput(raw);
 	if (!validated.ok) {
-		const bad = validated.invalid.map(regionHint).join("; ");
+		const bad = validated.invalid.map((token) => regionHint(t, token)).join("; ");
 		return {
 			ok: false,
 			notice: (title) => ({
 				variant: "error",
 				title,
-				description: `Not ISO region codes: ${bad}. Use a country code (US) or a state/province code (US-CA).`,
+				description: t(
+					"Not ISO region codes: {bad}. Use a country code (US) or a state/province code (US-CA).",
+					{ bad: bad },
+				),
 			}),
 		};
 	}
@@ -1813,7 +1934,10 @@ async function checkZoneRegions(
 				notice: (title) => ({
 					variant: "error",
 					title,
-					description: `${shared} is already in the zone "${other.name}" (${other.id}). A code can belong to one zone only — remove it there first.`,
+					description: t(
+						'{shared} is already in the zone "{name}" ({id}). A code can belong to one zone only — remove it there first.',
+						{ shared: shared, name: other.name, id: other.id },
+					),
 				}),
 			};
 		}
@@ -1822,23 +1946,26 @@ async function checkZoneRegions(
 }
 
 /** One refused token, with the likeliest fix. */
-function regionHint(token: string): string {
+function regionHint(t: PluginTranslate, token: string): string {
 	const upper = token.trim().toUpperCase();
-	if (upper === "UK") return "UK (use GB)";
-	if (upper === "EU") return "EU (not a country — list its countries)";
+	if (upper === "UK") return t("UK (use GB)");
+	if (upper === "EU") return t("EU (not a country — list its countries)");
 	const prefixed = /^([A-Z]{2})-/.exec(upper);
 	if (prefixed !== null && COUNTRY_CODES.has(prefixed[1] ?? "")) {
-		return `${token} (not a ${prefixed[1] ?? ""} subdivision)`;
+		return t("{token} (not a {value2} subdivision)", { token: token, value2: prefixed[1] ?? "" });
 	}
-	return `${token} (not a code)`;
+	return t("{token} (not a code)", { token: token });
 }
 
 /** What a stored zone matches, for its row: its valid codes, and every legacy
  *  token labelled as never matching. */
-function zoneMatchSummary(regions: unknown): string {
+function zoneMatchSummary(t: PluginTranslate, regions: unknown): string {
 	const { codes, invalid } = parseZoneRegions(regions);
-	const matches = codes.length > 0 ? `Matches: ${codes.join(", ")}` : "Matches no address";
-	const legacy = invalid.map((token) => `${token} (not a region code — never matches)`);
+	const matches =
+		codes.length > 0 ? t("Matches: {items}", { items: codes.join(", ") }) : t("Matches no address");
+	const legacy = invalid.map((token) =>
+		t("{token} (not a region code — never matches)", { token }),
+	);
 	return [matches, ...legacy].join(" · ");
 }
 
@@ -1851,7 +1978,10 @@ function zoneMatchSummary(regions: unknown): string {
  *    nothing refuses every physical checkout;
  *  - stored tokens that are not codes (zones written before the rule).
  */
-function zoneRegionWarnings(zones: ReadonlyArray<ShippingZoneWire>): BannerBlock[] {
+function zoneRegionWarnings(
+	t: PluginTranslate,
+	zones: ReadonlyArray<ShippingZoneWire>,
+): BannerBlock[] {
 	const warnings: BannerBlock[] = [];
 	const unmatched = zones.filter((zone) => parseZoneRegions(zone.regions).codes.length === 0);
 	if (unmatched.length > 0) {
@@ -1859,14 +1989,17 @@ function zoneRegionWarnings(zones: ReadonlyArray<ShippingZoneWire>): BannerBlock
 			type: "banner",
 			block_id: NO_MATCH_ZONES_BLOCK_ID,
 			variant: "alert",
-			title: "Some zones match no address",
+			title: t("Some zones match no address"),
 			description: fitDescription(
-				"These zones list no ISO code, so no order can be delivered through them. Add codes such as US, US-CA: ",
+				t,
+				t(
+					"These zones list no ISO code, so no order can be delivered through them. Add codes such as US, US-CA: ",
+				),
 				unmatched.map((zone) => `${zone.name} (${zone.id})`),
 			),
 		});
 	}
-	const legacy = legacyRegionsWarning(zones);
+	const legacy = legacyRegionsWarning(t, zones);
 	if (legacy !== null) warnings.push(legacy);
 	return warnings;
 }
@@ -1882,12 +2015,12 @@ const BANNER_DESCRIPTION_MAX = 240;
  * length. At least the first entry's name is attempted; an entry that alone
  * would overflow is cut to fit.
  */
-function fitDescription(prefix: string, entries: readonly string[]): string {
+function fitDescription(t: PluginTranslate, prefix: string, entries: readonly string[]): string {
 	const room = BANNER_DESCRIPTION_MAX - prefix.length - 1; // the closing "."
 	const shown: string[] = [];
 	for (const [i, entry] of entries.entries()) {
 		const rest = entries.length - i - 1;
-		const tail = rest > 0 ? `; and ${String(rest)} more` : "";
+		const tail = rest > 0 ? t("; and {count} more", { count: rest }) : "";
 		const candidate = [...shown, entry].join("; ") + tail;
 		if (candidate.length <= room) {
 			shown.push(entry);
@@ -1898,13 +2031,16 @@ function fitDescription(prefix: string, entries: readonly string[]): string {
 			const cut = entry.slice(0, Math.max(0, room - tail.length - 1));
 			return `${prefix}${cut}…${tail}.`;
 		}
-		return `${prefix}${shown.join("; ")}; and ${String(entries.length - shown.length)} more.`;
+		return `${prefix}${shown.join("; ")}${t("; and {count} more", { count: entries.length - shown.length })}.`;
 	}
 	return `${prefix}${shown.join("; ")}.`;
 }
 
 /** Stored region tokens that are not codes, or `null` when there are none. */
-function legacyRegionsWarning(zones: ReadonlyArray<ShippingZoneWire>): BannerBlock | null {
+function legacyRegionsWarning(
+	t: PluginTranslate,
+	zones: ReadonlyArray<ShippingZoneWire>,
+): BannerBlock | null {
 	const affected = zones
 		.map((zone) => ({ zone, invalid: parseZoneRegions(zone.regions).invalid }))
 		.filter((entry) => entry.invalid.length > 0);
@@ -1913,9 +2049,12 @@ function legacyRegionsWarning(zones: ReadonlyArray<ShippingZoneWire>): BannerBlo
 		type: "banner",
 		block_id: LEGACY_REGIONS_BLOCK_ID,
 		variant: "alert",
-		title: "Some zone regions can never match an address",
+		title: t("Some zone regions can never match an address"),
 		description: fitDescription(
-			"These entries are not ISO codes, so they never match an address. Replace them with codes (e.g. US, US-CA): ",
+			t,
+			t(
+				"These entries are not ISO codes, so they never match an address. Replace them with codes (e.g. US, US-CA): ",
+			),
 			affected.map(({ zone, invalid }) => `${zone.name} (${zone.id}): ${invalid.join(", ")}`),
 		),
 	};
@@ -1943,11 +2082,11 @@ function formatRegionsForInput(regions: unknown): string {
 
 /** The zones-list column summary — honest about non-array/absent shapes
  *  rather than silently rendering "—" for a legacy non-array value. */
-function regionsSummary(regions: unknown): string {
+function regionsSummary(t: PluginTranslate, regions: unknown): string {
 	if (Array.isArray(regions)) {
-		return regions.length > 0 ? regions.join(", ") : "— (none)";
+		return regions.length > 0 ? regions.join(", ") : t("— (none)");
 	}
-	if (regions === null || regions === undefined) return "— (none)";
+	if (regions === null || regions === undefined) return t("— (none)");
 	return typeof regions === "string" ? regions : JSON.stringify(regions);
 }
 
@@ -1970,9 +2109,13 @@ function parseAmountInput(input: string): number | null {
 /** Display-format (with currency symbol) for the rate readout — falls back to
  *  a plain `CUR amount` string if `Intl`/the branding constructors reject the
  *  wire value (never throws into the render path). */
-function formatCentsForDisplay(minorUnits: number, currencyCode: string): string {
+function formatCentsForDisplay(
+	t: PluginTranslate,
+	minorUnits: number,
+	currencyCode: string,
+): string {
 	try {
-		return formatMoney(toCents(minorUnits), toCurrency(currencyCode), "en-US");
+		return formatMoney(toCents(minorUnits), toCurrency(currencyCode), moneyLocale(t));
 	} catch {
 		return `${currencyCode} ${formatMinorUnitsInput(minorUnits)}`;
 	}

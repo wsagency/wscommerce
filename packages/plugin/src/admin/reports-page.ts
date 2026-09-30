@@ -1,3 +1,9 @@
+import {
+	englishTranslate,
+	moneyLocale,
+	requestTranslator,
+	type PluginTranslate,
+} from "./localization.js";
 // `orderStateCell` is imported from the shared presentation package directly:
 // it used to be re-exported by `orders-page.ts`, which ADR-0015 retires.
 import { orderStateCell } from "@otta-sh/admin-presentation";
@@ -87,8 +93,6 @@ const REVENUE_COUNTING_STATES: ReadonlySet<string> = new Set([
 	"completed",
 ]);
 
-const MONEY_LOCALE = "en-US";
-
 /**
  * The one page action every table on this screen sets (T-6/R-21: the
  * authoritative `TableBlock.page_action_id` is REQUIRED, even though nothing
@@ -121,6 +125,8 @@ export const REPORTS_ACTION_IDS: ReadonlySet<string> = new Set([
 ]);
 
 export interface ReportsPageInput {
+	/** Request-local presentation preference; canonical range inputs are unchanged. */
+	locale?: unknown;
 	from?: unknown;
 	to?: unknown;
 	interval?: unknown;
@@ -224,18 +230,18 @@ function readBounds(input: ReportsPageInput): { from?: string; to?: string } {
  * cannot see is the defect this page is being fixed for — so a rejected range
  * announces itself instead of silently answering a different question.
  */
-function resolveRange(input: ReportsPageInput): ResolvedRange {
+function resolveRange(t: PluginTranslate, input: ReportsPageInput): ResolvedRange {
 	const bounds = readBounds(input);
 	const hasFrom = bounds.from !== undefined && bounds.from.trim().length > 0;
 	const hasTo = bounds.to !== undefined && bounds.to.trim().length > 0;
 	if (!hasFrom && !hasTo) return defaultRange();
 	if (!hasFrom || !hasTo) {
-		return defaultRange("Enter both a From and a To date to report on a custom period.");
+		return defaultRange(t("Enter both a From and a To date to report on a custom period."));
 	}
 	const from = parseBound(bounds.from ?? "", "from");
 	const to = parseBound(bounds.to ?? "", "to");
 	if (from === undefined || to === undefined) {
-		return defaultRange("Enter both dates as a calendar date, then update the period.");
+		return defaultRange(t("Enter both dates as a calendar date, then update the period."));
 	}
 	// Snap to whole days FIRST, then judge the snapped period — this screen has
 	// no surface that presents a time of day, so a period carrying one would be a
@@ -244,7 +250,7 @@ function resolveRange(input: ReportsPageInput): ResolvedRange {
 	const fromDay = dayOf(from);
 	const toDay = dayOf(to);
 	if (fromDay > toDay) {
-		return defaultRange("The From date falls after the To date. Swap them, then update again.");
+		return defaultRange(t("The From date falls after the To date. Swap them, then update again."));
 	}
 	// Judged on the SNAPPED span, never the raw one: `2025-01-01T23:59Z` to
 	// `2026-02-05T00:01Z` is 399 raw days but 401 whole days, so a raw check
@@ -253,7 +259,9 @@ function resolveRange(input: ReportsPageInput): ResolvedRange {
 	// connection or a console bug, never the cap the operator actually hit.
 	if (dayCount(fromDay, toDay) > MAX_RANGE_DAYS) {
 		return defaultRange(
-			`A reporting period covers up to ${MAX_RANGE_DAYS} days. Choose a shorter one.`,
+			t("A reporting period covers up to {maxRangeDays} days. Choose a shorter one.", {
+				maxRangeDays: MAX_RANGE_DAYS,
+			}),
 		);
 	}
 	return { ...rangeFromDays(fromDay, toDay), isDefault: false };
@@ -284,17 +292,19 @@ function resolveInterval(input: ReportsPageInput): "day" | "week" | "month" {
 
 /** The period in ABSOLUTE dates — `1 Jul – 31 Jul 2026`. The year is stated
  *  once when both ends share it, twice when they do not. */
-function absolutePeriod(range: ResolvedRange): string {
+function absolutePeriod(t: PluginTranslate, range: ResolvedRange): string {
 	const sameYear = range.fromDay.slice(0, 4) === range.toDay.slice(0, 4);
-	return `${formatDay(range.fromDay, !sameYear)} – ${formatDay(range.toDay, true)}`;
+	return `${formatDay(range.fromDay, !sameYear, t.locale)} – ${formatDay(range.toDay, true, t.locale)}`;
 }
 
 /** What a KPI label says the figure covers. The default range names itself
  *  ("last 30 days" — shorter, and it tells the operator the period is the
  *  default rather than something they chose); a chosen range states its dates,
  *  because "last 30 days" would then be a lie. */
-function periodSuffix(range: ResolvedRange): string {
-	return range.isDefault ? `last ${DEFAULT_RANGE_DAYS} days` : absolutePeriod(range);
+function periodSuffix(t: PluginTranslate, range: ResolvedRange): string {
+	return range.isDefault
+		? t("last {defaultRangeDays} days", { defaultRangeDays: DEFAULT_RANGE_DAYS })
+		: absolutePeriod(t, range);
 }
 
 /**
@@ -314,10 +324,11 @@ function periodSuffix(range: ResolvedRange): string {
  */
 export function createReportsPageHandler(): RouteHandler<ReportsPageInput> {
 	return async (routeCtx, ctx) => {
-		const range = resolveRange(routeCtx.input);
+		const t = requestTranslator(routeCtx);
+		const range = resolveRange(t, routeCtx.input);
 		const interval = resolveInterval(routeCtx.input);
 		// Cosmetic label from ctx.kv (never the service) — the display-only tier.
-		const displayName = (await ctx.kv.get<string>("settings:storeDisplayName")) ?? "Store";
+		const displayName = (await ctx.kv.get<string>("settings:storeDisplayName")) ?? t("Store");
 
 		try {
 			// The composition root sources the guarded reads' `X-Internal-Token` from
@@ -344,27 +355,31 @@ export function createReportsPageHandler(): RouteHandler<ReportsPageInput> {
 				// the fail-closed set above.
 				client.getSettings().catch(() => undefined),
 			]);
-			return buildReportsBlocks({
-				displayName,
-				interval,
-				range,
-				revenue,
-				statuses,
-				top,
-				low,
-				...(settings !== undefined ? { lowStockThreshold: settings.lowStockThreshold } : {}),
-			});
+			return buildReportsBlocks(
+				{
+					displayName,
+					interval,
+					range,
+					revenue,
+					statuses,
+					top,
+					low,
+					...(settings !== undefined ? { lowStockThreshold: settings.lowStockThreshold } : {}),
+				},
+				t,
+			);
 		} catch {
 			// Fail CLOSED with E-7's normative copy — never leak the raw HTTP
 			// status/URL (e.g. an auth 401 from a missing/expired admin token), and
 			// never claim a single external cause: this path also catches a bug in
 			// this console's own code, so the copy says so.
 			return failClosedResponse({
-				header: `${displayName} — Reports`,
-				title: "Reports are unavailable",
-				description:
+				header: t("{displayName} — Reports", { displayName: displayName }),
+				title: t("Reports are unavailable"),
+				description: t(
 					"Reports could not be loaded. Retry in a moment; if it keeps failing, this is a fault in the console itself — not your data.",
-				toast: "Could not load reports",
+				),
+				toast: t("Could not load reports"),
 			});
 		}
 	};
@@ -384,7 +399,10 @@ interface ReportsData {
 	lowStockThreshold?: number;
 }
 
-export function buildReportsBlocks(data: ReportsData): BlockResponse {
+export function buildReportsBlocks(
+	data: ReportsData,
+	t: PluginTranslate = englishTranslate,
+): BlockResponse {
 	// THE CURRENCY MODE OF THIS PAGE IS DECIDED BY REVENUE, NOT BY THE BUCKET
 	// LIST (INC-23). Since the revenue wire started reporting refunds, a bucket
 	// exists when EITHER half contributes — so a single fully-refunded EUR order
@@ -439,25 +457,35 @@ export function buildReportsBlocks(data: ReportsData): BlockResponse {
 	const byCurrencyCode = [...totalByCurrency.entries()].toSorted((a, b) =>
 		a[0].localeCompare(b[0]),
 	);
-	const period = periodSuffix(data.range);
+	const period = periodSuffix(t, data.range);
 	// EVERY tile states the period it covers. The subtitle states it too, in
 	// absolute dates — a KPI read out of the corner of an eye is the exact thing
 	// that used to be read as "all time" or "today", and a figure is only as
 	// good as the question it answers.
 	const revenueTiles: StatItem[] =
 		byCurrencyCode.length === 0
-			? [{ label: `Revenue — ${period}`, value: "—", description: "No paid orders in this period" }]
+			? [
+					{
+						label: t("Revenue — {period}", { period: period }),
+						value: "—",
+						description: t("No paid orders in this period"),
+					},
+				]
 			: byCurrencyCode.map(([currencyCode, revenueCents]) => ({
-					label: `Revenue (${currencyCode}) — ${period}`,
-					value: formatMoney(toCents(revenueCents), toCurrency(currencyCode), MONEY_LOCALE),
+					label: t("Revenue ({currencyCode}) — {period}", {
+						currencyCode: currencyCode,
+						period: period,
+					}),
+					value: formatMoney(toCents(revenueCents), toCurrency(currencyCode), moneyLocale(t)),
 				}));
 	// DA-7: no control can fix this (there is nothing to click), so one honest
 	// line names the gap and the remedy — rendered, not just disclosed in a
 	// PR body. Conditioned on there actually BEING more than one currency
 	// (T-8a's discipline: a caveat that cannot apply is noise, not honesty).
 	const multiCurrency = byCurrencyCode.length > 1;
-	const rankingGapNote =
-		"Cards are ordered alphabetically by currency code, not by order volume — the wire carries no per-currency order count. Ranking by volume needs a service change.";
+	const rankingGapNote = t(
+		"Cards are ordered alphabetically by currency code, not by order volume — the wire carries no per-currency order count. Ranking by volume needs a service change.",
+	);
 
 	// Top products' wire (`TopProductWire`) carries `revenueCents` but NO
 	// currency field at all — a second, independent wire gap from the stats
@@ -482,15 +510,15 @@ export function buildReportsBlocks(data: ReportsData): BlockResponse {
 		0,
 	);
 	const ordersTile: StatItem = {
-		label: `Orders — ${period}`,
+		label: t("Orders — {period}", { period: period }),
 		value: String(orderCount),
 		// Names the paid subset, because Revenue ÷ Orders does NOT equal the AOV
 		// beside it: this count includes cancelled, failed and expired orders,
 		// which produce no revenue. Without the second number the two tiles read
 		// as an arithmetic error.
-		description: `Every status; ${paidOrderCount} paid`,
+		description: t("Every status; {paidOrderCount} paid", { paidOrderCount: paidOrderCount }),
 	};
-	const aovTile = averageOrderValueTile(byCurrencyCode, singleCurrency, paidOrderCount, period);
+	const aovTile = averageOrderValueTile(t, byCurrencyCode, singleCurrency, paidOrderCount, period);
 	// The Refunded card's currency: the revenue currency when there is exactly
 	// one (the ordinary store), else — when NOTHING earned in this period but
 	// something came back — the single refund-only currency, so an all-refunds
@@ -502,7 +530,7 @@ export function buildReportsBlocks(data: ReportsData): BlockResponse {
 		(byCurrencyCode.length === 0 && refundOnlyCurrencies.length === 1
 			? toCurrency(refundOnlyCurrencies[0]!)
 			: undefined);
-	const refundedTile = refundedTileFor(data.revenue, data.statuses, refundedCurrency, period);
+	const refundedTile = refundedTileFor(t, data.revenue, data.statuses, refundedCurrency, period);
 	const allTiles: StatItem[] = [...revenueTiles, ordersTile, aovTile, refundedTile];
 	const items: StatItem[] = allTiles.slice(0, MAX_STATS_ITEMS);
 	// R-16's cap is four cards. A multi-currency window spends them on revenue it
@@ -512,13 +540,13 @@ export function buildReportsBlocks(data: ReportsData): BlockResponse {
 	const droppedTileNames = allTiles.slice(MAX_STATS_ITEMS).map((tile) => tileName(tile.label));
 
 	const topRevenueSuppressed = singleCurrency === undefined && data.top.length > 0;
-	const topRows = data.top.map((t) => ({
-		titleSnapshot: t.titleSnapshot,
-		qtySold: t.qtySold,
+	const topRows = data.top.map((product) => ({
+		titleSnapshot: product.titleSnapshot,
+		qtySold: product.qtySold,
 		revenue:
 			singleCurrency === undefined
 				? "—"
-				: formatMoney(toCents(t.revenueCents), singleCurrency, MONEY_LOCALE),
+				: formatMoney(toCents(product.revenueCents), singleCurrency, moneyLocale(t)),
 	}));
 
 	// Bucket boundaries are date-only bounds (M-6), and the wire's
@@ -542,19 +570,19 @@ export function buildReportsBlocks(data: ReportsData): BlockResponse {
 	const series = revenueSeries(data, revenueBuckets);
 	const revenueRows = series.points.map(({ day, currencyCode, revenueCents }) => ({
 		bucketStart: day,
-		revenue: formatMoney(toCents(revenueCents), toCurrency(currencyCode), MONEY_LOCALE),
+		revenue: formatMoney(toCents(revenueCents), toCurrency(currencyCode), moneyLocale(t)),
 	}));
 
 	const revenueTable: TableBlock = {
 		type: "table",
 		block_id: "reports:revenue-table",
 		columns: [
-			{ key: "bucketStart", label: "Period" },
-			{ key: "revenue", label: "Revenue" },
+			{ key: "bucketStart", label: t("Period") },
+			{ key: "revenue", label: t("Revenue") },
 		],
 		rows: revenueRows,
 		page_action_id: REPORTS_PAGE_ACTION_ID, // never fires: no next_cursor, no sortable column
-		empty_text: "No revenue in range.",
+		empty_text: t("No revenue in range."),
 	};
 	const revenueAccordion: AccordionBlock = {
 		type: "accordion",
@@ -562,13 +590,13 @@ export function buildReportsBlocks(data: ReportsData): BlockResponse {
 		// No "(N buckets)": a bucket is this codebase's word for a GROUP BY, not
 		// the operator's word for anything, and with the series now continuous the
 		// count was only ever restating the length of the range.
-		label: `Revenue by ${data.interval}`,
+		label: t("Revenue by {interval}", { interval: t(data.interval) }),
 		default_open: true, // S-3: the one open group on this screen
 		blocks: [
 			...(multiCurrency ? [{ type: "context" as const, text: rankingGapNote }] : []),
 			// A sparse series is never left to look continuous: when the fill is
 			// declined the group says so, in one line, above the rows (DA-7).
-			...(series.filled ? [] : [{ type: "context" as const, text: SPARSE_SERIES_NOTE }]),
+			...(series.filled ? [] : [{ type: "context" as const, text: t(SPARSE_SERIES_NOTE) }]),
 			revenueTable,
 		],
 	};
@@ -583,21 +611,21 @@ export function buildReportsBlocks(data: ReportsData): BlockResponse {
 			// report's whole point (which of these numbers is the one to worry
 			// about?) was rendered as `paid` and `failed` carrying exactly the same
 			// weight. The exception says so in words instead.
-			{ key: "status", label: "Status" },
-			{ key: "orderCount", label: "Orders", format: "number" },
+			{ key: "status", label: t("Status") },
+			{ key: "orderCount", label: t("Orders"), format: "number" },
 		],
 		// Through the Orders screen's own renderer, never a second listing of the
 		// order vocabulary: Reports states the same field the list states, so a
 		// state that reads `cancelled · closed` on one screen cannot read
 		// `cancelled` on the other.
-		rows: data.statuses.map((s) => ({ ...s, status: orderStateCell(s.status) })),
+		rows: data.statuses.map((s) => ({ ...s, status: orderStateCell(s.status, t.locale) })),
 		page_action_id: REPORTS_PAGE_ACTION_ID, // never fires: no next_cursor, no sortable column
-		empty_text: "No orders in range.",
+		empty_text: t("No orders in range."),
 	};
 	const statusesAccordion: AccordionBlock = {
 		type: "accordion",
 		block_id: "reports:statuses",
-		label: `Orders by status (${data.statuses.length})`,
+		label: t("Orders by status ({length})", { length: data.statuses.length }),
 		default_open: false,
 		blocks: [statusesTable],
 	};
@@ -606,24 +634,26 @@ export function buildReportsBlocks(data: ReportsData): BlockResponse {
 		type: "table",
 		block_id: "reports:top-table",
 		columns: [
-			{ key: "titleSnapshot", label: "Product" },
-			{ key: "qtySold", label: "Qty", format: "number" },
-			{ key: "revenue", label: "Revenue" },
+			{ key: "titleSnapshot", label: t("Product") },
+			{ key: "qtySold", label: t("Qty"), format: "number" },
+			{ key: "revenue", label: t("Revenue") },
 		],
 		rows: topRows,
 		page_action_id: REPORTS_PAGE_ACTION_ID, // never fires: no next_cursor, no sortable column
-		empty_text: "No sales in range.",
+		empty_text: t("No sales in range."),
 	};
 	const topAccordion: AccordionBlock = {
 		type: "accordion",
 		block_id: "reports:top",
-		label: `Top products (${data.top.length})`,
+		label: t("Top products ({length})", { length: data.top.length }),
 		default_open: false,
 		blocks: topRevenueSuppressed
 			? [
 					{
 						type: "context",
-						text: "Revenue is not shown per product because this range spans more than one currency and the wire carries no per-product currency — a service change is needed to attribute it correctly.",
+						text: t(
+							"Revenue is not shown per product because this range spans more than one currency and the wire carries no per-product currency — a service change is needed to attribute it correctly.",
+						),
 					},
 					topTable,
 				]
@@ -634,20 +664,20 @@ export function buildReportsBlocks(data: ReportsData): BlockResponse {
 		type: "table",
 		block_id: "reports:low-table",
 		columns: [
-			{ key: "title", label: "Title" },
-			{ key: "sku", label: "SKU", format: "code" },
-			{ key: "onHand", label: "On hand" },
+			{ key: "title", label: t("Title") },
+			{ key: "sku", label: t("SKU"), format: "code" },
+			{ key: "onHand", label: t("On hand") },
 		],
 		rows: data.low.map((r) => ({
 			// CMS-owned, same as the products list (products-page.ts) — `null`
 			// means no live product claims the sku, which is a different fact
 			// from the sku itself, so it renders "(untitled)" and never the sku.
-			title: r.title ?? "(untitled)",
+			title: r.title ?? t("(untitled)"),
 			sku: r.sku,
-			onHand: lowStockOnHandLabel(r.onHand),
+			onHand: lowStockOnHandLabel(t, r.onHand),
 		})),
 		page_action_id: REPORTS_PAGE_ACTION_ID, // never fires: no next_cursor, no sortable column
-		empty_text: "Nothing low on stock.",
+		empty_text: t("Nothing low on stock."),
 	};
 	const lowAccordion: AccordionBlock = {
 		type: "accordion",
@@ -658,33 +688,45 @@ export function buildReportsBlocks(data: ReportsData): BlockResponse {
 		// when that read failed.
 		label:
 			data.lowStockThreshold === undefined
-				? `Low stock (${data.low.length})`
-				: `Low stock (${data.low.length}) — at or below ${data.lowStockThreshold}`,
+				? t("Low stock ({count})", { count: data.low.length })
+				: t("Low stock ({count}) — at or below {threshold}", {
+						count: data.low.length,
+						threshold: data.lowStockThreshold,
+					}),
 		default_open: false,
 		blocks: [lowTable],
 	};
 
 	const blocks: Block[] = [
-		{ type: "header", text: `${data.displayName} — Reports` },
+		{ type: "header", text: t("{displayName} — Reports", { displayName: data.displayName }) },
 		{
 			type: "context",
 			// The period FIRST, in absolute dates: the screen used to state the
 			// definition of revenue and never the window it applied it to, so a
 			// figure covering 30 days read equally well as all-time or as today.
-			text: `${absolutePeriod(data.range)} (UTC) · Revenue is net order totals on paid-and-later orders, bucketed by order time.`,
+			text: t(
+				"{value1} (UTC) · Revenue is net order totals on paid-and-later orders, bucketed by order time.",
+				{ value1: absolutePeriod(t, data.range) },
+			),
 		},
-		...(data.range.problem !== undefined ? [rangeProblemBanner(data.range)] : []),
-		rangeForm(data.range, data.interval),
+		...(data.range.problem !== undefined ? [rangeProblemBanner(t, data.range)] : []),
+		rangeForm(t, data.range, data.interval),
 		{ type: "stats", items },
 		...(droppedTileNames.length > 0
 			? [
 					{
 						type: "context" as const,
-						text: `${listPhrase(droppedTileNames)} ${droppedTileNames.length === 1 ? "is" : "are"} not shown: the four cards are taken by one revenue card per currency.`,
+						text: t(
+							"{items} {value2} not shown: the four cards are taken by one revenue card per currency.",
+							{
+								items: listPhrase(t, droppedTileNames),
+								value2: droppedTileNames.length === 1 ? "is" : "are",
+							},
+						),
 					},
 				]
 			: []),
-		...refundOnlyNotes(data.revenue, refundOnlyCurrencies, refundedCurrency),
+		...refundOnlyNotes(t, data.revenue, refundOnlyCurrencies, refundedCurrency),
 		revenueAccordion,
 		statusesAccordion,
 		topAccordion,
@@ -708,6 +750,7 @@ export function buildReportsBlocks(data: ReportsData): BlockResponse {
  * it and a second telling would be noise (T-8a).
  */
 function refundOnlyNotes(
+	t: PluginTranslate,
 	revenue: RevenueBucketWire[],
 	refundOnlyCurrencies: readonly string[],
 	shownOnCard: Currency | undefined,
@@ -718,7 +761,7 @@ function refundOnlyNotes(
 		const currency = toCurrency(code);
 		const amount = refundedFor(revenue, currency);
 		if (amount === undefined || amount <= 0) continue;
-		parts.push(formatMoney(toCents(amount), currency, MONEY_LOCALE));
+		parts.push(formatMoney(toCents(amount), currency, moneyLocale(t)));
 	}
 	if (parts.length === 0) return [];
 	// ≤140 chars for a top-level context (X-11) — the amounts are short and the
@@ -727,7 +770,13 @@ function refundOnlyNotes(
 	return [
 		{
 			type: "context",
-			text: `Also refunded: ${listPhrase(parts)} — stated separately because this period earned nothing in ${parts.length === 1 ? "that currency" : "those currencies"}.`,
+			text: t(
+				"Also refunded: {items} — stated separately because this period earned nothing in {value2}.",
+				{
+					items: listPhrase(t, parts),
+					value2: parts.length === 1 ? "that currency" : "those currencies",
+				},
+			),
 		},
 	];
 }
@@ -750,8 +799,10 @@ function refundOnlyNotes(
  * bare "Out of stock" would make an operator re-derive whether that means 0 or
  * "some, but running low," and the count is the fact this column is named for.
  */
-function lowStockOnHandLabel(onHand: number): string {
-	return onHand === 0 ? `${onHand} · Out of stock` : `${onHand} · Low`;
+function lowStockOnHandLabel(t: PluginTranslate, onHand: number): string {
+	return onHand === 0
+		? t("{onHand} · Out of stock", { onHand: onHand })
+		: t("{onHand} · Low", { onHand: onHand });
 }
 
 /**
@@ -766,7 +817,11 @@ function lowStockOnHandLabel(onHand: number): string {
  * whenever the rendered period does. Without it, a rejected range would fall
  * back to the default while the fields still showed the rejected dates.
  */
-function rangeForm(range: ResolvedRange, interval: "day" | "week" | "month"): FormBlock {
+function rangeForm(
+	t: PluginTranslate,
+	range: ResolvedRange,
+	interval: "day" | "week" | "month",
+): FormBlock {
 	return carriedForm({
 		namespace: "reports:range",
 		// The granularity the page is currently rendering, carried invisibly so a
@@ -778,17 +833,17 @@ function rangeForm(range: ResolvedRange, interval: "day" | "week" | "month"): Fo
 				{
 					type: "date_input",
 					action_id: "from",
-					label: "From (inclusive)",
+					label: t("From (inclusive)"),
 					initial_value: range.fromDay,
 				},
 				{
 					type: "date_input",
 					action_id: "to",
-					label: "To (inclusive)",
+					label: t("To (inclusive)"),
 					initial_value: range.toDay,
 				},
 			],
-			submit: { label: "Update period", action_id: REPORTS_RANGE_ACTION_ID },
+			submit: { label: t("Update period"), action_id: REPORTS_RANGE_ACTION_ID },
 		},
 	});
 }
@@ -799,20 +854,23 @@ function tileName(label: string): string {
 	return (label.split("—")[0] ?? label).replace(/\s*\([^)]*\)\s*$/, "").trim();
 }
 
-/** `Orders, AOV and Refunded` — an English list. Kept here rather than in a
+/** `Orders, AOV and Refunded` — a localized list. Kept here rather than in a
  *  shared helper because this is its only caller. */
-function listPhrase(parts: readonly string[]): string {
+function listPhrase(t: PluginTranslate, parts: readonly string[]): string {
 	if (parts.length <= 1) return parts[0] ?? "";
-	return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+	return t("{head} and {last}", {
+		head: parts.slice(0, -1).join(", "),
+		last: parts[parts.length - 1] ?? "",
+	});
 }
 
 /** An unusable range renders the page for the default period plus this — a 200
  *  with a banner, never a 4xx (G5), and never a silent substitution. */
-function rangeProblemBanner(range: ResolvedRange): BannerBlock {
+function rangeProblemBanner(t: PluginTranslate, range: ResolvedRange): BannerBlock {
 	return {
 		type: "banner",
 		variant: "alert",
-		title: `Showing the last ${DEFAULT_RANGE_DAYS} days`,
+		title: t("Showing the last {defaultRangeDays} days", { defaultRangeDays: DEFAULT_RANGE_DAYS }),
 		description: range.problem ?? "",
 	};
 }
@@ -827,24 +885,28 @@ function rangeProblemBanner(range: ResolvedRange): BannerBlock {
  * nothing). Both render "—" with the reason in the description.
  */
 function averageOrderValueTile(
+	t: PluginTranslate,
 	byCurrencyCode: ReadonlyArray<readonly [string, number]>,
 	singleCurrency: Currency | undefined,
 	paidOrderCount: number,
 	period: string,
 ): StatItem {
-	const label = `AOV${singleCurrency === undefined ? "" : ` (${singleCurrency})`} — ${period}`;
+	const label = t("AOV{value1} — {period}", {
+		value1: singleCurrency === undefined ? "" : ` (${singleCurrency})`,
+		period: period,
+	});
 	if (singleCurrency === undefined) {
 		return {
 			label,
 			value: "—",
 			description:
 				byCurrencyCode.length === 0
-					? "Average order value — no paid orders in this period"
-					: "Average order value — orders in this period span several currencies",
+					? t("Average order value — no paid orders in this period")
+					: t("Average order value — orders in this period span several currencies"),
 		};
 	}
 	if (paidOrderCount === 0) {
-		return { label, value: "—", description: "Average order value — no paid orders to average" };
+		return { label, value: "—", description: t("Average order value — no paid orders to average") };
 	}
 	const totalCents = byCurrencyCode[0]?.[1] ?? 0;
 	return {
@@ -852,9 +914,12 @@ function averageOrderValueTile(
 		value: formatMoney(
 			toCents(Math.round(totalCents / paidOrderCount)),
 			singleCurrency,
-			MONEY_LOCALE,
+			moneyLocale(t),
 		),
-		description: `Average order value across ${paidOrderCount} paid ${paidOrderCount === 1 ? "order" : "orders"}`,
+		description: t("Average order value across {paidOrderCount} paid {value2}", {
+			paidOrderCount: paidOrderCount,
+			value2: paidOrderCount === 1 ? "order" : "orders",
+		}),
 	};
 }
 
@@ -886,6 +951,7 @@ function averageOrderValueTile(
  * refunded in full" is consistent rather than contradictory.
  */
 function refundedTileFor(
+	t: PluginTranslate,
 	revenue: RevenueBucketWire[],
 	statuses: StatusCountWire[],
 	currency: Currency | undefined,
@@ -893,16 +959,21 @@ function refundedTileFor(
 ): StatItem {
 	const refundedOrders = statuses.find((s) => s.status === "refunded")?.orderCount ?? 0;
 	const inFull =
-		refundedOrders === 0 ? "no order refunded in full" : `${refundedOrders} refunded in full`;
-	const label = `Refunded${currency === undefined ? "" : ` (${currency})`} — ${period}`;
+		refundedOrders === 0
+			? t("no order refunded in full")
+			: t("{refundedOrders} refunded in full", { refundedOrders: refundedOrders });
+	const label = t("Refunded{value1} — {period}", {
+		value1: currency === undefined ? "" : ` (${currency})`,
+		period: period,
+	});
 	if (currency === undefined) {
 		return {
 			label,
 			value: "—",
 			description:
 				revenue.length === 0
-					? "Money returned — no orders in this period"
-					: "Money returned — this period spans several currencies",
+					? t("Money returned — no orders in this period")
+					: t("Money returned — this period spans several currencies"),
 		};
 	}
 	const totalCents = refundedFor(revenue, currency);
@@ -912,13 +983,20 @@ function refundedTileFor(
 		// a zero standing in for an unknown (DA-7).
 		const known =
 			refundedOrders === 0
-				? "No fully refunded orders"
-				: `${refundedOrders} fully refunded ${refundedOrders === 1 ? "order" : "orders"}`;
-		return { label, value: "—", description: `${known}; refunded amount not yet reported` };
+				? t("No fully refunded orders")
+				: t("{refundedOrders} fully refunded {value2}", {
+						refundedOrders: refundedOrders,
+						value2: refundedOrders === 1 ? "order" : "orders",
+					});
+		return {
+			label,
+			value: "—",
+			description: t("{known}; refunded amount not yet reported", { known: known }),
+		};
 	}
 	return {
 		label,
-		value: formatMoney(toCents(totalCents), currency, MONEY_LOCALE),
+		value: formatMoney(toCents(totalCents), currency, moneyLocale(t)),
 		// TWO DISCLOSURES RIDE HERE, because both change what the number means and
 		// neither is visible from the figure (DA-7):
 		//  - it is RETRO-MUTABLE. The cohort is orders PLACED in the period, so a
@@ -930,7 +1008,10 @@ function refundedTileFor(
 		//    fate is unknown). A store sitting on an ambiguous refund therefore
 		//    reads LOWER here than its own order screens suggest, and the reason
 		//    is not otherwise discoverable from this page.
-		description: `On orders placed in this period; ${inFull}. A later refund changes this figure; refunds in progress are excluded.`,
+		description: t(
+			"On orders placed in this period; {inFull}. A later refund changes this figure; refunds in progress are excluded.",
+			{ inFull: inFull },
+		),
 	};
 }
 

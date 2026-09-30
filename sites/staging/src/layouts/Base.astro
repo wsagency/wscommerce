@@ -16,12 +16,19 @@ import { Font } from "astro:assets";
 import { getMenu, getSiteSettings } from "emdash";
 import {
 	cartCountLabel,
-	FALLBACK_MENU_ITEMS,
+	fallbackMenuItems,
 	isCartLink,
 	withAccountLink,
 	type NavItem,
 } from "../lib/nav.js";
 import "../styles/tokens.css";
+import { storefrontPresentation } from "../lib/messages.js";
+import { demoMenu, demoSettings } from "../lib/demo-content.js";
+import { safeLanguageReturn, varyBySiteLocale } from "../lib/site-locale.js";
+
+const { locale, t } = storefrontPresentation(Astro);
+varyBySiteLocale(Astro.response.headers);
+const returnTo = safeLanguageReturn(Astro.url.pathname + Astro.url.search);
 
 interface Props {
 	title: string;
@@ -40,9 +47,9 @@ interface Props {
 	 * Absence is meaningful and is why this is not defaulted: the pages that
 	 * pass nothing — home, the catalog index, 404 — are the ones that read no
 	 * money. A page that shows a price shows the currency; a page that shows
-	 * none says nothing. /checkout/pay passes whatever its cookie stash holds:
-	 * the code beside the place-time total when the stash carries one, and
-	 * nothing when it does not, because then the button names no amount either.
+	 * none says nothing. /checkout/pay passes the same immutable order currency
+	 * as its localized total or its stash fallback. A missing total carries no
+	 * amount and therefore no currency.
 	 */
 	currency?: string | null;
 }
@@ -65,8 +72,8 @@ const { title, description, cartCount = null, currency = null } = Astro.props;
  *
  * The fallbacks are chosen to be TRUE rather than merely non-empty:
  *
- *  - the title falls back to "Otta", which is what an absent `settings.title`
- *    already did — a failed read and an unset setting land in the same place
+ *  - the title falls back to "WSCommerce", which is what an absent `settings.title`
+ *    does — a failed read and an unset setting land in the same place
  *    rather than growing a second rule;
  *  - the nav falls back to the routes THIS THEME defines (`FALLBACK_MENU_ITEMS`
  *    in lib/nav.ts). They exist whatever the content store is doing, so a
@@ -84,20 +91,20 @@ try {
 } catch (error) {
 	console.error("[site-staging] layout settings read threw:", error);
 }
-const siteTitle = settings.title ?? "Otta";
+const siteTitle = demoSettings(settings, locale).title ?? "WSCommerce";
 const fullTitle = title.includes(siteTitle) ? title : `${title} — ${siteTitle}`;
 
 let navItems: readonly NavItem[] = [];
 try {
-	navItems = (await getMenu("primary"))?.items ?? [];
+	navItems = demoMenu((await getMenu("primary"))?.items ?? [], locale);
 } catch (error) {
 	console.error("[site-staging] layout menu read threw:", error);
-	navItems = FALLBACK_MENU_ITEMS;
+	navItems = fallbackMenuItems(locale);
 }
 ---
 
 <!doctype html>
-<html lang="en">
+<html lang={locale}>
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -115,7 +122,7 @@ try {
 		<Font cssVariable="--u-face-body" preload />
 		<Font cssVariable="--u-face-data" />
 		{/* Per-page <head> additions. Used by the confirmation page for its
-		    `referrer: no-referrer` policy and its bounded meta-refresh poll:
+		    `referrer: same-origin` policy and its bounded meta-refresh poll:
 		    both MUST be in <head> to take effect, and both belong to that page
 		    rather than to every page, so they arrive through this slot. */}
 		<slot name="head" />
@@ -132,26 +139,31 @@ try {
 		{/* The shell wrapper is what aligns the skip link with the header
 		    content once it drops into flow on focus. */}
 		<div class="shell skip-shell">
-			<a href="#main" class="skip-link">Skip to the main content</a>
+			<a href="#main" class="skip-link">{t("Skip to the main content")}</a>
 		</div>
 		<header class="head">
 			<div class="shell head-row">
 				<a href="/" class="wordmark">{siteTitle}</a>
-				<nav class="nav" aria-label="Primary">
+				<nav class="nav" aria-label={t("Primary")}>
 					{
-						withAccountLink(navItems).map((item) => (
+						withAccountLink(navItems, locale).map((item) => (
 							<a href={item.url}>
 								{item.label}
 								{isCartLink(item.url) && cartCount !== null && (
 									<Fragment>
 										<span class="count u-mono" aria-hidden="true"> ({cartCount})</span>
-										<span class="u-sr-only">, {cartCountLabel(cartCount)}</span>
+										<span class="u-sr-only">, {cartCountLabel(cartCount, locale)}</span>
 									</Fragment>
 								)}
 							</a>
 						))
 					}
 				</nav>
+				<form class="language" method="POST" action="/language" aria-label={t("Language")}>
+					<input type="hidden" name="returnTo" value={returnTo} />
+					<button type="submit" name="locale" value="en" lang="en" aria-label={t("Switch to English")} aria-pressed={locale === "en"}>EN</button>
+					<button type="submit" name="locale" value="hr" lang="hr" aria-label={t("Switch to Croatian")} aria-pressed={locale === "hr"}>HR</button>
+				</form>
 			</div>
 		</header>
 		<main id="main" class="shell">
@@ -159,7 +171,7 @@ try {
 		</main>
 		<footer class="foot">
 			<div class="shell foot-row">
-				<span>Otta — content by EmDash, commerce by Otta.</span>
+				<span>{t("WSCommerce — content by EmDash, commerce by WSCommerce.")}</span>
 				{currency !== null && <span class="u-mono">{currency}</span>}
 			</div>
 		</footer>
@@ -225,6 +237,27 @@ try {
 		justify-content: space-between;
 		gap: 1.5rem;
 		padding-block: 1.25rem;
+		flex-wrap: wrap;
+	}
+	.language {
+		display: flex;
+		gap: 0.5rem;
+		align-items: center;
+		margin: 0;
+	}
+	.language button {
+		font: inherit;
+		font-size: 0.75rem;
+		color: var(--u-ink);
+		background: transparent;
+		border: var(--u-hair);
+		border-radius: var(--u-r);
+		padding: 0.375rem 0.5rem;
+		cursor: pointer;
+	}
+	.language button[aria-pressed="true"] {
+		border-bottom: 2px solid var(--u-straw);
+		font-weight: 700;
 	}
 
 	/* §3: the display face set narrow — the object the project is named

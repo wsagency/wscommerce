@@ -74,6 +74,22 @@
  * and all 18 workerd sandbox suites now exercise THIS code through the plugin's
  * public surface. `test/` here covers the package on its own terms.
  */
+export {
+	ADMIN_LOCALE_COOKIE,
+	adminLocaleTag,
+	adminUnitWord,
+	formatAdminQuantity,
+	normalizeAdminLocale,
+	type AdminLocale,
+} from "./locale.js";
+export {
+	adminMessage,
+	translateAdminAuthored,
+	type AdminMessageKey,
+	type AdminMessageValues,
+	type AdminMessageArgs,
+} from "./admin-messages.js";
+export { adminPresentation } from "./admin-copy.js";
 export { canonicalMoneyInput, formatMinorUnitsInput, parseMinorUnitsInput } from "./money-input.js";
 export {
 	MONEY_LOCALE,
@@ -101,6 +117,7 @@ export {
 	ORDER_STATES,
 	TERMINAL_ORDER_STATES,
 	orderStateCell,
+	orderStateLabel,
 	reconciliationSummary,
 	type OrderState,
 } from "./order-status.js";

@@ -211,7 +211,7 @@ describe("the Tempered cart: lines, ribbons and an honest totals block", () => {
 		expect(markup).toContain("view.money");
 		expect(source).toMatch(/from "\.\.\/\.\.\/lib\/cart-view\.js"/);
 		expect(source).toMatch(
-			/lineMoneyText\(linePricing\?\.lineTotal\?\.formatted, pricingDegraded\)/,
+			/lineMoneyText\(linePricing\?\.lineTotal\?\.formatted, pricingDegraded, locale\)/,
 		);
 		// No element whose whole content is a dash. (Em dashes inside a
 		// SENTENCE are prose and are fine — the banners use them.)
@@ -260,7 +260,7 @@ describe("the Tempered cart: lines, ribbons and an honest totals block", () => {
 	test("the totals block names what it does not know instead of inventing it", () => {
 		expect(markup).toContain("<Sum");
 		// §7: shipping is quoted one step later. Never "Free", never a zero.
-		expect(source).toContain('label: "Shipping"');
+		expect(source).toContain('label: t("Shipping")');
 		expect(source).toContain("At checkout");
 		expect(markup).not.toMatch(/Free shipping|\$\d/);
 	});
@@ -269,7 +269,7 @@ describe("the Tempered cart: lines, ribbons and an honest totals block", () => {
 		// Quantity-only is the cart's normal state for a legacy or unsynced
 		// line, and the shopper is about to act on the total either way.
 		expect(source).toContain("Confirmed at checkout");
-		expect(source).toMatch(/NO_SUBTOTAL = pricingDegraded \? .* : PRICED_AT_CHECKOUT_CELL/);
+		expect(source).toMatch(/NO_SUBTOTAL = pricingDegraded \? .* : t\(PRICED_AT_CHECKOUT_CELL\)/);
 		expect(PRICED_AT_CHECKOUT_CELL).toBe("Priced at checkout");
 	});
 
@@ -306,7 +306,7 @@ describe("the Tempered cart: lines, ribbons and an honest totals block", () => {
 			],
 		};
 		expect(totalQty(cart)).toBe(4);
-		expect(source).toMatch(/itemCount === 1 \? "item" : "items"/);
+		expect(source).toContain("itemCountLabel(itemCount, locale)");
 		// No held clause, and no render-time hold snapshot left to go stale.
 		expect(source).not.toContain("heldCount");
 		expect(source).not.toContain("holdView");
@@ -345,13 +345,13 @@ describe("the Tempered cart: lines, ribbons and an honest totals block", () => {
 	test("every row's controls are distinguishable to a screen reader", () => {
 		// Three "Remove" buttons in a row are three identical accessible names
 		// unless the line says which line it is.
-		expect(markup).toContain("label={`Quantity, ${view.name}`}");
-		expect(markup).toMatch(/Remove<span class="u-sr-only"> \{view\.name\}<\/span>/);
-		expect(markup).toMatch(/Update<span class="u-sr-only"> \{view\.name\}<\/span>/);
+		expect(markup).toContain('label={t("Quantity, {name}", { name: view.name })}');
+		expect(markup).toMatch(/\{t\("Remove"\)\}<span class="u-sr-only"> \{view\.name\}<\/span>/);
+		expect(markup).toMatch(/\{t\("Update"\)\}<span class="u-sr-only"> \{view\.name\}<\/span>/);
 	});
 
 	test("error copy is still quoted from error-messages.ts, not rewritten (§10)", () => {
-		expect(source).toContain("cartErrorMessage(error)");
+		expect(source).toContain("cartErrorMessage(error, locale)");
 	});
 
 	test("the empty cart is a designed surface, and a degraded read is not one", () => {
@@ -719,7 +719,7 @@ describe("a checked-out cart is rendered as terminal, and never as a paid one", 
 		expect(terminalMarkup).toMatch(
 			/placedOrderId !== null &&[\s\S]*\/orders\/\$\{encodeURIComponent\(placedOrderId\)\}/,
 		);
-		expect(terminalMarkup).toContain(">View your order<");
+		expect(terminalMarkup).toContain('{t("View your order")}');
 	});
 
 	test("case B — the cart names no order, so the panel offers the checkout it cannot name", () => {
@@ -740,12 +740,12 @@ describe("a checked-out cart is rendered as terminal, and never as a paid one", 
 		// "Check out" button, so asserting it there would pass without the panel
 		// existing.
 		expect(terminalMarkup).toMatch(
-			/placedOrderId === null &&[\s\S]*?href="\/checkout"[\s\S]*?\{CART_RESUME_PURPOSE\}[\s\S]*?\{CART_NO_ORDER_LINK\}/,
+			/placedOrderId === null &&[\s\S]*?href="\/checkout"[\s\S]*?\{t\(CART_RESUME_PURPOSE\)\}[\s\S]*?\{t\(CART_NO_ORDER_LINK\)\}/,
 		);
-		expect(terminalMarkup).toContain(">Return to this checkout<");
+		expect(terminalMarkup).toContain('{t("Return to this checkout")}');
 		// …and all three sit inside the case-B group rather than trailing after
 		// the shared secondary, which the ordered regex alone cannot see.
-		expect(terminalMarkup.indexOf("{CART_NO_ORDER_LINK}")).toBeLessThan(
+		expect(terminalMarkup.indexOf("{t(CART_NO_ORDER_LINK)}")).toBeLessThan(
 			terminalMarkup.indexOf('class="terminal-restart"'),
 		);
 		// The copy arrives through the constants, so the markup carries the NAME
@@ -767,19 +767,19 @@ describe("a checked-out cart is rendered as terminal, and never as a paid one", 
 		expect(terminalMarkup).toContain('action="/checkout/new-cart"');
 		// The consequence rides WITH the control, not in a paragraph somewhere
 		// above it: clearing the cart also bins a payment still in flight.
-		expect(terminalMarkup).toContain("{CART_NEW_CART_CONSEQUENCE}");
+		expect(terminalMarkup).toContain("{t(CART_NEW_CART_CONSEQUENCE)}");
 		expect(CART_NEW_CART_CONSEQUENCE).toMatch(/payment still in progress/);
 		const newCart = terminalMarkup.indexOf('action="/checkout/new-cart"');
-		expect(terminalMarkup.indexOf(">View your order<")).toBeLessThan(newCart);
-		expect(terminalMarkup.indexOf(">Return to this checkout<")).toBeLessThan(newCart);
+		expect(terminalMarkup.indexOf('{t("View your order")}')).toBeLessThan(newCart);
+		expect(terminalMarkup.indexOf('{t("Return to this checkout")}')).toBeLessThan(newCart);
 		// The rank idiom, now written in the SHARED shape (tokens.css `.u-btn`,
 		// promoted in increment 6): `u-btn` is the ink-filled primary, `u-btn
 		// u-btn-ghost` the hairline second rank (the empty state's "Browse
 		// products"). Pinned so CSS cannot promote the way out.
-		expect(terminalMarkup).toMatch(/class="u-btn">View your order</);
-		expect(terminalMarkup).toMatch(/class="u-btn">Return to this checkout</);
-		expect(terminalMarkup).toMatch(/class="u-btn u-btn-ghost">Start a new cart</);
-		expect(terminalMarkup).not.toMatch(/class="u-btn">Start a new cart</);
+		expect(terminalMarkup).toMatch(/class="u-btn">\{t\("View your order"\)\}</);
+		expect(terminalMarkup).toMatch(/class="u-btn">\{t\("Return to this checkout"\)\}</);
+		expect(terminalMarkup).toMatch(/class="u-btn u-btn-ghost">\{t\("Start a new cart"\)\}</);
+		expect(terminalMarkup).not.toMatch(/class="u-btn">\{t\("Start a new cart"\)\}</);
 	});
 
 	test("nothing in the panel claims the buyer paid", () => {
@@ -803,8 +803,8 @@ describe("a checked-out cart is rendered as terminal, and never as a paid one", 
 		expect(terminalMarkup).not.toMatch(CLAIMS_PAYMENT);
 		// And the panel says what it IS, through the constants rather than
 		// alongside them.
-		expect(terminalMarkup).toContain("{CART_CHECKED_OUT_TITLE}");
-		expect(terminalMarkup).toContain("{CART_CHECKED_OUT_BODY}");
+		expect(terminalMarkup).toContain("{t(CART_CHECKED_OUT_TITLE)}");
+		expect(terminalMarkup).toContain("{t(CART_CHECKED_OUT_BODY)}");
 		expect(CART_CHECKED_OUT_TITLE).toBe("This cart has been checked out.");
 		expect(CART_CHECKED_OUT_BODY).toMatch(/can't be changed/);
 	});

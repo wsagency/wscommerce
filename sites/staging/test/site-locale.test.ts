@@ -1,31 +1,110 @@
-/**
- * The storefront's one locale. The pages declare it in `<html lang>`, the
- * checkout summary formats money in it, and the delivery country picker names
- * countries in it — so it must be ONE value, already in canonical form (the
- * plugin's `sanitizeLocale` would otherwise rewrite it and the two could drift).
- */
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import { countryOptions } from "../src/lib/countries.js";
-import { SITE_LOCALE } from "../src/lib/site-locale.js";
+import {
+	normalizeSiteLocale,
+	requestSiteLocale,
+	safeLanguageReturn,
+	varyBySiteLocale,
+} from "../src/lib/site-locale.js";
 
-const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src");
-
-describe("SITE_LOCALE", () => {
-	test("is a canonical BCP 47 tag — what the plugin's sanitiser would hand back unchanged", () => {
-		expect(new Intl.Locale(SITE_LOCALE).toString()).toBe(SITE_LOCALE);
+describe("request language", () => {
+	test.each([
+		["hr-HR", "hr"],
+		["EN-us", "en"],
+		[" hr ", "hr"],
+		["sr-HR", null],
+		["hr_bad", null],
+		["%", null],
+		[null, null],
+	])("normalizes supported BCP-47 input %s", (input, expected) => {
+		expect(normalizeSiteLocale(input)).toBe(expected);
 	});
-
-	test("is the language the layout declares", () => {
-		const base = readFileSync(path.join(SRC, "layouts/Base.astro"), "utf8");
-		expect(base).toContain(`<html lang="${SITE_LOCALE}">`);
+	test("defaults to English and ignores malformed or unsupported preferences", () => {
+		expect(requestSiteLocale(new Request("https://shop.test/"))).toBe("en");
+		expect(
+			requestSiteLocale(
+				new Request("https://shop.test/", {
+					headers: {
+						cookie: "wscommerce_locale=%ZZ",
+						"accept-language": "fr-FR,hr-bad;q=0.8",
+					},
+				}),
+			),
+		).toBe("en");
 	});
+	test("uses a persisted choice ahead of browser preferences", () => {
+		expect(
+			requestSiteLocale(
+				new Request("https://shop.test/", {
+					headers: {
+						cookie: "cart=cart-id; wscommerce_locale=en-US",
+						"accept-language": "hr-HR,hr;q=0.9",
+					},
+				}),
+			),
+		).toBe("en");
+	});
+	test("negotiates the most preferred supported browser language", () => {
+		expect(
+			requestSiteLocale(
+				new Request("https://shop.test/", {
+					headers: {
+						"accept-language": "fr-FR, en;q=0.4, hr-HR;q=0.8",
+					},
+				}),
+			),
+		).toBe("hr");
+		expect(
+			requestSiteLocale(
+				new Request("https://shop.test/", {
+					headers: {
+						"accept-language": "hr;q=0,en;q=0.5",
+					},
+				}),
+			),
+		).toBe("en");
+	});
+	test("keeps country option identifiers stable when labels change", () => {
+		expect(countryOptions("en").find((o) => o.code === "DE")).toEqual({
+			code: "DE",
+			label: "Germany",
+		});
+		expect(countryOptions("hr").find((o) => o.code === "DE")).toEqual({
+			code: "DE",
+			label: "Njemačka",
+		});
+	});
+	test("merges locale cache variation without dropping another header or duplicating names", () => {
+		const headers = new Headers({ Vary: "Accept-Encoding, cookie" });
+		varyBySiteLocale(headers);
+		varyBySiteLocale(headers);
+		expect(headers.get("Vary")).toBe("Accept-Encoding, cookie, Accept-Language");
+		const wildcard = new Headers({ Vary: "*" });
+		varyBySiteLocale(wildcard);
+		expect(wildcard.get("Vary")).toBe("*");
+	});
+});
 
-	test("names countries in that language", () => {
-		expect(countryOptions(SITE_LOCALE).find((o) => o.code === "DE")?.label).toBe(
-			new Intl.DisplayNames([SITE_LOCALE], { type: "region" }).of("DE"),
-		);
+describe("language return navigation", () => {
+	test("preserves private order capabilities, selection, encodings and fragments", () => {
+		const target = "/orders/order-42?access=private%2Bkey%3D&sku=ABC&coupon=SAVE%20ME&p=2#receipt";
+		expect(safeLanguageReturn(target)).toBe(target);
+	});
+	test.each([
+		"https://outside.test/",
+		"https://shop.test/cart",
+		"//outside.test/",
+		"/\\outside.test/",
+		"/%2Foutside.test/",
+		"/%5Coutside.test/",
+		"/.//outside.test/",
+		"/cart\r\nLocation: https://outside.test/",
+		"javascript:alert(1)",
+		"/bad%zz",
+		"cart",
+		"",
+		null,
+	])("rejects external or malformed target %s", (input) => {
+		expect(safeLanguageReturn(input)).toBe("/");
 	});
 });

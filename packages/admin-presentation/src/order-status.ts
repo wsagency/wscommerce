@@ -28,6 +28,8 @@
  * from this list, `customActions` comes from this list, and the screens DROP
  * anything outside it.
  */
+import { adminMessage, translateAdminAuthored } from "./admin-messages.js";
+
 export const ORDER_STATES = [
 	"pending",
 	"paid",
@@ -112,8 +114,13 @@ export const TERMINAL_ORDER_STATES: ReadonlySet<string> = new Set([
  * from it. Two facts in a cell of one word is also the visual weight a badge
  * was reaching for: in a column of bare words, the long cells are the marks.
  */
-export function orderStateCell(state: string): string {
-	return TERMINAL_ORDER_STATES.has(state) ? `${state} · closed` : state;
+export function orderStateLabel(state: string, locale: unknown = "en"): string {
+	return ORDER_STATE_SET.has(state) ? translateAdminAuthored(locale, state) : state;
+}
+
+export function orderStateCell(state: string, locale: unknown = "en"): string {
+	const label = orderStateLabel(state, locale);
+	return TERMINAL_ORDER_STATES.has(state) ? `${label} · ${adminMessage(locale, "closed")}` : label;
 }
 
 /**
@@ -125,8 +132,13 @@ export function orderStateCell(state: string): string {
  * during the migration must not have to decide whether two different phrasings
  * mean the same thing. Takes primitives so this module stays free of wire types.
  */
-export function reconciliationSummary(flag: string | null, resolvedOutcome: string | null): string {
-	if (flag !== null) return "\u26a0 Needs reconciliation";
-	if (resolvedOutcome !== null) return `Resolved (${resolvedOutcome})`;
-	return "None";
+export function reconciliationSummary(
+	flag: string | null,
+	resolvedOutcome: string | null,
+	locale: unknown = "en",
+): string {
+	if (flag !== null) return adminMessage(locale, "⚠ Needs reconciliation");
+	if (resolvedOutcome !== null)
+		return adminMessage(locale, "Resolved ({outcome})", { outcome: resolvedOutcome });
+	return adminMessage(locale, "None");
 }

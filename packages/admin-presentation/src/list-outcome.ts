@@ -20,6 +20,8 @@
  * IO-FREE — pure `Intl` and string work, safe inside the workerd sandbox (G7)
  * and in a browser.
  */
+import { adminMessage, translateAdminAuthored } from "./admin-messages.js";
+import { adminLocaleTag, normalizeAdminLocale } from "./locale.js";
 import { ABSENT } from "./copy.js";
 import { DATE_LOCALE } from "./datetime.js";
 
@@ -29,6 +31,7 @@ import { DATE_LOCALE } from "./datetime.js";
 export interface RowNoun {
 	readonly one: string;
 	readonly other: string;
+	readonly few?: string;
 }
 
 /** The pinned locale the count is pluralized in — deliberately the console's ONE
@@ -155,7 +158,7 @@ function statedTotal(count: number, total: number | undefined): number | undefin
 export function rowCountLine(
 	count: number,
 	noun: RowNoun,
-	opts: { complete: boolean; total?: number; scopeSuffix?: string },
+	opts: { complete: boolean; total?: number; scopeSuffix?: string; locale?: unknown },
 ): string | undefined {
 	// ZERO ROWS RENDER NO COUNT — `total` present or not. The alternative,
 	// "17 orders" sitting immediately above "No orders yet" or "Nothing on this
@@ -163,11 +166,14 @@ export function rowCountLine(
 	if (count <= 0) return undefined;
 	const stated = statedTotal(count, opts.total);
 	const n = stated ?? count;
-	const word = COUNT_PLURALS.select(n) === "one" ? noun.one : noun.other;
-	const formatted = COUNT_NUMERALS.format(n);
+	const hr = normalizeAdminLocale(opts.locale) === "hr";
+	const plural = hr ? new Intl.PluralRules("hr").select(n) : COUNT_PLURALS.select(n);
+	const word =
+		plural === "one" ? noun.one : plural === "few" ? (noun.few ?? noun.other) : noun.other;
+	const formatted = hr ? new Intl.NumberFormat("hr-HR").format(n) : COUNT_NUMERALS.format(n);
 	return stated !== undefined || opts.complete
 		? `${formatted} ${word}`
-		: `${formatted} ${word} ${opts.scopeSuffix ?? PAGE_SCOPED_SUFFIX}`;
+		: `${formatted} ${word} ${opts.scopeSuffix ?? adminMessage(opts.locale, "on this page")}`;
 }
 
 /** The pager's two controls, authored here for the same reason `Load more` is:
@@ -295,13 +301,17 @@ export function pageCount(
  * the page the operator actually walked to. `Page 7 of 6` is a contradiction on
  * screen; a dash is an absence.
  */
-export function pagePositionLine(opts: {
-	index?: number;
-	pages?: number;
-	/** How many pages are on screen at once. Absent or 1 is the ordinary single
-	 *  page; above that the line states the range. */
-	span?: number;
-}): string | undefined {
+export function pagePositionLine(
+	opts: {
+		index?: number;
+		pages?: number;
+		/** How many pages are on screen at once. Absent or 1 is the ordinary single
+		 *  page; above that the line states the range. */
+		span?: number;
+	},
+	locale: unknown = "en",
+): string | undefined {
+	const numerals = new Intl.NumberFormat(adminLocaleTag(locale, "date"));
 	const { index, pages } = opts;
 	if (index === undefined && pages === undefined) return undefined;
 	const span =
@@ -310,18 +320,25 @@ export function pagePositionLine(opts: {
 		pages !== undefined && Number.isSafeInteger(pages) && pages > 0 && (index ?? 0) <= pages
 			? pages
 			: undefined;
-	const m = usablePages === undefined ? ABSENT : COUNT_NUMERALS.format(usablePages);
+	const m = usablePages === undefined ? ABSENT : numerals.format(usablePages);
 	if (span === 1) {
-		return `Page ${index === undefined ? ABSENT : COUNT_NUMERALS.format(index)} of ${m}`;
+		return adminMessage(locale, "Page {index} of {pages}", {
+			index: index === undefined ? ABSENT : numerals.format(index),
+			pages: m,
+		});
 	}
-	if (index === undefined) return `Pages ${ABSENT} of ${m}`;
+	if (index === undefined)
+		return adminMessage(locale, "Pages {index} of {pages}", { index: ABSENT, pages: m });
 	// CLAMPED AT ONE because `span` counts RESPONSES, not pages of the collection:
 	// a window built from a deep link plus a `Load more` spans two responses while
 	// its first page number is unknown, and a caller that ever hands a span larger
 	// than the position it belongs to would otherwise compute a page zero — or a
 	// negative one — and print it.
-	const start = COUNT_NUMERALS.format(Math.max(1, index - span + 1));
-	return `Pages ${start}${PAGE_RANGE_DASH}${COUNT_NUMERALS.format(index)} of ${m}`;
+	const start = numerals.format(Math.max(1, index - span + 1));
+	return adminMessage(locale, "Pages {index} of {pages}", {
+		index: `${start}${PAGE_RANGE_DASH}${numerals.format(index)}`,
+		pages: m,
+	});
 }
 
 /** The wording of ONE zero state. Screens author every string. */
@@ -414,6 +431,8 @@ export type ListOutcome =
 	  } & StatedTotal);
 
 export interface ListOutcomeOptions {
+	/** Presentation preference; absent or unsupported values use English. */
+	readonly locale?: unknown;
 	/** Rows on the page about to be rendered. */
 	readonly count: number;
 	/** Whether any filter is on — the same boolean the active-filter summary is
@@ -486,6 +505,7 @@ export function listOutcome(opts: ListOutcomeOptions): ListOutcome {
 	const stated = narrowedAfterFetch ? undefined : statedTotal(opts.count, opts.total);
 	const countLine = rowCountLine(opts.count, opts.noun, {
 		complete: opts.firstPage && !opts.hasNext && !narrowedAfterFetch,
+		locale: opts.locale,
 		// REFUSED, NOT MERELY UNCLAIMED: a `total` is dropped here whenever the
 		// scope says the page was narrowed after the fetch, even if the caller
 		// passed one — see `countScope`'s doc. This is what survives a caller
@@ -500,11 +520,14 @@ export function listOutcome(opts: ListOutcomeOptions): ListOutcome {
 		return { kind: "rows", countLine, emptyText: opts.noMatch.emptyText, statedTotal: stated };
 	}
 	if (opts.hasNext) {
-		const lead = opts.filtered ? opts.noMatch.emptyText : NOTHING_ON_PAGE;
+		const lead = opts.filtered
+			? opts.noMatch.emptyText
+			: adminMessage(opts.locale, "Nothing on this page.");
 		return {
 			kind: "scan",
 			countLine: undefined,
-			scanNote: opts.noMatch.scanNote ?? `${lead} ${SCAN_FURTHER}`,
+			scanNote:
+				opts.noMatch.scanNote ?? `${lead} ${adminMessage(opts.locale, "Load more scans further.")}`,
 			statedTotal: stated,
 		};
 	}
@@ -515,7 +538,14 @@ export function listOutcome(opts: ListOutcomeOptions): ListOutcome {
 	// `noMatch` is NOT gated the same way, and the asymmetry is deliberate: it
 	// names the operator's OWN filter rather than the collection, and the undo it
 	// carries is the right next act on any page.
-	const copy = opts.filtered ? opts.noMatch : opts.firstPage ? opts.empty : PAGE_ZERO;
+	const copy = opts.filtered
+		? opts.noMatch
+		: opts.firstPage
+			? opts.empty
+			: {
+					title: translateAdminAuthored(opts.locale, PAGE_ZERO.title),
+					description: translateAdminAuthored(opts.locale, PAGE_ZERO.description),
+				};
 	const offer: ZeroStateOffer = opts.filtered
 		? "clear-filters"
 		: opts.firstPage

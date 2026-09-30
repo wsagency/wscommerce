@@ -26,6 +26,8 @@ Invoice ports carry a frozen order/billing/tax snapshot and an external correlat
 
 Offline payments support bank transfer and COD as native order payment methods, with buyer instructions and authorized manual confirmation. Unverified public input cannot mark an order paid. Shipping has configured flat/free methods and a carrier adapter boundary. A zero-priced named collection method uses the existing address-based flat-rate flow; dedicated pickup scheduling remains a further module. MBE implementation and live booking require its actual API contract; an invented endpoint is prohibited.
 
+Croatian bank-transfer checkout also requires payment instructions and a bank-compatible 2D payment barcode generated from frozen, structured payment data. The current foundation provides instructions and authorized receipts; the barcode generator and bank-app acceptance are an outstanding core milestone. Interface localization must never reconstruct barcode amounts or account identifiers by parsing translated display text.
+
 ## WooCommerce compatibility is a core feature
 
 The native domain remains authoritative. A separate compatibility profile exposes selected WooCommerce REST API v3 contracts at `/wp-json/wc/v3`, plus API discovery and signed outbound webhook payloads. Numeric external IDs must be persistent and stable; they must not be derived from lossy UUID hashes.

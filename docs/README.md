@@ -1,6 +1,7 @@
 # Documentation
 
 - [Developer guide](development/README.md): local setup, architecture, extension points, adapters, testing and releases.
+- [English and Croatian interfaces](development/localization.md): presentation translations while source and documentation remain English.
 - [Engineering practices](../DEVELOPMENT.md) and [contributing](../CONTRIBUTING.md).
 - [Deployment](../DEPLOYMENT.md): Cloudflare resources, configuration, build/deploy and initial claim.
 - [Provider/invoice/Woo integration](integrations.md): operator setup, supported profiles and account acceptance.

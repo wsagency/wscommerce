@@ -18,6 +18,8 @@ import { busyResponse, dispatchOttaRoute, isBusyResult } from "../../../lib/otta
 
 const LOGIN_PATH = "/account/login";
 
+import { siteLocale } from "../../../lib/site-locale.js";
+
 export const POST: APIRoute = async (context) => {
 	// CSRF FIRST — emdash disables Astro's checkOrigin and guards only
 	// /_emdash/api/* (ADR-0006); without this a cross-site form could make a
@@ -38,7 +40,7 @@ export const POST: APIRoute = async (context) => {
 		context.url,
 	);
 	// Busy: nothing was issued, so asking again is safe — the 503 says so.
-	if (isBusyResult(result)) return busyResponse(LOGIN_PATH);
+	if (isBusyResult(result)) return busyResponse(LOGIN_PATH, siteLocale(context));
 	if (result === null || !result.ok) return seeOther(context, LOGIN_PATH, SERVICE_UNAVAILABLE);
 
 	const sent = new URL(LOGIN_PATH, context.url);

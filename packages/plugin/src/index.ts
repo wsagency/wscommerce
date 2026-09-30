@@ -473,6 +473,7 @@ export type {
 	InvoiceSweepResult,
 } from "./integrations/invoices.js";
 export { integrationConfigurationFromBindings } from "./integrations/runtime-configuration.js";
+export { ADMIN_LOCALE_HEADER, forwardAdminLocale } from "./admin/locale-host.js";
 export {
 	withWooCommerceIntegrations,
 	runWooWebhookSweep,

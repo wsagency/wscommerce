@@ -34,6 +34,7 @@
  */
 import type { HTMLAttributes } from "astro/types";
 import { restProps } from "../lib/rest-props.js";
+import { storefrontPresentation } from "../lib/messages.js";
 import { isUnpricedText, moneyCellText } from "../lib/totals.js";
 
 export interface LedgerRow {
@@ -64,10 +65,12 @@ interface Props extends HTMLAttributes<"div"> {
 	rows: LedgerRow[];
 }
 
+const { locale, t } = storefrontPresentation(Astro);
+
 const { rows, class: className, ...rest } = Astro.props;
 
 const cells = rows.map((row) => {
-	const money = moneyCellText(row.money, row.fallback);
+	const money = moneyCellText(row.money, row.fallback, locale);
 	return {
 		sku: row.sku,
 		qty: row.qty,
@@ -89,16 +92,16 @@ const cells = rows.map((row) => {
 						{/* Named only when something else already named the line. On a
 						    title-less row the SKU IS the name and a label would just
 						    double it. */}
-						{cell.title !== null && <span class="u-sr-only">Item code </span>}
+						{cell.title !== null && <span class="u-sr-only">{t("Item code")} </span>}
 						{cell.sku}
 					</span>
 				</span>
 				<span class="u-mono qty">
-					<span class="u-sr-only">Quantity </span>
+					<span class="u-sr-only">{t("Quantity")} </span>
 					{cell.qty}
 				</span>
 				<span class:list={["u-mono", "money", cell.unpriced && "unpriced"]}>
-					<span class="u-sr-only">Line total </span>
+					<span class="u-sr-only">{t("Line total")} </span>
 					{cell.money}
 				</span>
 			</div>

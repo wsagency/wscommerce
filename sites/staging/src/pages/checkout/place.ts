@@ -29,6 +29,7 @@ import {
 	type CheckoutUrlSelection,
 } from "../../lib/checkout-selection.js";
 import { isPlausibleEmail, normalizeBuyerRef } from "../../lib/email.js";
+import { siteLocale } from "../../lib/site-locale.js";
 import { rejectCrossOrigin } from "../../lib/origin-guard.js";
 import { STRIPE_PUBLISHABLE_KEY } from "../../lib/stripe-config.js";
 import { busyResponse, dispatchOttaRoute, formString, isBusyResult } from "../../lib/otta-api.js";
@@ -269,6 +270,7 @@ export const POST: APIRoute = async (context) => {
 		{
 			cartId,
 			buyerRef: email,
+			locale: siteLocale(context),
 			idempotencyKey,
 			...(formString(form.get("paymentMethod")) !== undefined ? { paymentMethod } : {}),
 			...(couponCode !== undefined ? { couponCode } : {}),
@@ -283,7 +285,7 @@ export const POST: APIRoute = async (context) => {
 	// route that mints a payment intent). The 503 invites the buyer to try again:
 	// a reload re-posts the same `checkout:<cartId>` key, and since #337 a
 	// same-key replay finishes a partial first attempt rather than skipping it.
-	if (isBusyResult(result)) return busyResponse("/checkout");
+	if (isBusyResult(result)) return busyResponse("/checkout", siteLocale(context));
 	if (result === null || !result.ok) {
 		// Back to /checkout, which can explain and let the buyer retry — the cart
 		// is still theirs, and for CART_CHECKED_OUT the page offers a way out. The

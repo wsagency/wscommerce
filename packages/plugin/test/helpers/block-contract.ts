@@ -84,6 +84,8 @@ export type BlockLevel = "list" | "detail";
 export interface BlockContractOptions {
 	screen: ScreenName;
 	level: BlockLevel;
+	/** Select the constant authored panel names for the response language. */
+	locale?: "en" | "hr";
 }
 
 /**
@@ -107,7 +109,7 @@ export function assertBlockContract(
 		...checkX13(blocks),
 		...checkX14(blocks),
 		...checkX15(blocks),
-		...checkX16(blocks, options.screen, options.level),
+		...checkX16(blocks, options.screen, options.level, options.locale ?? "en"),
 		...checkX17(blocks),
 		...checkX18(blocks),
 		...checkX20(blocks),
@@ -174,8 +176,10 @@ function allStrings(value: unknown, out: string[] = []): string[] {
 // X-9's heuristic with its count exclusion"). Reused by X-9 and X-25 — the
 // same "does this label READ as money" question, asked of a table/fields
 // value and of a meter respectively.
-const MONEY_LABEL_RE = /amount|total|price|revenue|cost|subtotal|discount|refund/i;
-const COUNT_EXCLUSION_RE = /count|recorded|quantity|qty|items/i;
+const MONEY_LABEL_RE =
+	/amount|total|price|revenue|cost|subtotal|discount|refund|iznos|ukupno|cijena|prihod|trošak|potrošnja|popust|povrat/i;
+const COUNT_EXCLUSION_RE =
+	/count|recorded|quantity|qty|items|broj|zabilježen|količin|stavk|iskorišten/i;
 const RAW_DIGITS_RE = /^\d+$/;
 
 function isMoneyLabel(label: string): boolean {
@@ -568,7 +572,12 @@ const D2_PANELS: Partial<Record<ScreenName, readonly string[]>> = {
 	coupons: ["Coupon", "Redemptions"],
 };
 
-function checkX16(blocks: readonly LooseBlock[], screen: ScreenName, level: BlockLevel): string[] {
+function checkX16(
+	blocks: readonly LooseBlock[],
+	screen: ScreenName,
+	level: BlockLevel,
+	locale: "en" | "hr",
+): string[] {
 	const out: string[] = [];
 	const tabs = findBlocks(blocks, "tab");
 	if (level === "list") {
@@ -579,7 +588,8 @@ function checkX16(blocks: readonly LooseBlock[], screen: ScreenName, level: Bloc
 		}
 		return out;
 	}
-	const expected = D2_PANELS[screen];
+	const expected =
+		locale === "hr" && screen === "coupons" ? ["Kupon", "Iskorištenja"] : D2_PANELS[screen];
 	if (expected === undefined) {
 		out.push(
 			`X-16: screen "${screen}" has no detail screen per D-2 (§4) — assertBlockContract should never be called with level:"detail" for it.`,

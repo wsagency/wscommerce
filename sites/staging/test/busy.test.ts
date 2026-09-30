@@ -325,6 +325,17 @@ describe("busy answers — 503 + Retry-After, friendly copy", () => {
 		expect(body).toContain('href="/products/mug?x=1&amp;y=2"');
 	});
 
+	test("busyResponse translates authored recovery copy for Croatian without changing status or target", async () => {
+		const response = busyResponse("/cart?sku=Paid", "hr");
+		expect(response.status).toBe(503);
+		expect(response.headers.get("retry-after")).toBe(String(BUSY_RETRY_AFTER_SECONDS));
+		const body = await response.text();
+		expect(body).toContain('lang="hr"');
+		expect(body).toContain("Trgovina je zauzeta — pokušajte ponovno");
+		expect(body).toContain("Vrati se");
+		expect(body).toContain('href="/cart?sku=Paid"');
+	});
+
 	test("markBusy turns a page response into a 503 with Retry-After", () => {
 		const page = { status: 200, headers: new Headers() };
 		markBusy(page);

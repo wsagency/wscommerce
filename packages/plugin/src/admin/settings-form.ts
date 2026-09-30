@@ -1,3 +1,4 @@
+import { requestTranslator, type PluginTranslate } from "./localization.js";
 import { EMAIL_FROM_KEY } from "../email/ctx-http-email-sender.js";
 import { isPlausiblePayTo, X402_ACCEPTS_KEY, X402_PAYTO_KEY } from "../payments/x402-wiring.js";
 import {
@@ -377,17 +378,22 @@ async function readPageState(ctx: PluginContext): Promise<SettingsPageState> {
  *  and a blank submit deliberately keeps the stored secret, so the honest
  *  receipt for that path says nothing was entered. Names the credential,
  *  never any part of its value. */
-function secretNotice(spec: SecretFieldSpec, entered: boolean): Notice {
+function secretNotice(t: PluginTranslate, spec: SecretFieldSpec, entered: boolean): Notice {
 	return entered
 		? {
 				variant: "default",
-				title: `${spec.noun} saved`,
-				description: `The ${spec.noun.toLowerCase()} was updated. It is stored write-only and never displayed.`,
+				title: t("{noun} saved", { noun: t(spec.noun) }),
+				description: t("The {value1} was updated. It is stored write-only and never displayed.", {
+					value1: t(spec.noun).toLowerCase(),
+				}),
 			}
 		: {
 				variant: "default",
-				title: `Nothing entered — ${spec.noun.toLowerCase()} unchanged`,
-				description: `The field was blank, so the stored ${spec.noun.toLowerCase()} was kept. Enter a value to replace it.`,
+				title: t("Nothing entered — {value1} unchanged", { value1: t(spec.noun).toLowerCase() }),
+				description: t(
+					"The field was blank, so the stored {value1} was kept. Enter a value to replace it.",
+					{ value1: t(spec.noun).toLowerCase() },
+				),
 			};
 }
 
@@ -444,6 +450,8 @@ export const SETTINGS_SCHEMA: SettingsSchema = {
 const DISPLAY_NAME_MAX = 200;
 
 export interface SettingsFormInput {
+	/** Request-local presentation preference; canonical mutations are unchanged. */
+	locale?: unknown;
 	/** em-dash BlockInteraction discriminant: `"page_load"` | `"block_action"` |
 	 *  `"form_submit"`. Present on a real host interaction; absent → treated as a
 	 *  page load. */
@@ -459,6 +467,7 @@ export interface SettingsFormInput {
 
 export function createSettingsFormHandler(): RouteHandler<SettingsFormInput> {
 	return async (routeCtx, ctx) => {
+		const t = requestTranslator(routeCtx);
 		const input = routeCtx.input;
 		const action = typeof input.action_id === "string" ? input.action_id : "load";
 		// THE COMPOSITION ROOT, not a constructor (work order 02, INC-B10c-ii):
@@ -478,10 +487,13 @@ export function createSettingsFormHandler(): RouteHandler<SettingsFormInput> {
 				// BUG FIX: this branch used to return `[header, banner]` — two
 				// blocks, no form — so a merchant who typed a 201-char name was
 				// stranded with no field to correct it. Re-render the full page.
-				return renderPage(ctx, client, {
+				return renderPage(t, ctx, client, {
 					variant: "error",
-					title: "Display name not saved",
-					description: `Store display name must be 1–${DISPLAY_NAME_MAX} characters — it was not changed.`,
+					title: t("Display name not saved"),
+					description: t(
+						"Store display name must be 1–{displayNameMax} characters — it was not changed.",
+						{ displayNameMax: DISPLAY_NAME_MAX },
+					),
 				});
 			}
 			await ctx.kv.set(STORE_DISPLAY_NAME_KEY, name);
@@ -499,14 +511,14 @@ export function createSettingsFormHandler(): RouteHandler<SettingsFormInput> {
 			// other two groups from without a live `GET /settings`, so the fresh
 			// read is the fix, not a regression to hide. The test was updated in
 			// the same change (see `settings-widget.sandbox.test.ts`).
-			const page = await renderPage(ctx, client, {
+			const page = await renderPage(t, ctx, client, {
 				variant: "default",
-				title: "Display name saved",
-				description: `Store display name saved: ${name}.`,
+				title: t("Display name saved"),
+				description: t("Store display name saved: {name}.", { name: name }),
 			});
 			return {
 				...page,
-				toast: { message: "Display name saved", type: "success" },
+				toast: { message: t("Display name saved"), type: "success" },
 			} satisfies BlockResponse;
 		}
 
@@ -539,11 +551,11 @@ export function createSettingsFormHandler(): RouteHandler<SettingsFormInput> {
 					}
 				}
 			}
-			const page = await renderPage(ctx, client, secretNotice(secretSpec, entered));
+			const page = await renderPage(t, ctx, client, secretNotice(t, secretSpec, entered));
 			return {
 				...page,
 				toast: {
-					message: `${secretSpec.noun} ${entered ? "saved" : "unchanged"}`,
+					message: t(entered ? "{noun} saved" : "{noun} unchanged", { noun: t(secretSpec.noun) }),
 					type: entered ? "success" : "info",
 				},
 			} satisfies BlockResponse;
@@ -578,20 +590,21 @@ export function createSettingsFormHandler(): RouteHandler<SettingsFormInput> {
 			for (const [key, value] of submitted) offlineSettings.set(key, value);
 			const offlineError = offlineSettingsError(offlineSettings);
 			if (offlineError !== null)
-				return renderPage(ctx, client, {
+				return renderPage(t, ctx, client, {
 					variant: "error",
-					title: "Payment settings not saved",
-					description: `${offlineError} Nothing was saved.`,
+					title: t("Payment settings not saved"),
+					description: t("{offlineError} Nothing was saved.", { offlineError: t(offlineError) }),
 				});
 			if (payTo.length > 0 && !isPlausiblePayTo(payTo)) {
 				// Names the FIELD and the SHAPE, never the rejected value — the value
 				// is an address, not a secret, but echoing rejected input back into a
 				// banner is how a screen grows an injection surface it never needed.
-				return renderPage(ctx, client, {
+				return renderPage(t, ctx, client, {
 					variant: "error",
-					title: "Payment settings not saved",
-					description:
+					title: t("Payment settings not saved"),
+					description: t(
 						"The x402 destination wallet is not a wallet address (expected 0x followed by 40 hex characters, optionally CAIP-10 prefixed). Nothing was saved.",
+					),
 				});
 			}
 			// Issue #306: the sign-in link page must be an absolute http(s) URL with no
@@ -599,22 +612,23 @@ export function createSettingsFormHandler(): RouteHandler<SettingsFormInput> {
 			// refusal, and the same rule the send path re-checks (`login-link.ts`).
 			const loginLinkUrl = submitted.get(LOGIN_LINK_URL_KEY) ?? "";
 			if (loginLinkUrl.length > 0 && !isValidLoginLinkUrl(loginLinkUrl)) {
-				return renderPage(ctx, client, {
+				return renderPage(t, ctx, client, {
 					variant: "error",
-					title: "Payment settings not saved",
-					description:
+					title: t("Payment settings not saved"),
+					description: t(
 						"The sign-in link page must be an absolute http(s) URL with no username or password. Nothing was saved.",
+					),
 				});
 			}
 			for (const [key, value] of submitted) await ctx.kv.set(key, value);
-			const page = await renderPage(ctx, client, {
+			const page = await renderPage(t, ctx, client, {
 				variant: "default",
-				title: "Payment settings saved",
-				description: "Email, sign-in link, x402 and offline payment settings were updated.",
+				title: t("Payment settings saved"),
+				description: t("Email, sign-in link, x402 and offline payment settings were updated."),
 			});
 			return {
 				...page,
-				toast: { message: "Payment settings saved", type: "success" },
+				toast: { message: t("Payment settings saved"), type: "success" },
 			} satisfies BlockResponse;
 		}
 
@@ -628,7 +642,7 @@ export function createSettingsFormHandler(): RouteHandler<SettingsFormInput> {
 			// There is nothing to authenticate any more (INC-D3a): `updateSettings`
 			// runs in-process against this plugin's own store, not a separate
 			// service call that would need a token attached.
-			const result = await client.updateSettings(patch, { idempotencyKey: key });
+			const result = await client.updateSettings(patch, { idempotencyKey: key }, t);
 			// This branch writes no display name, so a fresh read here is current.
 			const state = await readPageState(ctx);
 			if (!result.ok) {
@@ -656,7 +670,7 @@ export function createSettingsFormHandler(): RouteHandler<SettingsFormInput> {
 					lowStockThreshold: patch.lowStockThreshold ?? stored?.lowStockThreshold ?? 0,
 				};
 				return {
-					blocks: buildSettingsBlocks({
+					blocks: buildSettingsBlocks(t, {
 						...state,
 						settings: shown,
 						// INC-15: the LABEL is the one place on this screen that reads as
@@ -669,20 +683,20 @@ export function createSettingsFormHandler(): RouteHandler<SettingsFormInput> {
 						persisted: stored,
 						notice: {
 							variant: "error",
-							title: superseded ? "Settings changed by someone else" : "Settings not saved",
+							title: t(superseded ? "Settings changed by someone else" : "Settings not saved"),
 							description: superseded
-								? `${result.message} Nothing was saved.`
-								: `Could not save settings: ${result.message}`,
+								? t("{message} Nothing was saved.", { message: result.message })
+								: t("Could not save settings: {message}", { message: result.message }),
 						},
 					}),
 					toast: {
-						message: superseded ? "Settings changed by someone else" : "Settings not saved",
+						message: t(superseded ? "Settings changed by someone else" : "Settings not saved"),
 						type: "error",
 					},
 				} satisfies BlockResponse;
 			}
 			return {
-				blocks: buildSettingsBlocks({
+				blocks: buildSettingsBlocks(t, {
 					...state,
 					settings: result.settings,
 					// An ACCEPTED save: what is shown and what is stored are the same
@@ -690,16 +704,16 @@ export function createSettingsFormHandler(): RouteHandler<SettingsFormInput> {
 					persisted: result.settings,
 					notice: {
 						variant: "default",
-						title: "Settings saved",
-						description: "Operational settings were updated.",
+						title: t("Settings saved"),
+						description: t("Operational settings were updated."),
 					},
 				}),
-				toast: { message: "Settings saved", type: "success" },
+				toast: { message: t("Settings saved"), type: "success" },
 			} satisfies BlockResponse;
 		}
 
 		// -- page load: render current values (kv + GET /settings) ------------------
-		return renderPage(ctx, client);
+		return renderPage(t, ctx, client);
 	};
 }
 
@@ -721,6 +735,7 @@ export function createSettingsFormHandler(): RouteHandler<SettingsFormInput> {
  * primary/secondary split is the rule, and it wins.
  */
 async function renderPage(
+	t: PluginTranslate,
 	ctx: PluginContext,
 	client: ReportingSettingsSurface,
 	notice?: Notice,
@@ -730,10 +745,15 @@ async function renderPage(
 		// Nothing was attempted on this path, so what the form shows and what the
 		// label states are the same read (see `persisted` in `buildSettingsBlocks`).
 		const settings = await client.getSettings();
-		return { blocks: buildSettingsBlocks({ ...state, settings, persisted: settings, notice }) };
+		return { blocks: buildSettingsBlocks(t, { ...state, settings, persisted: settings, notice }) };
 	} catch {
 		return {
-			blocks: buildSettingsBlocks({ ...state, settings: undefined, persisted: undefined, notice }),
+			blocks: buildSettingsBlocks(t, {
+				...state,
+				settings: undefined,
+				persisted: undefined,
+				notice,
+			}),
 		};
 	}
 }
@@ -793,33 +813,36 @@ function extractOperationalPatch(
  * an accordion each is that container's own index-0 child forever — nothing
  * else remounts them).
  */
-function buildSettingsBlocks(args: {
-	displayName: string;
-	/** What the "Checkout & holds" FORM prefills from — on a rejected save this
-	 *  carries the ATTEMPTED values over the stored ones (J6), so the operator can
-	 *  correct what they typed. */
-	settings: OperationalSettingsWire | undefined;
-	/** What the "Checkout & holds" LABEL states: only values the service actually
-	 *  holds, `undefined` when that is unknown. A collapsed label reads as
-	 *  persisted state — it is the one thing on this screen that does — so it must
-	 *  never state a value that was rejected. */
-	persisted: OperationalSettingsWire | undefined;
-	paymentSecrets: Map<string, SecretRenderState>;
-	plainSettings: Map<string, string>;
-	notice?: Notice;
-}): Block[] {
+function buildSettingsBlocks(
+	t: PluginTranslate,
+	args: {
+		displayName: string;
+		/** What the "Checkout & holds" FORM prefills from — on a rejected save this
+		 *  carries the ATTEMPTED values over the stored ones (J6), so the operator can
+		 *  correct what they typed. */
+		settings: OperationalSettingsWire | undefined;
+		/** What the "Checkout & holds" LABEL states: only values the service actually
+		 *  holds, `undefined` when that is unknown. A collapsed label reads as
+		 *  persisted state — it is the one thing on this screen that does — so it must
+		 *  never state a value that was rejected. */
+		persisted: OperationalSettingsWire | undefined;
+		paymentSecrets: Map<string, SecretRenderState>;
+		plainSettings: Map<string, string>;
+		notice?: Notice;
+	},
+): Block[] {
 	const blocks: Block[] = [
-		{ type: "header", text: "Settings" },
+		{ type: "header", text: t("Settings") },
 		{
 			type: "context",
-			text: "Display name is cosmetic; the rest is operational and lives in the service.",
+			text: t("Display name is cosmetic; the rest is operational and lives in the service."),
 		},
 	];
 	if (args.notice !== undefined) blocks.push(noticeBanner(args.notice));
 	blocks.push(
-		storeGroup(args.displayName),
-		checkoutGroup(args.settings, args.persisted),
-		paymentsGroup(args.paymentSecrets, args.plainSettings),
+		storeGroup(t, args.displayName),
+		checkoutGroup(t, args.settings, args.persisted),
+		paymentsGroup(t, args.paymentSecrets, args.plainSettings),
 	);
 	return blocks;
 }
@@ -867,8 +890,8 @@ function valueLabel(prefix: string, values: readonly string[]): string {
 /** The Store group's label carries the name itself, so the one thing this group
  *  holds is readable closed. An unset name says so — never a blank tail after
  *  the dash, which would read as a rendering fault rather than as "not set". */
-function storeGroupLabel(displayName: string): string {
-	return valueLabel("Store", [displayName.length > 0 ? displayName : "no display name"]);
+function storeGroupLabel(t: PluginTranslate, displayName: string): string {
+	return valueLabel(t("Store"), [displayName.length > 0 ? displayName : t("no display name")]);
 }
 
 /** The PERSISTED operational values, closed: "Checkout & holds — 15 min hold ·
@@ -876,19 +899,22 @@ function storeGroupLabel(displayName: string): string {
  *  rejected save left nothing stored to state — there is no value to give, and
  *  the label says exactly that rather than implying a zero (the group's own body
  *  carries the full E-1 explanation). */
-function checkoutGroupLabel(persisted: OperationalSettingsWire | undefined): string {
-	if (persisted === undefined) return valueLabel("Checkout & holds", ["not loaded"]);
-	return valueLabel("Checkout & holds", [
-		`${persisted.holdTtlMinutes} min hold`,
-		`low stock at ${persisted.lowStockThreshold}`,
+function checkoutGroupLabel(
+	t: PluginTranslate,
+	persisted: OperationalSettingsWire | undefined,
+): string {
+	if (persisted === undefined) return valueLabel(t("Checkout & holds"), [t("not loaded")]);
+	return valueLabel(t("Checkout & holds"), [
+		t("{minutes} min hold", { minutes: persisted.holdTtlMinutes }),
+		t("low stock at {threshold}", { threshold: persisted.lowStockThreshold }),
 	]);
 }
 
-function storeGroup(displayName: string): AccordionBlock {
+function storeGroup(t: PluginTranslate, displayName: string): AccordionBlock {
 	return {
 		type: "accordion",
 		block_id: "settings:store",
-		label: storeGroupLabel(displayName),
+		label: storeGroupLabel(t, displayName),
 		default_open: false, // INC-15: the label carries the value; see buildSettingsBlocks
 		blocks: [
 			carriedForm({
@@ -899,11 +925,11 @@ function storeGroup(displayName: string): AccordionBlock {
 						{
 							type: "text_input",
 							action_id: "storeDisplayName",
-							label: SETTINGS_SCHEMA.storeDisplayName.label,
+							label: t(SETTINGS_SCHEMA.storeDisplayName.label),
 							initial_value: displayName,
 						},
 					],
-					submit: { label: "Save display name", action_id: "save-display" },
+					submit: { label: t("Save display name"), action_id: "save-display" },
 				},
 			}),
 		],
@@ -911,6 +937,7 @@ function storeGroup(displayName: string): AccordionBlock {
 }
 
 function checkoutGroup(
+	t: PluginTranslate,
 	settings: OperationalSettingsWire | undefined,
 	persisted: OperationalSettingsWire | undefined,
 ): AccordionBlock {
@@ -921,13 +948,15 @@ function checkoutGroup(
 					// never a fail-closed whole screen (see `renderPage`'s doc comment).
 					{
 						type: "context",
-						text: "Operational settings could not be loaded right now. Store display name and payment/email settings are unaffected.",
+						text: t(
+							"Operational settings could not be loaded right now. Store display name and payment/email settings are unaffected.",
+						),
 					},
 				]
 			: [
 					{
 						type: "context",
-						text: "These persist in the commerce service and affect live checkout.",
+						text: t("These persist in the commerce service and affect live checkout."),
 					},
 					carriedForm({
 						namespace: "settings:ops",
@@ -937,24 +966,24 @@ function checkoutGroup(
 								{
 									type: "text_input",
 									action_id: "holdTtlMinutes",
-									label: SETTINGS_SCHEMA.holdTtlMinutes.label,
+									label: t(SETTINGS_SCHEMA.holdTtlMinutes.label),
 									initial_value: String(settings.holdTtlMinutes),
 								},
 								{
 									type: "text_input",
 									action_id: "lowStockThreshold",
-									label: SETTINGS_SCHEMA.lowStockThreshold.label,
+									label: t(SETTINGS_SCHEMA.lowStockThreshold.label),
 									initial_value: String(settings.lowStockThreshold),
 								},
 							],
-							submit: { label: "Save operational settings", action_id: "save-operational" },
+							submit: { label: t("Save operational settings"), action_id: "save-operational" },
 						},
 					}),
 				];
 	return {
 		type: "accordion",
 		block_id: "settings:checkout",
-		label: checkoutGroupLabel(persisted),
+		label: checkoutGroupLabel(t, persisted),
 		default_open: false,
 		blocks: body,
 	};
@@ -974,28 +1003,33 @@ function checkoutGroup(
  * which is unconditionally true.
  */
 function paymentsGroup(
+	t: PluginTranslate,
 	state: Map<string, SecretRenderState>,
 	plain: Map<string, string>,
 ): AccordionBlock {
 	return {
 		type: "accordion",
 		block_id: "settings:payments",
-		label: paymentsGroupLabel(state),
+		label: paymentsGroupLabel(t, state),
 		default_open: false,
 		blocks: [
 			{
 				type: "context",
-				text: "Payment and email credentials, stored write-only — a blank submit keeps the current one. None is ever displayed.",
+				text: t(
+					"Payment and email credentials, stored write-only — a blank submit keeps the current one. None is ever displayed.",
+				),
 			},
-			...PAYMENT_SECRET_FIELDS.map((spec) => secretForm(spec, state.get(spec.kvKey)?.gen ?? 0)),
+			...PAYMENT_SECRET_FIELDS.map((spec) => secretForm(t, spec, state.get(spec.kvKey)?.gen ?? 0)),
 			// INC-C5: the non-secret companions, LAST so the group still reads
 			// credentials-first, and visibly a different kind of field — these
 			// prefill with what is stored.
 			{
 				type: "context",
-				text: "These are configuration, not credentials, so they are shown back to you. The x402 destination wallet is where buyers' payments go — x402 checkout stays unavailable until it is set.",
+				text: t(
+					"These are configuration, not credentials, so they are shown back to you. The x402 destination wallet is where buyers' payments go — x402 checkout stays unavailable until it is set.",
+				),
 			},
-			plainSettingsForm(plain),
+			plainSettingsForm(t, plain),
 		],
 	};
 }
@@ -1004,7 +1038,7 @@ function paymentsGroup(
  *  the visible difference from the write-only fields above it, and the whole
  *  reason they are a separate form rather than five more entries in
  *  {@link PAYMENT_SECRET_FIELDS}. */
-function plainSettingsForm(plain: Map<string, string>): FormBlock {
+function plainSettingsForm(t: PluginTranslate, plain: Map<string, string>): FormBlock {
 	return carriedForm({
 		namespace: `settings:${SAVE_PAYMENT_SETTINGS_ACTION}`,
 		form: {
@@ -1012,11 +1046,11 @@ function plainSettingsForm(plain: Map<string, string>): FormBlock {
 			fields: PLAIN_PAYMENT_SETTINGS.map((spec) => ({
 				type: "text_input" as const,
 				action_id: spec.fieldId,
-				label: spec.label,
-				placeholder: spec.placeholder,
+				label: t(spec.label),
+				placeholder: t(spec.placeholder),
 				initial_value: plain.get(spec.kvKey) ?? "",
 			})),
-			submit: { label: "Save payment settings", action_id: SAVE_PAYMENT_SETTINGS_ACTION },
+			submit: { label: t("Save payment settings"), action_id: SAVE_PAYMENT_SETTINGS_ACTION },
 		},
 	});
 }
@@ -1029,13 +1063,13 @@ function plainSettingsForm(plain: Map<string, string>): FormBlock {
  *  nothing here to echo. The label lists only what is MISSING (or says
  *  "configured"), which is the actionable half and keeps the longest render
  *  inside X-11's 60-character budget via {@link valueLabel}. */
-function paymentsGroupLabel(state: Map<string, SecretRenderState>): string {
+function paymentsGroupLabel(t: PluginTranslate, state: Map<string, SecretRenderState>): string {
 	const missing = PAYMENT_SECRET_FIELDS.filter((spec) => state.get(spec.kvKey)?.set !== true).map(
-		(spec) => spec.short,
+		(spec) => t(spec.short),
 	);
 	return valueLabel(
-		"Payments & email",
-		missing.length === 0 ? ["configured"] : [`no ${missing.join(", ")}`],
+		t("Payments & email"),
+		missing.length === 0 ? [t("configured")] : [t("no {items}", { items: missing.join(", ") })],
 	);
 }
 
@@ -1044,7 +1078,7 @@ function paymentsGroupLabel(state: Map<string, SecretRenderState>): string {
  *  the save generation rides in the carrier CONTEXT to change the form's
  *  `block_id` on a real save and force the mount-only input to remount
  *  blank. */
-function secretForm(spec: SecretFieldSpec, gen: number): FormBlock {
+function secretForm(t: PluginTranslate, spec: SecretFieldSpec, gen: number): FormBlock {
 	return carriedForm({
 		namespace: `settings:${spec.actionId}`,
 		context: { gen: String(gen) },
@@ -1054,11 +1088,16 @@ function secretForm(spec: SecretFieldSpec, gen: number): FormBlock {
 				{
 					type: "text_input",
 					action_id: spec.fieldId,
-					label: spec.label,
-					placeholder: `Enter new ${spec.noun.toLowerCase()} (blank keeps current)`,
+					label: t(spec.label),
+					placeholder: t("Enter new {value1} (blank keeps current)", {
+						value1: t(spec.noun).toLowerCase(),
+					}),
 				},
 			],
-			submit: { label: `Save ${spec.noun.toLowerCase()}`, action_id: spec.actionId },
+			submit: {
+				label: t("Save {value1}", { value1: t(spec.noun).toLowerCase() }),
+				action_id: spec.actionId,
+			},
 		},
 	});
 }

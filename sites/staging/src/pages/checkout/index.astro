@@ -55,11 +55,14 @@ import {
 	readBillingDestinationParams,
 } from "../../lib/checkout-selection.js";
 import { countryOptions } from "../../lib/countries.js";
-import { SITE_LOCALE } from "../../lib/site-locale.js";
 import { cartErrorMessage } from "../../lib/error-messages.js";
 import { checkoutFootnote } from "../../lib/totals.js";
 import { STRIPE_PUBLISHABLE_KEY } from "../../lib/stripe-config.js";
 import { dispatchOttaRoute } from "../../lib/otta-api.js";
+import { storefrontPresentation } from "../../lib/messages.js";
+
+const { locale, t } = storefrontPresentation(Astro);
+Astro.response.headers.set("Cache-Control", "private, no-store");
 
 const cartId = Astro.cookies.get(CART_COOKIE_NAME)?.value;
 const error = Astro.url.searchParams.get("error");
@@ -83,7 +86,7 @@ const result =
 				STOREFRONT_CHECKOUT_SUMMARY_ROUTE,
 				{
 					cartId,
-					locale: SITE_LOCALE,
+					locale,
 					...(coupon.couponCode !== undefined ? { couponCode: coupon.couponCode } : {}),
 					...(destinationRead.destination !== undefined
 						? { destination: destinationRead.destination }
@@ -158,7 +161,7 @@ const showDelivery = locked === null && summary.requiresShipping && summary.ship
  *  destination above. */
 const showAddress = locked === null && summary.requiresShipping;
 /** Named in the same language the summary formatted the money in. */
-const countries = countryOptions(SITE_LOCALE);
+const countries = countryOptions(locale);
 const countryName = (code: string): string => countries.find((c) => c.code === code)?.label ?? code;
 
 /** The option the totals were priced with — stated beside the submit, so the
@@ -169,25 +172,25 @@ const chosenOption =
 
 /** Why the place button is not offered yet (unlocked only). */
 const notReadyCopy = !billingReady
-	? "Choose your billing country and state or province above so we can calculate your total."
+	? t("Choose your billing country and state or province above so we can calculate your total.")
 	: summary.shipping.noOptions
-	? cartErrorMessage("SHIPPING_METHOD_REQUIRED")
+	? cartErrorMessage("SHIPPING_METHOD_REQUIRED", locale)
 	: summary.shipping.status === "matched"
-		? "Choose a delivery option above to continue."
-		: "Choose where we're delivering above to continue.";
+		? t("Choose a delivery option above to continue.")
+		: t("Choose where we're delivering above to continue.");
 
 /** SKU / qty / money — the same tape the home page opens with, itemised. The
  *  money cell is `lineTotal.formatted` or the honest prose; never assembled. */
 const ledgerRows = lines.map((line) => ({
 	sku: line.sku,
 	qty: line.qty,
-	money: line.lineTotal?.formatted ?? "priced at checkout",
+	money: line.lineTotal?.formatted ?? t("priced at checkout"),
 }));
 
 /** The coupon code rides on the row's own label rather than a second line: it
  *  IS the name of that discount, and the totals block has one slot per row. */
 const discountLabel =
-	totals.appliedCouponCode !== null ? `Discount · ${totals.appliedCouponCode}` : "Discount";
+	totals.appliedCouponCode !== null ? t("Discount · {code}", { code: totals.appliedCouponCode }) : t("Discount");
 
 /**
  * Straight off the view model (§7). The only thing this page adds is the
@@ -195,16 +198,16 @@ const discountLabel =
  * applied"), which is the one thing `Sum` cannot work out for itself.
  */
 const sumRows = [
-	{ label: "Subtotal", amount: totals.subtotal },
-	{ label: discountLabel, amount: totals.discount, fallback: "No coupon applied" },
-	{ label: "Shipping", amount: totals.shipping },
-	{ label: "Tax", amount: totals.tax },
+	{ label: t("Subtotal"), amount: totals.subtotal },
+	{ label: discountLabel, amount: totals.discount, fallback: t("No coupon applied") },
+	{ label: t("Shipping"), amount: totals.shipping },
+	{ label: t("Tax"), amount: totals.tax },
 ];
 ---
 
 {/* The footer's currency comes from the totals this page already holds —
     the layout never invents one (§7). */}
-<Base title="Checkout" currency={totals.total.money?.currency ?? null}>
+<Base title={t("Checkout")} currency={totals.total.money?.currency ?? null}>
 	{/* Keep the coupon-bearing URL out of cross-origin Referers while allowing
 	    the browser to send its real Origin on this page's own checkout POST. */}
 	<meta name="referrer" content="same-origin" slot="head" />
@@ -213,9 +216,9 @@ const sumRows = [
 	    src/lib/rest-props.ts), so spacing AROUND one belongs to an element the
 	    page owns. */}
 	<div class="steps"><StepTrack current="details" /></div>
-	<h1 class="title">Checkout</h1>
+	<h1 class="title">{t("Checkout")}</h1>
 
-	{error !== null && <div class="notice-slot"><Notice>{cartErrorMessage(error)}</Notice></div>}
+	{error !== null && <div class="notice-slot"><Notice>{cartErrorMessage(error, locale)}</Notice></div>}
 
 	{
 		locked !== null && (
@@ -227,15 +230,13 @@ const sumRows = [
 					   the TTL sweep. The public order carries no reconciliation flag, so
 					   this copy makes no claim about money either way — and promises no
 					   particular outcome: reconciliation may refund OR fulfil the order. */
-					<Notice lead="This checkout has ended.">
-						Its order can no longer be paid. If a payment did go through, contact the store with
-						your order number — shown on
-						<a href={`/orders/${encodeURIComponent(locked.id)}`}>your order page</a> — and they
-						will refund it or complete your order. Start a new cart to order again.
+					<Notice lead={t("This checkout has ended.")}>
+						{t("Its order can no longer be paid. If a payment did go through, contact the store with your order number — shown on")}
+						<a href={`/orders/${encodeURIComponent(locked.id)}`}>{t("your order page")}</a> {t("— and they will refund it or complete your order. Start a new cart to order again.")}
 					</Notice>
 				) : (
-					<Notice lead="Your order has already been created.">
-						Its coupon and delivery address can no longer be changed. To change them, start a new cart.
+					<Notice lead={t("Your order has already been created.")}>
+						{t("Its coupon and delivery address can no longer be changed. To change them, start a new cart.")}
 					</Notice>
 				)}
 			</div>
@@ -246,7 +247,7 @@ const sumRows = [
 		(checkedOut || locked !== null) && (
 			<form method="POST" action="/checkout/new-cart" class="restart">
 				<button type="submit" class="u-btn u-btn-ghost">
-					Start a new cart
+					{t("Start a new cart")}
 				</button>
 			</form>
 		)
@@ -255,7 +256,7 @@ const sumRows = [
 	<div class="cols">
 		<section class="panel">
 			<div class="panel-head">
-				<h2 class="u-label head-label">Your details</h2>
+				<h2 class="u-label head-label">{t("Your details")}</h2>
 			</div>
 
 			{/* The coupon comes FIRST, and is a SIBLING of the place form, never
@@ -278,7 +279,7 @@ const sumRows = [
 						)}
 						<div class="field">
 							<label class="u-label" for="coupon">
-								Coupon code
+								{t("Coupon code")}
 							</label>
 							<div class="coupon-row">
 								<input
@@ -291,21 +292,20 @@ const sumRows = [
 									aria-describedby={couponError !== null ? "coupon-error coupon-note" : "coupon-note"}
 								/>
 								<button type="submit" class="u-btn u-btn-ghost">
-									Apply
+									{t("Apply")}
 								</button>
 							</div>
 							{couponError !== null && (
 								<div id="coupon-error">
-									<Notice>{cartErrorMessage(couponError.reason)}</Notice>
+									<Notice>{cartErrorMessage(couponError.reason, locale)}</Notice>
 								</div>
 							)}
 							<span class="note" id="coupon-note">
-								Codes are case-sensitive. Apply a code before filling in your details — applying it
-								reloads this page.
+								{t("Codes are case-sensitive. Apply a code before filling in your details — applying it reloads this page.")}
 								{summary.selection.couponCode !== null && (
 									<>
 										{" "}
-										<a href="/checkout">Remove coupon</a>
+										<a href="/checkout">{t("Remove coupon")}</a>
 									</>
 								)}
 							</span>
@@ -322,19 +322,19 @@ const sumRows = [
 						{billingCountry && <input type="hidden" name="billingCountry" value={billingCountry} />}
 						{billingRegion && <input type="hidden" name="billingRegion" value={billingRegion} />}
 						<fieldset class="group">
-							<legend class="u-label head-label">Delivery</legend>
+							<legend class="u-label head-label">{t("Delivery")}</legend>
 							{destinationError !== null && (
-								<Notice>{cartErrorMessage(destinationError.reason)}</Notice>
+								<Notice>{cartErrorMessage(destinationError.reason, locale)}</Notice>
 							)}
-							{shippingError !== null && <Notice>{cartErrorMessage(shippingError.reason)}</Notice>}
+							{shippingError !== null && <Notice>{cartErrorMessage(shippingError.reason, locale)}</Notice>}
 							{summary.shipping.noOptions && (
-								<Notice>{cartErrorMessage("SHIPPING_METHOD_REQUIRED")}</Notice>
+								<Notice>{cartErrorMessage("SHIPPING_METHOD_REQUIRED", locale)}</Notice>
 							)}
 							<div class="fields">
 								<label class="field">
-									<span class="u-label">Country</span>
+									<span class="u-label">{t("Country")}</span>
 									<select name="country" autocomplete="country" required>
-										<option value="">Choose a country…</option>
+										<option value="">{t("Choose a country…")}</option>
 										{countries.map((option) => (
 											<option value={option.code} selected={option.code === countryValue}>
 												{option.label}
@@ -344,7 +344,7 @@ const sumRows = [
 								</label>
 								<div class="field">
 									<label class="u-label" for="delivery-region">
-										State / province
+										{t("State / province")}
 									</label>
 									<input
 										type="text"
@@ -357,7 +357,7 @@ const sumRows = [
 										aria-describedby="region-note"
 									/>
 									<span class="note" id="region-note">
-										State/province code, e.g. CA — leave blank if your country doesn't use one.
+										{t("State/province code, e.g. CA — leave blank if your country doesn't use one.")}
 									</span>
 								</div>
 							</div>
@@ -369,7 +369,7 @@ const sumRows = [
 								<input type="hidden" name="coupon" value={summary.selection.couponCode} />
 							)}
 							{summary.shipping.status === "matched" && summary.shipping.options.length > 0 && (
-								<div class="methods" role="radiogroup" aria-label="Delivery options">
+								<div class="methods" role="radiogroup" aria-label={t("Delivery options")}>
 									{summary.shipping.options.map((option) => (
 										<label class="method">
 											<input
@@ -387,7 +387,7 @@ const sumRows = [
 							)}
 							<div>
 								<button type="submit" class="u-btn u-btn-ghost">
-									Update delivery
+									{t("Update delivery")}
 								</button>
 							</div>
 						</fieldset>
@@ -399,20 +399,20 @@ const sumRows = [
 				locked === null && summary.billingRequired && (
 				<form method="GET" action="/checkout" class="delivery" id="billing-destination">
 					<fieldset class="group">
-						<legend class="u-label head-label">Billing country</legend>
+						<legend class="u-label head-label">{t("Billing country")}</legend>
 						<p class="note group-note">
-							Choose this before entering your details. Tax is calculated for your billing address.
+							{t("Choose this before entering your details. Tax is calculated for your billing address.")}
 						</p>
-						{billingError !== null && <Notice>{cartErrorMessage(billingError.reason)}</Notice>}
+						{billingError !== null && <Notice>{cartErrorMessage(billingError.reason, locale)}</Notice>}
 						{destination !== null && <input type="hidden" name="country" value={destination.country} />}
 						{destination?.region && <input type="hidden" name="region" value={destination.region} />}
 						{summary.selection.shippingMethodId !== null && <input type="hidden" name="method" value={summary.selection.shippingMethodId} />}
 						{summary.selection.couponCode !== null && <input type="hidden" name="coupon" value={summary.selection.couponCode} />}
 						<div class="fields">
 							<label class="field">
-								<span class="u-label">Country</span>
+								<span class="u-label">{t("Country")}</span>
 								<select name="billingCountry" autocomplete="billing country" required>
-									<option value="">Choose a country…</option>
+									<option value="">{t("Choose a country…")}</option>
 									{countries.map(option => (
 										<option value={option.code} selected={option.code === billingCountry}>
 											{option.label}
@@ -421,12 +421,12 @@ const sumRows = [
 								</select>
 							</label>
 							<label class="field">
-								<span class="u-label">State / province code</span>
+								<span class="u-label">{t("State / province code")}</span>
 								<input type="text" name="billingRegion" autocomplete="billing address-level1"
 									maxlength="6" pattern="([A-Za-z]{2}-)?[A-Za-z0-9]{1,3}" value={billingRegion} />
 							</label>
 						</div>
-						<div><button type="submit" class="u-btn u-btn-ghost">Review billing total</button></div>
+						<div><button type="submit" class="u-btn u-btn-ghost">{t("Review billing total")}</button></div>
 					</fieldset>
 				</form>
 				)
@@ -462,7 +462,7 @@ const sumRows = [
 						    a hint attaches — announced after the name, and as a hint. */}
 						<div class="field">
 							<label class="u-label" for="email">
-								Email <span class="req">required</span>
+								{t("Email")} <span class="req">{t("required")}</span>
 							</label>
 							<input
 								type="email"
@@ -473,8 +473,7 @@ const sumRows = [
 								aria-describedby="email-note"
 							/>
 							<span class="note" id="email-note">
-								We use this to send your order confirmation and to link the order to your account if
-								you sign in later.
+								{t("We use this to send your order confirmation and to link the order to your account if you sign in later.")}
 							</span>
 						</div>
 
@@ -484,7 +483,7 @@ const sumRows = [
 						{
 							showAddress && (
 								<fieldset class="group">
-									<legend class="u-label head-label">Delivery address</legend>
+									<legend class="u-label head-label">{t("Delivery address")}</legend>
 									{showDelivery ? (
 										<>
 											{/* The destination the review priced, as hidden fields: place.ts
@@ -497,61 +496,61 @@ const sumRows = [
 														<input type="hidden" name="region" value={destination.region} />
 													)}
 													<p class="note group-note">
-														Delivering to {countryName(destination.country)}
+														{t("Delivering to {country}", { country: countryName(destination.country) })}
 														{destination.region !== null && <>, {destination.region}</>} —{" "}
-														<a href="#delivery">change</a>
+														<a href="#delivery">{t("change")}</a>
 													</p>
 												</>
 											)}
 										</>
 									) : (
 										<p class="note group-note">
-											Optional — fill it in completely, or leave it entirely blank.
+											{t("Optional — fill it in completely, or leave it entirely blank.")}
 										</p>
 									)}
 									<div class="fields">
 										<label class="field span2">
 											<span class="u-label">
-												Full name{summary.addressRequired && <span class="req">required</span>}
+												{t("Full name")}{summary.addressRequired && <span class="req">{t("required")}</span>}
 											</span>
 											<input type="text" name="name" autocomplete="name" />
 										</label>
 										<label class="field span2">
 											<span class="u-label">
-												Address line 1
-												{summary.addressRequired && <span class="req">required</span>}
+												{t("Address line 1")}
+												{summary.addressRequired && <span class="req">{t("required")}</span>}
 											</span>
 											<input type="text" name="line1" autocomplete="address-line1" />
 										</label>
 										<label class="field span2">
-											<span class="u-label">Address line 2</span>
+											<span class="u-label">{t("Address line 2")}</span>
 											<input type="text" name="line2" autocomplete="address-line2" />
 										</label>
 										<label class="field">
 											<span class="u-label">
-												City{summary.addressRequired && <span class="req">required</span>}
+												{t("City")}{summary.addressRequired && <span class="req">{t("required")}</span>}
 											</span>
 											<input type="text" name="city" autocomplete="address-level2" />
 										</label>
 										<label class="field">
 											<span class="u-label">
-												Postal code{summary.addressRequired && <span class="req">required</span>}
+												{t("Postal code")}{summary.addressRequired && <span class="req">{t("required")}</span>}
 											</span>
 											<input type="text" name="postalCode" autocomplete="postal-code" />
 										</label>
 										{!showDelivery && (
 											<>
 												<label class="field">
-													<span class="u-label">Country</span>
+													<span class="u-label">{t("Country")}</span>
 													<select name="country" autocomplete="country">
-														<option value="">Choose a country…</option>
+														<option value="">{t("Choose a country…")}</option>
 														{countries.map((option) => (
 															<option value={option.code}>{option.label}</option>
 														))}
 													</select>
 												</label>
 												<label class="field">
-													<span class="u-label">State / province code</span>
+													<span class="u-label">{t("State / province code")}</span>
 													<input
 														type="text"
 														name="region"
@@ -563,7 +562,7 @@ const sumRows = [
 											</>
 										)}
 										<label class="field span2">
-											<span class="u-label">Phone</span>
+											<span class="u-label">{t("Phone")}</span>
 											<input type="tel" name="phone" autocomplete="tel" />
 										</label>
 									</div>
@@ -574,22 +573,22 @@ const sumRows = [
 						{
 							locked === null && summary.billingRequired && billingReady && (
 								<fieldset class="group">
-									<legend class="u-label head-label">Billing address</legend>
+									<legend class="u-label head-label">{t("Billing address")}</legend>
 									<input type="hidden" name="billingRequired" value="true" />
 									<input type="hidden" name="billingCountry" value={billingCountry} />
 									{billingRegion && <input type="hidden" name="billingRegion" value={billingRegion} />}
-									<p class="note group-note">Billing in {countryName(billingCountry)}{billingRegion && <>, {billingRegion}</>} — <a href="#billing-destination">change</a>. These details are saved with your order.</p>
-									{summary.requiresShipping && <label class="method"><input type="checkbox" name="billingSameAsShipping" value="true" checked={billingCountry === destination?.country && billingRegion === (destination?.region ?? "")} /><span>Use my complete delivery address for billing. It must match the billing country and state reviewed above.</span></label>}
-									<p class="note group-note">Enter a separate billing address below if you are not using the delivery address.</p>
+									<p class="note group-note">{t("Billing in {country}", { country: countryName(billingCountry) })}{billingRegion && <>, {billingRegion}</>} — <a href="#billing-destination">{t("change")}</a>{t("These details are saved with your order.")}</p>
+									{summary.requiresShipping && <label class="method"><input type="checkbox" name="billingSameAsShipping" value="true" checked={billingCountry === destination?.country && billingRegion === (destination?.region ?? "")} /><span>{t("Use my complete delivery address for billing. It must match the billing country and state reviewed above.")}</span></label>}
+									<p class="note group-note">{t("Enter a separate billing address below if you are not using the delivery address.")}</p>
 									<div class="fields">
-										<label class="field span2"><span class="u-label">Full name</span><input type="text" name="billingName" autocomplete="billing name" maxlength="200" required={!summary.requiresShipping} /></label>
-										<label class="field span2"><span class="u-label">Address line 1</span><input type="text" name="billingLine1" autocomplete="billing address-line1" maxlength="200" required={!summary.requiresShipping} /></label>
-										<label class="field span2"><span class="u-label">Address line 2</span><input type="text" name="billingLine2" autocomplete="billing address-line2" maxlength="200" /></label>
-										<label class="field"><span class="u-label">City</span><input type="text" name="billingCity" autocomplete="billing address-level2" maxlength="120" required={!summary.requiresShipping} /></label>
-										<label class="field"><span class="u-label">Postal code</span><input type="text" name="billingPostalCode" autocomplete="billing postal-code" maxlength="32" required={!summary.requiresShipping} /></label>
-										<label class="field span2"><span class="u-label">Company (optional)</span><input type="text" name="billingCompany" autocomplete="billing organization" maxlength="200" /></label>
-										<label class="field"><span class="u-label">Tax number (optional)</span><input type="text" name="billingTaxNumber" maxlength="64" /></label>
-										<label class="field"><span class="u-label">VAT ID (optional)</span><input type="text" name="billingVatId" maxlength="64" /></label>
+										<label class="field span2"><span class="u-label">{t("Full name")}</span><input type="text" name="billingName" autocomplete="billing name" maxlength="200" required={!summary.requiresShipping} /></label>
+										<label class="field span2"><span class="u-label">{t("Address line 1")}</span><input type="text" name="billingLine1" autocomplete="billing address-line1" maxlength="200" required={!summary.requiresShipping} /></label>
+										<label class="field span2"><span class="u-label">{t("Address line 2")}</span><input type="text" name="billingLine2" autocomplete="billing address-line2" maxlength="200" /></label>
+										<label class="field"><span class="u-label">{t("City")}</span><input type="text" name="billingCity" autocomplete="billing address-level2" maxlength="120" required={!summary.requiresShipping} /></label>
+										<label class="field"><span class="u-label">{t("Postal code")}</span><input type="text" name="billingPostalCode" autocomplete="billing postal-code" maxlength="32" required={!summary.requiresShipping} /></label>
+										<label class="field span2"><span class="u-label">{t("Company (optional)")}</span><input type="text" name="billingCompany" autocomplete="billing organization" maxlength="200" /></label>
+										<label class="field"><span class="u-label">{t("Tax number (optional)")}</span><input type="text" name="billingTaxNumber" maxlength="64" /></label>
+										<label class="field"><span class="u-label">{t("VAT ID (optional)")}</span><input type="text" name="billingVatId" maxlength="64" /></label>
 									</div>
 								</fieldset>
 							)
@@ -598,20 +597,18 @@ const sumRows = [
 						{
 							locked === null && paymentMethods.length > 0 && (
 								<fieldset class="group">
-									<legend class="u-label head-label">Payment method</legend>
-									<div class="methods" role="radiogroup" aria-label="Payment methods">
+									<legend class="u-label head-label">{t("Payment method")}</legend>
+									<div class="methods" role="radiogroup" aria-label={t("Payment methods")}>
 										{paymentMethods.map((method, index) => (
 											<label class="method">
 												<input type="radio" name="paymentMethod" value={method.id} checked={index === 0} required />
-												<span>{method.label}</span>
+												<span>{method.id === "stripe" ? t("Card") : method.id === "bank_transfer" ? t("Bank transfer") : t("Cash on delivery")}</span>
 											</label>
 										))}
 									</div>
 									{paymentMethods.some(method => method.id !== "stripe") && (
 										<p class="note group-note">
-											Bank transfer stays awaiting payment until the store records its receipt.
-											Cash on delivery is paid when collected; acceptance for dispatch does not
-											mean payment was received.
+											{t("Bank transfer stays awaiting payment until the store records its receipt. Cash on delivery is paid when collected; acceptance for dispatch does not mean payment was received.")}
 										</p>
 									)}
 								</fieldset>
@@ -621,7 +618,7 @@ const sumRows = [
 						{
 							chosenOption !== null && locked === null && (
 								<p class="note delivery-line">
-									Delivery: {chosenOption.label} ({chosenOption.price})
+									{t("Delivery: {label} ({price})", { label: chosenOption.label, price: chosenOption.price })}
 								</p>
 							)
 						}
@@ -629,11 +626,11 @@ const sumRows = [
 						{
 							paymentConfigured ? (
 								lockedOffline ? (
-									<p><a class="u-btn" href={`/orders/${encodeURIComponent(locked!.id)}`}>View order instructions</a></p>
+									<p><a class="u-btn" href={`/orders/${encodeURIComponent(locked!.id)}`}>{t("View order instructions")}</a></p>
 								) : summary.readyToPlace && billingReady ? (
 									<div>
 										<button type="submit" class="u-btn">
-											{locked !== null || paymentMethods.every(method => method.id === "stripe") ? "Continue to payment" : "Place order"}
+											{locked !== null || paymentMethods.every(method => method.id === "stripe") ? t("Continue to payment") : t("Place order")}
 										</button>
 									</div>
 								) : (
@@ -644,12 +641,12 @@ const sumRows = [
 								   unlocked copy's "nothing has been charged" and "your cart is
 								   unchanged" would both be wrong here. */
 								<Notice>
-									Card payment isn't set up on this store, so this order can't be paid right now.
+									{t("Card payment isn't set up on this store, so this order can't be paid right now.")}
 								</Notice>
 							) : (
 								/* No configured method is payable from this storefront. */
-								<Notice lead="Payment is not set up on this store.">
-									This order can't be placed. Nothing has been charged and your cart is unchanged.
+								<Notice lead={t("Payment is not set up on this store.")}>
+									{t("This order can't be placed. Nothing has been charged and your cart is unchanged.")}
 								</Notice>
 							)
 						}
@@ -660,14 +657,13 @@ const sumRows = [
 
 		<section class="panel">
 			<div class="panel-head">
-				<h2 class="u-label head-label">Your order</h2>
+				<h2 class="u-label head-label">{t("Your order")}</h2>
 			</div>
 
 			{
 				summary.hasUnpricedLines && (
 					<Notice>
-						Live prices for some items are temporarily unavailable — the totals below come from
-						the store and are what you will be charged.
+						{t("Live prices for some items are temporarily unavailable — the totals below come from the store and are what you will be charged.")}
 					</Notice>
 				)
 			}
@@ -681,12 +677,13 @@ const sumRows = [
 					summary.uncalculatedReason,
 					sumRows,
 					totals.totalExcludesUncalculated,
+					locale,
 				)}
 			/>
 		</section>
 	</div>
 
-	<p class="back"><a href="/cart">Back to cart</a></p>
+	<p class="back"><a href="/cart">{t("Back to cart")}</a></p>
 </Base>
 
 <style>

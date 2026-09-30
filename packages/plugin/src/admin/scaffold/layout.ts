@@ -1,5 +1,6 @@
 import type { AccordionBlock, Element, EmptyBlock, FormBlock, PlainBlockId } from "../../types.js";
 import { decodeCarrier, prefillDigest, PREFILL_FIELD } from "./carrier.js";
+import { englishTranslate, type PluginTranslate } from "../localization.js";
 
 /**
  * The two layout primitives the six admin screens share (admin-UX density
@@ -124,7 +125,10 @@ export interface FilterPanelOptions {
  * Both are contained by `createListDetailHandler` and surface as that screen's
  * fail-closed banner, with the cause in the worker log.
  */
-export function filterPanel(opts: FilterPanelOptions): FormBlock | AccordionBlock {
+export function filterPanel(
+	opts: FilterPanelOptions,
+	t: PluginTranslate = englishTranslate,
+): FormBlock | AccordionBlock {
 	if (opts.form.fields.length > MAX_FILTER_FIELDS) {
 		throw new Error(
 			`filterPanel: ${opts.form.fields.length} filter fields exceeds the ${MAX_FILTER_FIELDS}-field maximum ` +
@@ -156,7 +160,11 @@ export function filterPanel(opts: FilterPanelOptions): FormBlock | AccordionBloc
 	if (opts.form.fields.length <= inlineUpTo) return opts.form;
 	return {
 		type: "accordion",
-		label: filterPanelLabel(opts.label ?? DEFAULT_LABEL, activeParts(opts.activeFilters).length),
+		label: filterPanelLabel(
+			opts.label ?? t(DEFAULT_LABEL),
+			activeParts(opts.activeFilters).length,
+			t,
+		),
 		blocks: [opts.form],
 		block_id: opts.blockId,
 	};
@@ -171,8 +179,12 @@ export function filterPanel(opts: FilterPanelOptions): FormBlock | AccordionBloc
  * {@link filterSummary}. Exported so a screen can render the same string elsewhere
  * (an inline filter's `context` line) without re-deriving the format.
  */
-export function filterPanelLabel(label: string, activeCount: number): string {
-	return activeCount <= 0 ? label : `${label} (${activeCount} active)`;
+export function filterPanelLabel(
+	label: string,
+	activeCount: number,
+	t: PluginTranslate = englishTranslate,
+): string {
+	return activeCount <= 0 ? label : t("{label} ({count} active)", { label, count: activeCount });
 }
 
 /**

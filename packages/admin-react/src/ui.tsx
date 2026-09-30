@@ -1,3 +1,4 @@
+import { useAdminLocale } from "./locale.js";
 /**
  * The console's shared presentation primitives.
  *
@@ -474,6 +475,8 @@ export function CopyIdButton({
 	 */
 	revealOnRowHover?: boolean;
 }): React.ReactElement {
+	const { t, a } = useAdminLocale();
+
 	const [state, setState] = React.useState<"idle" | "done" | "failed">("idle");
 
 	React.useEffect(() => {
@@ -492,7 +495,7 @@ export function CopyIdButton({
 			}
 			data-testid={testId}
 			data-full-id={id}
-			aria-label={`Copy ${what} ${id}`}
+			aria-label={t("Copy {what} {id}", { what: a(what), id })}
 			title={id}
 			onClick={() => {
 				try {
@@ -519,7 +522,7 @@ export function CopyIdButton({
 				...(revealOnRowHover === true ? {} : { opacity: 0.85 }),
 			}}
 		>
-			{state === "done" ? "Copied" : state === "failed" ? "Press ⌘C" : "Copy"}
+			{state === "done" ? t("Copied") : state === "failed" ? t("Press ⌘C") : t("Copy")}
 		</button>
 	);
 }

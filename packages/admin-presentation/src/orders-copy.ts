@@ -59,6 +59,7 @@
  * `@otta-sh/admin-react` and stops being shared. It is a migration artefact and
  * should be read as one.
  */
+import { adminMessage } from "./admin-messages.js";
 import { fitBanner } from "./copy.js";
 import type { RowNoun, ZeroStateCopy } from "./list-outcome.js";
 
@@ -141,9 +142,13 @@ export const ORDERS_PAGE_FAILED_TITLE = "Couldn't open that page of orders";
  * budget through no fault of the copy. `fitBanner` is applied here rather than
  * at each call site, so neither surface can render the untrimmed version.
  */
-export function reconciliationAlertSentence(flag: string): string {
+export function reconciliationAlertSentence(flag: string, locale: unknown = "en"): string {
 	return fitBanner(
-		`Settlement flagged this order: ${flag}. Resolve it under Fulfilment — recording a resolution moves no money and does not change the order.`,
+		adminMessage(
+			locale,
+			"Settlement flagged this order: {flag}. Resolve it under Fulfilment — recording a resolution moves no money and does not change the order.",
+			{ flag },
+		),
 	);
 }
 
@@ -215,8 +220,12 @@ export const CANCEL_CONFIRM = {
 /** The cancel confirm's sentence, named by the human REASON LABEL rather than
  *  the wire value — the operator picked a label and must read the same one
  *  back. */
-export function cancelConfirmText(reasonLabel: string): string {
-	return `Cancel this order as “${reasonLabel}”? This is permanent — the order cannot be un-cancelled, and the held stock is released.`;
+export function cancelConfirmText(reasonLabel: string, locale: unknown = "en"): string {
+	return adminMessage(
+		locale,
+		"Cancel this order as “{reason}”? This is permanent — the order cannot be un-cancelled, and the held stock is released.",
+		{ reason: reasonLabel },
+	);
 }
 
 // ── the detail: the refunded transition ──────────────────────────────────────
@@ -272,8 +281,16 @@ export const REFUND_BY_REQUIRED =
  *  order's currency and `formatAmount`; this module states the sentence, not
  *  the money. Names what to enter INSTEAD, which is the half a bare
  *  "amount too high" leaves the operator to work out. */
-export function refundTooHighText(amount: string, remaining: string): string {
-	return `${amount} is more than the ${remaining} that remains refundable on this order. Enter ${remaining} or less.`;
+export function refundTooHighText(
+	amount: string,
+	remaining: string,
+	locale: unknown = "en",
+): string {
+	return adminMessage(
+		locale,
+		"{amount} is more than the {remaining} that remains refundable on this order. Enter {remaining} or less.",
+		{ amount, remaining },
+	);
 }
 
 /** The title above {@link refundTooHighText}. */
@@ -291,8 +308,12 @@ export const REFUND_TOO_HIGH_TITLE = "Amount too high";
  * two reassured and one did not. Composed here so the inline and banner
  * renderings cannot say different things about the same ceiling.
  */
-export function refundTooHighInline(amount: string, remaining: string): string {
-	return `${REFUND_TOO_HIGH_TITLE} — ${refundTooHighText(amount, remaining)} Nothing was changed.`;
+export function refundTooHighInline(
+	amount: string,
+	remaining: string,
+	locale: unknown = "en",
+): string {
+	return `${adminMessage(locale, "Amount too high")} — ${refundTooHighText(amount, remaining, locale)} ${adminMessage(locale, "Nothing was changed.")}`;
 }
 
 // ── the detail: group labels ─────────────────────────────────────────────────
@@ -316,8 +337,12 @@ export const REFUNDS_GROUP_EMPTY_LABEL = "Refunds — nothing captured, nothing 
 
 /** The Refunds group's ratio label. Takes ALREADY-FORMATTED money: this module
  *  states the sentence, the caller states the currency. */
-export function refundsGroupLabel(refunded: string, ceiling: string): string {
-	return `Refunds — ${refunded} of ${ceiling} refunded`;
+export function refundsGroupLabel(
+	refunded: string,
+	ceiling: string,
+	locale: unknown = "en",
+): string {
+	return adminMessage(locale, "Refunds — {refunded} of {ceiling} refunded", { refunded, ceiling });
 }
 
 // ── the detail's fulfilment form, and the list's search ─────────────────────

@@ -10,6 +10,7 @@ import type {
 	RouteHandler,
 } from "../../types.js";
 import type { ScreenActions } from "./actions.js";
+import { englishTranslate, type PluginTranslate } from "../localization.js";
 import { failClosedResponse, noticeBanner, type Notice } from "./banner.js";
 import { carriedFields, type CarriedContext, decodeCarrier } from "./carrier.js";
 import {
@@ -55,6 +56,7 @@ import {
 
 /** The em-dash `BlockInteraction` envelope, narrowed to what the scaffold reads. */
 export interface ListDetailInput {
+	locale?: unknown;
 	type?: unknown;
 	action_id?: unknown;
 	/** `form_submit` payload. */
@@ -382,6 +384,8 @@ export function customAction<Client, RenderState = never>(
  */
 export interface ListDetailScreenConfig<RenderState = never> {
 	actions: ScreenActions;
+	/** Request-local authored presentation copy, with the existing English default. */
+	translate?: PluginTranslate;
 	/** Build the token-threaded `ctx.http` client for this screen. */
 	createClient(ctx: PluginContext): Promise<unknown> | unknown;
 	/** Levels indexed by drill depth (index 0 = root list). A level that ignores
@@ -431,6 +435,7 @@ export function createListDetailHandler<RenderState = never>(
 	config: ListDetailScreenConfig<RenderState>,
 ): RouteHandler<ListDetailInput> {
 	const dispatch = createDispatcher(config);
+	const t = config.translate ?? englishTranslate;
 	return async (routeCtx, ctx) => {
 		try {
 			return await dispatch(routeCtx, ctx);
@@ -446,11 +451,12 @@ export function createListDetailHandler<RenderState = never>(
 			// screen-specific can be trusted to build blocks, and the error must never
 			// reach the UI (it can carry a URL or a status — see `failClosedResponse`).
 			return failClosedResponse({
-				header: "Unavailable",
-				title: "This screen could not be rendered",
-				description:
+				header: t("Unavailable"),
+				title: t("This screen could not be rendered"),
+				description: t(
 					"Something went wrong building this view. Reload the page; if it persists, the record may need checking directly.",
-				toast: "Could not render this screen",
+				),
+				toast: t("Could not render this screen"),
 			});
 		}
 	};
@@ -460,6 +466,7 @@ function createDispatcher<RenderState>(
 	config: ListDetailScreenConfig<RenderState>,
 ): RouteHandler<ListDetailInput> {
 	const { actions, levels } = config;
+	const t = config.translate ?? englishTranslate;
 
 	return async (routeCtx, ctx) => {
 		const input = routeCtx.input;
@@ -655,7 +662,7 @@ function createDispatcher<RenderState>(
 				// simplest render that can still work.
 				console.error(`[otta] admin custom action ${String(action)} failed:`, err);
 				const toast = {
-					message: "Action outcome unknown — re-check the record",
+					message: t("Action outcome unknown — re-check the record"),
 					type: "error" as const,
 				};
 				// DOUBLE FAULT: if rebuilding the root list ALSO throws, the outer
@@ -669,7 +676,17 @@ function createDispatcher<RenderState>(
 					console.error("[otta] admin custom action fallback render failed:", fallbackErr);
 					fallbackBlocks = [];
 				}
-				return { blocks: [noticeBanner(ACTION_OUTCOME_UNKNOWN), ...fallbackBlocks], toast };
+				return {
+					blocks: [
+						noticeBanner({
+							variant: ACTION_OUTCOME_UNKNOWN.variant,
+							title: t(ACTION_OUTCOME_UNKNOWN.title),
+							description: t(ACTION_OUTCOME_UNKNOWN.description),
+						}),
+						...fallbackBlocks,
+					],
+					toast,
+				};
 			}
 		}
 
@@ -852,11 +869,15 @@ export type { RowNoun } from "@otta-sh/admin-presentation";
  * one too (it re-renders the parent level with its default filter), but that is
  * an implicit side effect of navigating and is not touched here.
  */
-export function clearFiltersButton(actions: ScreenActions, path: NavPath): ButtonElement {
+export function clearFiltersButton(
+	actions: ScreenActions,
+	path: NavPath,
+	t: PluginTranslate = englishTranslate,
+): ButtonElement {
 	return {
 		type: "button",
 		action_id: actions.applyFilter,
-		label: CLEAR_FILTERS_LABEL,
+		label: t(CLEAR_FILTERS_LABEL),
 		value: { [PATH_FIELD]: encodePath(path) },
 	};
 }
@@ -955,7 +976,10 @@ export interface ListResult {
 	scanNote: ContextBlock | undefined;
 }
 
-export function listResult(opts: ListResultOptions): ListResult {
+export function listResult(
+	opts: ListResultOptions,
+	t: PluginTranslate = englishTranslate,
+): ListResult {
 	// THE DECISION IS NOT MADE HERE ANY MORE — `listOutcome` makes it, and the
 	// React Orders list makes the same call with the same inputs. What is left
 	// here is the half that is genuinely Block Kit's: an `empty` block with a
@@ -970,6 +994,7 @@ export function listResult(opts: ListResultOptions): ListResult {
 	// "25 orders on this page" against a Block Kit screen one sidebar entry away
 	// saying "137 orders" — a parity gap opening on the day INC-23 merged.
 	const outcome = listOutcome({
+		locale: t.locale,
 		count: opts.count,
 		filtered: opts.filtered,
 		firstPage: opts.firstPage,
@@ -1004,7 +1029,7 @@ export function listResult(opts: ListResultOptions): ListResult {
 	// surface's own.
 	const actions =
 		outcome.offer === "clear-filters"
-			? [clearFiltersButton(opts.actions, opts.path)]
+			? [clearFiltersButton(opts.actions, opts.path, t)]
 			: outcome.offer === "way-in"
 				? (opts.empty.actions ?? [])
 				: [];

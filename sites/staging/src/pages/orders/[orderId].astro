@@ -21,9 +21,10 @@
  * ── What the page does about the secret in its own URL ───────────────────
  * Stripe also appends the intent's client secret, so it is already in history
  * and access logs by the time this renders (ADR-0012 decision 6 — accepted, and
- * not ours to change). The mitigations that ARE ours: the `no-referrer` policy
- * below, so it does not leak onward through subresource Referers; and deleting
- * the `otta_checkout` stash on arrival, so a spent secret does not linger in
+ * not ours to change). The `same-origin` policy below suppresses external
+ * Referers while allowing guarded local form posts. Poll and language targets
+ * discard known Stripe redirect fields. The `otta_checkout` stash is deleted
+ * on arrival, so a spent secret does not linger in
  * the browser for the rest of the hold. That deletion is the entire
  * justification for the cookie's `path=/`.
  *
@@ -45,10 +46,16 @@ import PollRibbon from "../../components/PollRibbon.astro";
 import StateStamp from "../../components/StateStamp.astro";
 import StepTrack from "../../components/StepTrack.astro";
 import Sum from "../../components/Sum.astro";
+import { orderStateLabel } from "../../lib/account.js";
+import { orderPollPath } from "../../lib/order-navigation.js";
 import Base from "../../layouts/Base.astro";
 import { clearCheckoutCookie } from "../../lib/checkout-cookie.js";
 import { cartErrorMessage } from "../../lib/error-messages.js";
 import { BUSY, dispatchOttaRoute, isBusyResult, markBusy } from "../../lib/otta-api.js";
+import { storefrontPresentation } from "../../lib/messages.js";
+
+const { locale, t } = storefrontPresentation(Astro);
+Astro.response.headers.set("Cache-Control", "private, no-store");
 
 const { orderId } = Astro.params;
 
@@ -62,7 +69,7 @@ const result =
 		: await dispatchOttaRoute<OrderRouteResult>(
 				getPublicPluginApiRouteHandler(Astro.locals),
 				STOREFRONT_ORDER_ROUTE,
-				{ orderId },
+				{ orderId, locale },
 				Astro.url,
 			);
 
@@ -87,7 +94,7 @@ const MAX_POLLS = 8;
 const poll = Number.parseInt(Astro.url.searchParams.get("p") ?? "0", 10);
 const pollAttempt = Number.isFinite(poll) && poll > 0 ? poll : 0;
 const shouldPoll = isPending && offlinePayment === null && pollAttempt < MAX_POLLS;
-const nextPollUrl = `/orders/${encodeURIComponent(orderId ?? "")}?p=${pollAttempt + 1}`;
+const nextPollUrl = orderPollPath(Astro.url, pollAttempt + 1);
 
 interface StateCopy {
 	/** The stamp's headline — the largest type on the page. */
@@ -107,26 +114,26 @@ interface StateCopy {
  * sentence did and adds the fact a buyer looking at a lapsed order needs most.
  */
 const COPY: Record<string, StateCopy> = {
-	paid: { headline: "Order confirmed.", body: "Thank you — we've received your payment." },
-	failed: { headline: "The payment did not go through.", body: "No charge was made." },
+	paid: { headline: t("Order confirmed."), body: t("Thank you — we've received your payment.") },
+	failed: { headline: t("The payment did not go through."), body: t("No charge was made.") },
 	expired: {
-		headline: "This order expired.",
-		body: "Payment didn't complete in time, so the items went back on sale. Nothing was charged.",
+		headline: t("This order expired."),
+		body: t("Payment didn't complete in time, so the items went back on sale. Nothing was charged."),
 	},
-	cancelled: { headline: "This order was cancelled.", body: null },
-	refunded: { headline: "This order has been refunded.", body: null },
+	cancelled: { headline: t("This order was cancelled."), body: null },
+	refunded: { headline: t("This order has been refunded."), body: null },
 };
 
 const pendingCopy: StateCopy = offlinePayment?.method === "cod"
-	? { headline: "COD order submitted.", body: "The store will review it for dispatch. Payment is collected on delivery and has not been recorded." }
+	? { headline: t("COD order submitted."), body: t("The store will review it for dispatch. Payment is collected on delivery and has not been recorded.") }
 	: offlinePayment?.method === "bank_transfer"
-		? { headline: "This order is awaiting bank transfer.", body: "Follow the instructions below. Payment is confirmed after the store records its receipt." }
+		? { headline: t("This order is awaiting bank transfer."), body: t("Follow the instructions below. Payment is confirmed after the store records its receipt.") }
 		: returnedFromStripe
 	? {
-			headline: "Payment submitted.",
-			body: "We're confirming it with our payment provider — this usually takes a few seconds. This page refreshes automatically.",
+			headline: t("Payment submitted."),
+			body: t("We're confirming it with our payment provider — this usually takes a few seconds. This page refreshes automatically."),
 		}
-	: { headline: "This order is awaiting payment.", body: null };
+	: { headline: t("This order is awaiting payment."), body: null };
 
 const stamp: StateCopy | null =
 	state === null
@@ -134,14 +141,14 @@ const stamp: StateCopy | null =
 		: isPending
 			? pendingCopy
 			: offlineUnpaid && (state === "expired" || state === "failed")
-				? { headline: "This payment deadline has ended.", body: "Contact the store if you already sent payment. Do not send another payment for this order." }
+				? { headline: t("This payment deadline has ended."), body: t("Contact the store if you already sent payment. Do not send another payment for this order.") }
 			: offlineUnpaid && ["processing", "shipped", "delivered", "completed"].includes(state)
-				? { headline: state === "processing" ? "COD accepted for dispatch." : `Order status: ${state}.`, body: "Payment has not been recorded. Acceptance and delivery status do not mean that money was received." }
-			: (COPY[state] ?? { headline: `Order status: ${state}.`, body: null });
+				? { headline: state === "processing" ? t("COD accepted for dispatch.") : t("Order status: {state}.", { state: orderStateLabel(state, locale) }), body: t("Payment has not been recorded. Acceptance and delivery status do not mean that money was received.") }
+			: (COPY[state] ?? { headline: t("Order status: {state}.", { state: orderStateLabel(state, locale) }), body: null });
 
 /** "Total" while it is still a quote; "Paid" once the order settled (§7). A map
  *  rather than a comparison so no other state can ever pick up the word. */
-const TOTAL_LABEL: Record<string, string> = { paid: "Paid" };
+const TOTAL_LABEL: Record<string, string> = { paid: t("Paid") };
 
 /**
  * The states with nowhere left to go, and therefore the states that get the
@@ -182,26 +189,27 @@ const sumRows =
 	order === null
 		? []
 		: [
-				{ label: "Subtotal", amount: order.totals.subtotal },
+				{ label: t("Subtotal"), amount: order.totals.subtotal },
 				{
 					label:
 						order.totals.appliedCouponCode !== null
-							? `Discount · ${order.totals.appliedCouponCode}`
-							: "Discount",
+							? t("Discount · {code}", { code: order.totals.appliedCouponCode })
+							: t("Discount"),
 					amount: order.totals.discount,
-					fallback: "No coupon applied",
+					fallback: t("No coupon applied"),
 				},
-				{ label: "Shipping", amount: order.totals.shipping },
-				{ label: "Tax", amount: order.totals.tax },
+				{ label: t("Shipping"), amount: order.totals.shipping },
+				{ label: t("Tax"), amount: order.totals.tax },
 			];
 ---
 
 {/* The order names its own currency; a failed read names none (§7). */}
 <Base
-	title={order === null ? "Order" : `Order ${order.id}`}
+	title={order === null ? t("Order") : t("Order {id}", { id: order.id })}
 	currency={order?.currency ?? null}
 >
-	<meta name="referrer" content="no-referrer" slot="head" />
+	{/* External URLs receive no Referer; local guarded forms keep their Origin. */}
+	<meta name="referrer" content="same-origin" slot="head" />
 	{shouldPoll && <meta http-equiv="refresh" content={`4;url=${nextPollUrl}`} slot="head" />}
 
 	{
@@ -211,18 +219,18 @@ const sumRows =
 				    behind you, and for an order that does not exist — a mistyped
 				    link, someone else's reference, a service that is down — that
 				    is a journey the visitor never made. */}
-				<h1 class="title">Order</h1>
+				<h1 class="title">{t("Order")}</h1>
 				<div class="alert">
 					<Notice>
 						{busy
-							? cartErrorMessage(BUSY)
+							? cartErrorMessage(BUSY, locale)
 							: result !== null && !result.ok && "reason" in result
-								? cartErrorMessage(result.reason)
-								: cartErrorMessage("SERVICE_UNAVAILABLE")}
+								? cartErrorMessage(result.reason, locale)
+								: cartErrorMessage("SERVICE_UNAVAILABLE", locale)}
 					</Notice>
 				</div>
 				<p class="back">
-					<a href="/products">Browse products</a>
+					<a href="/products">{t("Browse products")}</a>
 				</p>
 			</>
 		) : (
@@ -249,13 +257,13 @@ const sumRows =
 					)}
 				</StateStamp>
 
-				<p class="keep">Keep this link to check its status.</p>
+				<p class="keep">{t("Keep this link to check its status.")}</p>
 				{offlinePayment !== null && !deadEnd && (
 					<section class="panel" aria-labelledby="offline-instructions" style="margin-bottom: 1.5rem">
-						<div class="panel-head"><h2 class="u-label head-label" id="offline-instructions">{offlinePayment.method === "bank_transfer" ? "Bank transfer instructions" : "Cash on delivery"}</h2></div>
+						<div class="panel-head"><h2 class="u-label head-label" id="offline-instructions">{offlinePayment.method === "bank_transfer" ? t("Bank transfer instructions") : t("Cash on delivery")}</h2></div>
 						<p style="white-space: pre-wrap">{offlinePayment.instructions}</p>
-						<p>Payment reference: <span class="u-mono">{offlinePayment.paymentReference}</span></p>
-						<p>{offlinePayment.status === "received" ? "Payment receipt recorded by the store." : offlinePayment.status === "accepted" ? "Accepted for dispatch — payment is still unpaid." : `Payment deadline: ${offlinePayment.paymentDueAt}`}</p>
+						<p>{t("Payment reference")}: <span class="u-mono">{offlinePayment.paymentReference}</span></p>
+						<p>{offlinePayment.status === "received" ? t("Payment receipt recorded by the store.") : offlinePayment.status === "accepted" ? t("Accepted for dispatch — payment is still unpaid.") : t("Payment deadline: {deadline}", { deadline: offlinePayment.paymentDueAt })}</p>
 					</section>
 				)}
 
@@ -263,18 +271,18 @@ const sumRows =
 					<div class="actions">
 						{canCheckAgain && (
 							<a class="u-btn u-btn-ghost" href={nextPollUrl}>
-								Check again
+								{t("Check again")}
 							</a>
 						)}
 						{canResume && (
 							<a class="u-btn u-btn-ghost" href="/checkout">
-								Complete payment
+								{t("Complete payment")}
 							</a>
 						)}
 						{deadEnd && (
 							<form method="POST" action="/checkout/new-cart">
 								<button type="submit" class="u-btn u-btn-ghost">
-									Start a new cart
+									{t("Start a new cart")}
 								</button>
 							</form>
 						)}
@@ -284,12 +292,12 @@ const sumRows =
 				<div class="cols">
 					<section class="panel">
 						<div class="panel-head">
-							<h2 class="u-label head-label">Items</h2>
+							<h2 class="u-label head-label">{t("Items")}</h2>
 						</div>
 						<Ledger rows={ledgerRows} />
 						{order.fulfillment !== null && (
 							<p class="ship">
-								Shipped with {order.fulfillment.carrier} — tracking{" "}
+								{t("Shipped with {carrier} — tracking", { carrier: order.fulfillment.carrier })}{" "}
 								<span class="u-mono">{order.fulfillment.trackingNumber}</span>
 							</p>
 						)}
@@ -297,12 +305,12 @@ const sumRows =
 
 					<section class="panel">
 						<div class="panel-head">
-							<h2 class="u-label head-label">Totals</h2>
+							<h2 class="u-label head-label">{t("Totals")}</h2>
 						</div>
 						<Sum
 							rows={sumRows}
 							total={order.totals.total}
-							totalLabel={offlinePayment?.status === "received" ? "Paid" : TOTAL_LABEL[order.state] ?? "Total"}
+							totalLabel={offlinePayment?.status === "received" ? t("Paid") : TOTAL_LABEL[order.state] ?? t("Total")}
 							excludesUncalculated={order.totals.totalExcludesUncalculated}
 						/>
 					</section>

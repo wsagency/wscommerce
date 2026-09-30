@@ -31,6 +31,7 @@ export interface StagingEmdashOptions {
 	database: DatabaseDescriptor;
 	storage: StorageDescriptor;
 	plugins: PluginDescriptor[];
+	middleware: { outer: URL };
 }
 
 /**
@@ -63,6 +64,7 @@ export function buildEmdashOptions(
 	commerceEgressUrls: readonly string[] = [],
 ): StagingEmdashOptions {
 	return {
+		middleware: { outer: new URL("./middleware/commerce-locale.ts", import.meta.url) },
 		// No `session` — see the pairing invariant in the module doc above.
 		database: d1({ binding: "DB" }),
 		storage: r2({ binding: "MEDIA" }),

@@ -26,6 +26,54 @@ applies the full seed including the 3 sample products:
 `/_emdash/api/setup/dev-bypass?redirect=/_emdash/admin`. What first boot does and does
 not seed in a real deployment is covered in [`DEPLOYMENT.md`](../../DEPLOYMENT.md) §2.2.
 
+### English and Croatian presentation
+
+The reference storefront supports `en` and `hr`. The header's native language form
+sets the `wscommerce_locale` preference cookie through an origin-guarded `POST
+/language`, then returns to the current page. A valid explicit preference wins over
+the browser's weighted `Accept-Language` list; unsupported or malformed preferences
+fall back to a supported browser language and finally English. Locale varies by
+`Cookie` and `Accept-Language`; cart, checkout, payment, receipt and account responses
+are private and are not stored in caches.
+
+Authored interface messages live in [`src/lib/messages.ts`](src/lib/messages.ts).
+Call `storefrontPresentation(Astro)` at explicit interface callsites and pass the
+same locale to plugin presentation inputs, country labels and local account money
+formatting. Named interpolation keeps customer and merchant values verbatim, and
+quantity helpers use Croatian one/few/other plural forms. URLs, form names and values,
+status enums, IDs, SKUs, stock and immutable financial snapshots stay unchanged.
+
+The payment page reads only the original private order capability to obtain its
+localized immutable total. It never requotes the cart or creates another payment;
+the place-time stash label remains the fallback if that guarded read is unavailable
+or expired. The Payment Element receives the same locale, including its unthemed
+retry; authored browser failure messages arrive in escaped data attributes.
+
+Language return targets accept only validated local absolute paths. They retain
+private capability/query bytes. The narrow exception is Stripe's transport fields
+`payment_intent`, `payment_intent_client_secret` and `redirect_status`: language
+targets and receipt polling discard them, retaining all other parameters. Those
+fields never supply payment truth or plugin inputs. Receipt pages use a `same-origin`
+referrer policy so native local POSTs keep their real Origin while external
+destinations receive no Referer or private URL.
+
+[`src/lib/demo-content.ts`](src/lib/demo-content.ts) provides explicit display-only
+translations for the reference seed's tagline, menu and three product descriptions.
+Products must match their seed slug and exact source title/description; settings
+and the entire menu must match their exact reference source. EmDash creates new
+content IDs while seeding, so the stable seed slug is the content mapping key.
+Changing merchant copy disables the mapping and displays the edit verbatim. Legacy
+Otta seed titles also map to WSCommerce display branding. The seed's existing
+IDs/slugs/SKUs and commerce input/title snapshots are preserved. New merchant
+content needs its own explicitly authored localization model; it is never passed
+through an interface dictionary. EmDash host/admin chrome outside commerce and the
+developer styleguide are separate localization boundaries.
+
+Focused tests include rendered Croatian pages/components, locale negotiation,
+guarded preference POSTs, private query retention, uncalculated totals and immutable
+payment reads. `e2e/storefront-language.spec.ts` exercises a real browser language
+POST and verifies that a controlled external navigation receives no private Referer.
+
 ### Plugin settings are namespaced by plugin id
 
 A setting saved under one plugin id is not visible to another. The Block Kit screens and the

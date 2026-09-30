@@ -24,6 +24,9 @@ import {
 } from "../../../lib/account.js";
 import { cartErrorMessage } from "../../../lib/error-messages.js";
 import { dispatchOttaRoute, isBusyResult, markBusy } from "../../../lib/otta-api.js";
+import { storefrontPresentation } from "../../../lib/messages.js";
+
+const { locale, t } = storefrontPresentation(Astro);
 
 Astro.response.headers.set("Cache-Control", ACCOUNT_NO_STORE);
 
@@ -56,56 +59,56 @@ const ledgerRows =
 		title: line.title,
 		sku: line.sku,
 		qty: line.quantity,
-		money: orderMoney(line.unitPriceCents * line.quantity, line.currency),
+		money: orderMoney(line.unitPriceCents * line.quantity, line.currency, locale),
 	})) ?? [];
 
 const totals =
 	order === null
 		? []
 		: [
-				["Subtotal", order.totals.subtotalCents],
-				["Discount", order.totals.discountCents],
-				["Shipping", order.totals.shippingCents],
-				["Tax", order.totals.taxCents],
+				[t("Subtotal"), order.totals.subtotalCents],
+				[t("Discount"), order.totals.discountCents],
+				[t("Shipping"), order.totals.shippingCents],
+				[t("Tax"), order.totals.taxCents],
 			].map(([label, amount]) => ({
 				label: label as string,
-				value: orderMoney(amount as number, order.totals.currency),
+				value: orderMoney(amount as number, order.totals.currency, locale),
 			}));
 ---
 
-<Base title={order === null ? "Order" : `Order ${order.id}`} currency={order?.currency ?? null}>
+<Base title={order === null ? t("Order") : t("Order {id}", { id: order.id })} currency={order?.currency ?? null}>
 	<p class="back">
-		<a href="/account/orders">← Your orders</a>
+		<a href="/account/orders">{t("← Your orders")}</a>
 	</p>
 
 	{
 		order === null ? (
 			<>
-				<h1 class="title">Order</h1>
+				<h1 class="title">{t("Order")}</h1>
 				<div class="notice-slot" role="alert">
 					<Notice>
-						{cartErrorMessage(busy ? "BUSY" : notFound ? "ORDER_NOT_FOUND" : "SERVICE_UNAVAILABLE")}
+						{cartErrorMessage(busy ? "BUSY" : notFound ? "ORDER_NOT_FOUND" : "SERVICE_UNAVAILABLE", locale)}
 					</Notice>
 				</div>
 			</>
 		) : (
 			<>
 				<h1 class="title">
-					Order <span class="u-mono ref">{order.id}</span>
+					{t("Order")} <span class="u-mono ref">{order.id}</span>
 				</h1>
-				<p class="state">{orderStateLabel(order.state)}</p>
+				<p class="state">{orderStateLabel(order.state, locale)}</p>
 
 				<div class="cols">
 					<section class="panel">
 						<div class="panel-head">
-							<h2 class="u-label head-label">Items</h2>
+							<h2 class="u-label head-label">{t("Items")}</h2>
 						</div>
 						<Ledger rows={ledgerRows} />
 					</section>
 
 					<section class="panel">
 						<div class="panel-head">
-							<h2 class="u-label head-label">Totals</h2>
+							<h2 class="u-label head-label">{t("Totals")}</h2>
 						</div>
 						<dl class="totals">
 							{totals.map((row) => (
@@ -115,9 +118,9 @@ const totals =
 								</div>
 							))}
 							<div class="row grand">
-								<dt>Total</dt>
+								<dt>{t("Total")}</dt>
 								<dd class="u-mono">
-									{orderMoney(order.totals.totalCents, order.totals.currency)}
+									{orderMoney(order.totals.totalCents, order.totals.currency, locale)}
 								</dd>
 							</div>
 						</dl>

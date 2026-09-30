@@ -5,7 +5,7 @@
  * There is no render/DOM harness in this package (plan §7.3 / issue #40), so
  * anything stated in the design and not asserted here WILL drift. Everything in
  * this file is a property of the SOURCE, chosen so it can be checked reliably:
- * the client-JS fence, the `no-referrer` meta, and — structurally, not by
+ * the client-JS fence, the `same-origin` meta, and — structurally, not by
  * naive substring search — the rule that Stripe's redirect parameters never
  * reach the rendered markup.
  */
@@ -295,12 +295,12 @@ describe("10a′ — the fence against a merged tree", () => {
 describe("10b — the confirmation page does not leak the secret Stripe puts in OUR url", () => {
 	const source = readFileSync(ORDER_PAGE, "utf8");
 
-	test('carries <meta name="referrer" content="no-referrer">', () => {
+	test('carries <meta name="referrer" content="same-origin"> for local POSTs and external privacy', () => {
 		// Stripe appends payment_intent_client_secret to our return_url (ADR-0012
-		// decision 6). This meta is the only thing between that and a subresource
-		// Referer leak, and it is specified in three places — so it is asserted
-		// once, here, rather than trusted to survive an edit.
-		expect(source).toMatch(/<meta[^>]*name="referrer"[^>]*content="no-referrer"[^>]*>/);
+		// decision 6). External destinations receive no Referer, while a native
+		// local language POST retains the real Origin required by the guard.
+		// storefront-language.spec.ts also exercises both browser behaviors.
+		expect(source).toMatch(/<meta[^>]*name="referrer"[^>]*content="same-origin"[^>]*>/);
 	});
 });
 

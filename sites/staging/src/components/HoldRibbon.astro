@@ -34,6 +34,7 @@
  */
 import type { HTMLAttributes } from "astro/types";
 import { restProps } from "../lib/rest-props.js";
+import { storefrontPresentation } from "../lib/messages.js";
 import {
 	HOLD_RELEASED_NEXT_STEP,
 	HOLD_WINDOW_SECONDS,
@@ -52,15 +53,17 @@ interface Props extends HTMLAttributes<"div"> {
 	nextStep?: string;
 }
 
+const { locale, t } = storefrontPresentation(Astro);
+
 const {
 	expiresAt = null,
 	windowSeconds = HOLD_WINDOW_SECONDS,
-	nextStep = HOLD_RELEASED_NEXT_STEP,
+	nextStep = t(HOLD_RELEASED_NEXT_STEP),
 	class: className,
 	...rest
 } = Astro.props;
 
-const view = holdView(expiresAt, new Date(), windowSeconds);
+const view = holdView(expiresAt, new Date(), windowSeconds, locale);
 const expiry = absoluteExpiry(expiresAt);
 ---
 
@@ -72,6 +75,7 @@ const expiry = absoluteExpiry(expiresAt);
 			data-state={view.state}
 			data-expires={expiresAt}
 			data-window={windowSeconds}
+			data-locale={locale}
 			{...restProps(rest)}
 		>
 			{/* The exemption tokens.css grants covers this element AND its
@@ -125,6 +129,7 @@ const expiry = absoluteExpiry(expiresAt);
 			const announce = el.querySelector<HTMLElement>("[data-hold-announce]");
 			return {
 				expiry: Date.parse(el.dataset.expires ?? ""),
+				locale: el.dataset.locale === "hr" ? "hr" as const : "en" as const,
 				window: Number(el.dataset.window) || HOLD_WINDOW_SECONDS,
 				shownState: el.dataset.state ?? "",
 				render(frame: HoldFrame): void {

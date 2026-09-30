@@ -11,6 +11,7 @@ Maintained by **Websolutions**. Built on the MIT-licensed [Otta](https://github.
 ## What is included
 
 - EmDash catalog content, sellable products and SKU variants, a React merchant console, guest carts and customer accounts.
+- English/Croatian reference-shop and commerce merchant interfaces, with English source, API contracts and developer documentation.
 - Native stock reservations, conditional writes, replayable checkout and recovery after interrupted operations.
 - Integer money, coupons, location-based VAT, inclusive/exclusive prices and frozen order-time financial and billing snapshots.
 - Stripe PaymentIntents, verified payment webhooks and provider-confirmed partial/full refunds.
@@ -53,6 +54,8 @@ pnpm -C sites/staging dev
 
 Open the printed local URL and complete EmDash's first-run setup. Enable sample content if you want the demo catalog. Price and stock the sample products in **Pricing & inventory** before trying checkout; content alone does not make a product sellable.
 
+The shop offers English and Croatian with a persistent language selector and browser-language negotiation. Commerce merchant screens have their own language preference. Catalog translations are authored content; the module never dictionary-transforms customer or merchant data. Read the [localization guide](docs/development/localization.md) for extension points and EmDash host boundaries.
+
 Payment and invoice providers start unconfigured. Enable the offline methods in admin Settings, or follow the integration guide to configure Stripe and accounting. For optional local invoice/Woo settings, copy `sites/staging/.dev.vars.example` to `.dev.vars` in the same directory; real credentials belong in ignored local configuration or server-side Worker secrets.
 
 [DEPLOYMENT.md](DEPLOYMENT.md) covers local storage, the demo-commerce seed and the complete Cloudflare setup: resources, bindings, build, deployment, immediate admin claim and cron. Tracked resource IDs are placeholders.
@@ -70,6 +73,8 @@ Select exactly one invoice owner: `disabled`, `solo`, `e-racuni` or `woocommerce
 The first foundation focuses on physical retail, order correctness and accounting. Dedicated local pickup, carrier booking/labels, MBE integration, invoice corrections, complete digital-file delivery, CSV migration and privacy export/erase workflows need further implementation or acceptance. A zero-priced named flat rate can represent collection, but checkout still requires an address.
 
 Marketplace settlement, subscriptions, reviews, generalized EU B2B tax, automatic fiscal certificate handling and currency conversion are future modules. Stripe currently accepts the supported two-decimal currency profile. The inherited x402 adapter is not a complete storefront flow. See the [design](docs/superpowers/specs/2026-09-30-emdash-commerce-design.md) and [implementation plan](docs/superpowers/plans/2026-09-30-emdash-commerce-foundation.md) for decisions and remaining gates.
+
+The Croatian bank-transfer milestone still needs a bank-compatible 2D payment barcode generated from frozen payment data and verified in banking apps. Text instructions and manual payment receipts are implemented; they do not establish barcode readiness.
 
 ## Development and validation
 

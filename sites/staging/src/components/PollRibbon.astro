@@ -35,6 +35,7 @@
  */
 import type { HTMLAttributes } from "astro/types";
 import { restProps } from "../lib/rest-props.js";
+import { storefrontPresentation } from "../lib/messages.js";
 
 interface Props extends HTMLAttributes<"div"> {
 	/** "Checking 3 of 8" — which hop of the page's bounded poll this is. */
@@ -43,14 +44,16 @@ interface Props extends HTMLAttributes<"div"> {
 	label?: string;
 }
 
-const { poll, pollMax, label = "Checking", class: className, ...rest } = Astro.props;
+const { t } = storefrontPresentation(Astro);
+
+const { poll, pollMax, label = t("Checking"), class: className, ...rest } = Astro.props;
 ---
 
 <div class:list={["poll", className]} {...restProps(rest)}>
 	<div class="track"><span class="sweep"></span></div>
 	<div class="meta">
 		<span class="u-label label">{label}</span>
-		<span class="u-mono clock">{poll} of {pollMax}</span>
+		<span class="u-mono clock">{t("{current} of {max}", { current: poll, max: pollMax })}</span>
 	</div>
 </div>
 

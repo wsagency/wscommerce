@@ -90,6 +90,7 @@ import { isRetryableStorageBusy } from "@otta-sh/store-emdash";
 import { asRecord, readString } from "./scaffold/index.js";
 import { ORDER_STATES } from "@otta-sh/admin-presentation";
 import type { PluginContext, RouteHandler } from "../types.js";
+import { requestTranslator, type PluginTranslate } from "./localization.js";
 
 /** INC-21 moved the two interaction types and the refusal shapes into
  *  `./console-transport.js`, where the Pricing & inventory branch reaches them
@@ -241,6 +242,7 @@ const NOT_FOUND: ConsoleFailure = {
 /** The console's request envelope, narrowed to what this module reads. Every
  *  field is untrusted operator-round-tripped input and is re-validated here. */
 export interface OrdersConsoleInput {
+	locale?: unknown;
 	type?: unknown;
 	resource?: unknown;
 	orderId?: unknown;
@@ -370,12 +372,13 @@ async function consoleDetail(
 async function consoleAct(
 	input: OrdersConsoleInput,
 	ctx: PluginContext,
+	t: PluginTranslate,
 ): Promise<OrdersActionResult | ConsoleFailure> {
 	const actionId = readString(input.action_id);
 	if (actionId === undefined) return UNREADABLE_REQUEST;
 	if (!ORDERS_ACTION_IDS.has(actionId)) return UNKNOWN_ACTION;
 	const client = await createClient(ctx);
-	const outcome = await dispatchOrdersAction(actionId, readConsolePayload(input.value), client);
+	const outcome = await dispatchOrdersAction(actionId, readConsolePayload(input.value), client, t);
 	// Unreachable while the gate above reads the same table — kept because the two
 	// are separate statements, and "the id was registered but nothing ran" must
 	// never fall through to a quiet success.
@@ -390,7 +393,7 @@ export function createOrdersConsoleHandler(): RouteHandler<OrdersConsoleInput> {
 		const input = routeCtx.input;
 		try {
 			if (readString(input.type) === CONSOLE_ACT_INTERACTION) {
-				return await consoleAct(input, ctx);
+				return await consoleAct(input, ctx, requestTranslator(routeCtx));
 			}
 			const resource = readString(input.resource);
 			if (resource === "orders.list") return await consoleList(input, ctx);

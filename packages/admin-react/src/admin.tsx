@@ -52,3 +52,10 @@ export const pages = {
 	"/orders": OrdersScreen,
 	"/products": ProductsScreen,
 } as unknown as PluginAdminExports["pages"];
+
+export {
+	AdminLanguageChoice,
+	AdminLocaleProvider,
+	useAdminLocale,
+	useAdminPresentation,
+} from "./locale.js";

@@ -11,6 +11,8 @@
  * name stays accurate.
  */
 
+import type { PluginTranslate } from "./localization.js";
+
 export interface RevenueBucketWire {
 	bucketStart: string;
 	currency: string;
@@ -156,5 +158,6 @@ export interface ReportingSettingsSurface {
 	updateSettings(
 		patch: Partial<OperationalSettingsWire>,
 		opts: { idempotencyKey: string; adminToken?: string },
+		translate?: PluginTranslate,
 	): Promise<UpdateSettingsResult>;
 }

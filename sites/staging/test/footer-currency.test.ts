@@ -27,7 +27,7 @@ const NAMES_A_CURRENCY: ReadonlyArray<readonly [string, string]> = [
 	// prints money names the currency it is in. The field is OPTIONAL-chained on
 	// purpose: a stash minted before the total shipped shows "Pay now" and names
 	// no currency, which is still the truth about what that page printed.
-	["checkout/pay.astro", "stash.total?.currency"],
+	["checkout/pay.astro", "displayTotal?.currency"],
 	// Increment 3 moved both catalog pages into this list. `products/index.astro`
 	// has always printed `price.formatted` on every card and named no currency,
 	// which was the split being wrong rather than the pages being exempt; and the
