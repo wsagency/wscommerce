@@ -41,7 +41,7 @@ export function invoiceSnapshotFromOrder(
 		if (
 			!Number.isSafeInteger(tax.taxCents) ||
 			!Number.isSafeInteger(tax.discountedCents) ||
-			(tax.taxCents !== 0 && tax.rateBps === undefined)
+			tax.rateBps === undefined
 		)
 			throw new Error("FROZEN_TAX_PROOF_REQUIRED");
 		const net =
@@ -60,15 +60,16 @@ export function invoiceSnapshotFromOrder(
 			totalNet: cents(net),
 			totalTax: cents(tax.taxCents),
 			totalGross: cents(gross),
-			taxRateBps: tax.rateBps ?? 0,
+			taxRateBps: tax.rateBps,
 		};
 	});
 	const shippingTax = proof.shippingTaxCents ?? 0;
-	if (shippingTax !== 0 && proof.shippingRateBps === undefined)
+	const shippingNet = proof.shippingNetCents ?? order.totals.shipping;
+	if ((shippingNet !== 0 || shippingTax !== 0) && proof.shippingRateBps === undefined)
 		throw new Error("FROZEN_TAX_PROOF_REQUIRED");
 	const shipping = {
 		title: "Shipping",
-		net: cents(proof.shippingNetCents ?? order.totals.shipping),
+		net: cents(shippingNet),
 		tax: cents(shippingTax),
 		taxRateBps: proof.shippingRateBps ?? 0,
 	};
