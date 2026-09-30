@@ -30,3 +30,11 @@ split into two groups within HUB's 22-character limit. They are labels, not
 capabilities or proof of settlement; rare collisions require reconciliation
 against the full order record. HR99 carries an empty reference. At high volumes,
 add a uniquely allocated numeric reference rather than relying on these labels.
+
+The native offline gateway renders the proposed frozen snapshot before the
+first order insert. Maximum-length UTF-8 fields can exceed HUB's physical
+height despite individually valid character lengths; those checkouts return
+`PAYMENT_METHOD_NOT_AVAILABLE` without committing an order. Do not remove the
+geometry guard or silently transliterate Croatian letters. Custom gateways
+providing structured bank profiles must implement the optional
+`validateBankTransferSnapshot` qualification method before order creation.

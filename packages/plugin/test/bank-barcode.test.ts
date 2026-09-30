@@ -179,3 +179,12 @@ test("the immutable recipient keeps full legal details while only the HUB fields
 	expect(snapshot.recipient.name).toBe(name.trim());
 	expect(buildHub3Payload(snapshot).split("\n")[6]).toHaveLength(25);
 });
+
+test("purpose is normalized before the frozen snapshot and payload are built", () => {
+	const s = freezeBankTransferSnapshot({
+		...input,
+		recipient: { ...recipient, purpose: " GDDS " },
+	});
+	expect(s.recipient.purpose).toBe("GDDS");
+	expect(buildHub3Payload(s).split("\n")[12]).toBe("GDDS");
+});

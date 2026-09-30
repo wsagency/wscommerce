@@ -539,6 +539,7 @@ async function finalizeOrder(
 				reference: recipient.model === "HR99" ? "" : bankReference(ctx.freshOrderId),
 				description: `Order ${ctx.freshOrderId.slice(0, 8)}`,
 			});
+			ctx.gateway.validateBankTransferSnapshot?.(bankTransfer);
 		} catch (error) {
 			if (error instanceof RangeError) {
 				await ctx.onFailure();

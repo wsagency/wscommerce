@@ -1,3 +1,4 @@
+import { renderHub3Svg } from "./pdf417.js";
 import {
 	PaymentIntentError,
 	type PaymentGateway,
@@ -8,6 +9,7 @@ import {
 	type RawConfirmation,
 	validateBankTransferRecipient,
 	type BankTransferRecipient,
+	type BankTransferSnapshot,
 } from "@otta-sh/domain";
 import type { PluginContext } from "../types.js";
 
@@ -54,6 +56,9 @@ export class OfflinePaymentGateway implements PaymentGateway {
 			offlineInstructions: instructions.trim(),
 			...(recipient ? { bankTransferRecipient: validateBankTransferRecipient(recipient) } : {}),
 		};
+	}
+	validateBankTransferSnapshot(snapshot: BankTransferSnapshot): void {
+		renderHub3Svg(snapshot);
 	}
 	async createIntent(input: CreateIntentInput): Promise<PaymentIntentHandle> {
 		const payment = input.offlinePayment;

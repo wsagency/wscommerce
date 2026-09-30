@@ -56,7 +56,7 @@ export function validateBankTransferRecipient(input: BankTransferRecipient): Ban
 		city,
 		iban: normalizeBankIban(input.iban),
 		model: input.model,
-		purpose: input.purpose,
+		purpose: field(input.purpose),
 	};
 }
 export function freezeBankTransferSnapshot(

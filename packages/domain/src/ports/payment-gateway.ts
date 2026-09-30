@@ -1,7 +1,10 @@
 import type { Cents, Currency } from "../money/cents.js";
 import type { IdempotencyKey, OrderId } from "../money/ids.js";
 import type { PaymentMethod, OfflinePayment } from "../orders/model.js";
-import type { BankTransferRecipient } from "../orders/bank-transfer-snapshot.js";
+import type {
+	BankTransferRecipient,
+	BankTransferSnapshot,
+} from "../orders/bank-transfer-snapshot.js";
 
 /**
  * The `PaymentGateway` port (Phase 4 §5). Pure types — NO pg / ctx / fetch. The
@@ -28,6 +31,8 @@ export interface PaymentGateway {
 		offlineInstructions: string;
 		bankTransferRecipient?: BankTransferRecipient;
 	};
+	/** Adapter qualification before the first bank order insert; must throw RangeError for unusable output. */
+	validateBankTransferSnapshot?(snapshot: BankTransferSnapshot): void;
 	/**
 	 * Begin payment for an order; returns the buyer-facing next action.
 	 *
