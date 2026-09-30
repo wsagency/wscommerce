@@ -25,6 +25,13 @@ trigger a second issuance under the same key. A released failed attempt still
 spends its key; an intentional replacement uses a distinct key.
 
 Native Stripe refund creation writes `order_id` and `refund_key` metadata.
+Creating a native reservation is not an exclusive provider-issuance lease.
+A same-key peer can resume it while the creator is waiting on preflight. Any
+`PROVIDER_ALREADY_REFUNDED` result therefore retains `unverified` capacity and
+flags reconciliation, including the original creator. A peer's confirmed
+completion can still finalize that held row. Aggregate provider totals alone
+cannot safely authorize voiding the shared reservation.
+
 Subscribe the existing verified settlement endpoint to `refund.created`,
 `refund.updated` and `refund.failed`; the deprecated `charge.refund.updated`
 is accepted for compatibility. Each event must match an existing reservation's

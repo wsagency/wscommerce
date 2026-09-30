@@ -170,11 +170,10 @@ export function sumFinalizedRefunds(refunds: RefundRecord[]): number {
  *  3. **Settle the reservation** by the gateway outcome:
  *     - success   → `finalizeRefund` (stamps refundRef; flips `→ refunded` iff
  *                   the FINALIZED Σ reached the ceiling);
- *     - fail-closed / terminal / unsupported → `voidRefund` (nothing issued —
- *                   capacity released, audit row kept) — except a RESUMED
- *                   reservation whose pre-flight fails closed, which is held
- *                   `unverified` and flagged (its own earlier issue may be the
- *                   money the provider shows);
+ *     - terminal / unsupported → `voidRefund` (nothing issued — capacity
+ *                   released, audit row kept);
+ *     - provider already refunded → `unverified` and flagged, because a
+ *                   same-key peer may have issued this reservation's money;
  *     - retryable → reservation KEPT (`reserved`): a same-key retry resumes it
  *                   (crash-heal: re-issues under the same provider key);
  *     - ambiguous → `markRefundUnverified` (capacity HELD — the safe direction —
@@ -245,12 +244,6 @@ export async function refundOrder(
 	// is what holds the capacity, so it is what the provider is asked to refund.
 	const target = existing ?? { orderId: cmd.orderId, amount: cmd.amount, currency: cmd.currency };
 	const resuming = existing !== null;
-	// Whether THIS call created the reservation it is about to issue against. A
-	// resume, or a reserve that found a concurrent same-key row (`duplicate`),
-	// shares a reservation another request owns — see the PROVIDER_ALREADY_REFUNDED
-	// arm below for why that matters.
-	let createdReservation = false;
-
 	const kind = gateway.refundable ? "gateway" : "manual";
 	const payments = await deps.orderStore.getCapturedPayments(cmd.orderId);
 
@@ -312,7 +305,6 @@ export async function refundOrder(
 		) {
 			return { ok: false, reason: "IDEMPOTENCY_KEY_REUSED" };
 		}
-		createdReservation = reserved.outcome !== "duplicate";
 		if (reserved.outcome === "duplicate" && reserved.refund !== null) {
 			if (reserved.refund.status === "unverified")
 				return { ok: false, reason: pendingReason(reserved.refund) };
@@ -394,17 +386,10 @@ export async function refundOrder(
 				await deps.orderStore.markRefundUnverified(cmd.idempotencyKey);
 				return { ok: false, reason: "GATEWAY_UNVERIFIED" };
 			case "PROVIDER_ALREADY_REFUNDED":
-				// Fail-closed pre-flight: THIS call issued nothing. When this call
-				// created the reservation, nothing under its key can have moved money,
-				// so the capacity is released.
-				if (createdReservation) {
-					await deps.orderStore.voidRefund(cmd.idempotencyKey);
-					return { ok: false, reason: "PROVIDER_ALREADY_REFUNDED" };
-				}
-				// A RESUME (or a race into another request's reservation) is different:
-				// the money the pre-flight sees may be THIS key's own earlier issue — a
-				// crash after refunds.create succeeded, or a concurrent owner still in
-				// flight. Voiding would make that refund's finalize miss (money moved,
+				// Creating the reservation is not an exclusive issuance lease. A
+				// same-key peer may have resumed it and issued while this creator was
+				// waiting on preflight. The provider's money can belong to THIS key.
+				// Voiding would make that peer's finalize miss (money moved,
 				// ledger silent), and leaving the row `reserved` would strand it: every
 				// resume would fail the same way, forever, unflagged. So the row is held
 				// `unverified` (capacity kept, the safe direction) and the order is

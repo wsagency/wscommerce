@@ -9,6 +9,14 @@ import { FakePaymentGateway } from "./fake-payment-gateway.js";
 
 const USD = toCurrency("USD");
 
+function refundBarrier(): { promise: Promise<void>; resolve: () => void } {
+	let resolve!: () => void;
+	const promise = new Promise<void>((release) => {
+		resolve = release;
+	});
+	return { promise, resolve };
+}
+
 /** A store + a way to seed a PAID order with a captured payment, so the same
  *  refund/ledger spec runs against the in-memory fake, sqlite, and pg. */
 export interface RefundOrderHarness {
@@ -440,7 +448,66 @@ export function refundOrderContract(
 			expect(gw.refundCalls).toHaveLength(0); // never called — capability, not discovery
 		});
 
-		test("a gateway PROVIDER_ALREADY_REFUNDED fails closed — reservation voided, capacity released", async () => {
+		test("the reservation creator retains capacity when a same-key peer has issued but not finalized", async () => {
+			const h = await makeHarness();
+			const id = await h.seedPaidOrder({ id: "ord-owner-preflight-race", totalCents: 1000 });
+			const key = idempotencyKey("rf-owner-preflight-race");
+			const ownerStarted = refundBarrier();
+			const ownerContinue = refundBarrier();
+			const peerIssued = refundBarrier();
+			const peerContinue = refundBarrier();
+			const gw = new FakePaymentGateway({ id: "stripe" });
+			let calls = 0;
+			gw.refund = async (input) => {
+				gw.refundCalls.push(input);
+				calls++;
+				if (calls === 1) {
+					ownerStarted.resolve();
+					await ownerContinue.promise;
+					return { ok: false, reason: "PROVIDER_ALREADY_REFUNDED" };
+				}
+				peerIssued.resolve();
+				await peerContinue.promise;
+				return {
+					ok: true,
+					refundRef: "re_peer_completed",
+					amount: input.amount,
+					currency: input.currency,
+				};
+			};
+			const cmd = {
+				orderId: id,
+				amount: cents(600),
+				currency: USD,
+				refundedBy: "admin",
+				idempotencyKey: key,
+			};
+			const owner = refundOrder({ orderStore: h.orderStore }, gw, cmd);
+			await ownerStarted.promise;
+			const peer = refundOrder({ orderStore: h.orderStore }, gw, cmd);
+			await peerIssued.promise;
+			ownerContinue.resolve();
+			const ownerResult = await owner;
+			const intermediate = await h.orderStore.getRefundByIdempotencyKey(key);
+			// Release before assertions so a failed regression cannot strand a provider task.
+			peerContinue.resolve();
+			const peerResult = await peer;
+			expect(ownerResult).toEqual({ ok: false, reason: "GATEWAY_UNVERIFIED" });
+			expect(intermediate).toMatchObject({ status: "unverified", amount: 600 });
+			expect(peerResult).toMatchObject({
+				ok: true,
+				refund: { status: "recorded", amount: 600, refundRef: "re_peer_completed" },
+			});
+			expect(await h.orderStore.getRefundByIdempotencyKey(key)).toMatchObject({
+				status: "recorded",
+				amount: 600,
+				refundRef: "re_peer_completed",
+			});
+			expect(sumRefunds(await h.orderStore.listRefunds(id))).toBe(600);
+			expect(gw.refundCalls).toHaveLength(2);
+		});
+
+		test("a gateway PROVIDER_ALREADY_REFUNDED retains ambiguous capacity for reconciliation", async () => {
 			const h = await makeHarness();
 			const id = await h.seedPaidOrder({ id: "ord-preflight", totalCents: 1000 });
 			const gw = new FakePaymentGateway({ id: "stripe" });
@@ -452,15 +519,15 @@ export function refundOrderContract(
 				refundedBy: "admin",
 				idempotencyKey: idempotencyKey("rf-preflight"),
 			});
-			expect(res).toEqual({ ok: false, reason: "PROVIDER_ALREADY_REFUNDED" });
-			// Reserve-before-issue: the reservation was inserted then VOIDED (nothing
-			// issued). It stays as an audit row but releases its ceiling capacity — the
-			// ACTIVE Σ is 0 and the order never flipped.
+			expect(res).toEqual({ ok: false, reason: "GATEWAY_UNVERIFIED" });
+			// A local creator cannot prove exclusive issuance: a same-key peer may
+			// have reached the provider. Preserve capacity and flag reconciliation.
 			const ledger = await h.orderStore.listRefunds(id);
-			expect(ledger.every((r) => r.status === "voided")).toBe(true);
-			expect(sumRefunds(ledger), "voided rows release capacity").toBe(0);
+			expect(ledger.every((r) => r.status === "unverified")).toBe(true);
+			expect(sumRefunds(ledger), "ambiguous rows hold capacity").toBe(500);
+			expect((await h.orderStore.getById(id))?.reconciliationFlag).not.toBeNull();
 			expect((await h.orderStore.getById(id))?.state).toBe("paid");
-			// Capacity released ⇒ a FRESH full refund (distinct key) now succeeds.
+			// A fresh full-refund key cannot consume this unresolved capacity.
 			const retry = await refundOrder(
 				{ orderStore: h.orderStore },
 				new FakePaymentGateway({ id: "stripe" }),
@@ -472,7 +539,7 @@ export function refundOrderContract(
 					idempotencyKey: idempotencyKey("rf-preflight-retry"),
 				},
 			);
-			expect(retry.ok && retry.fullyRefunded).toBe(true);
+			expect(retry).toEqual({ ok: false, reason: "REFUND_EXCEEDS_TOTAL" });
 		});
 
 		test("a terminal gateway rejection voids the reservation; an ambiguous timeout HOLDS it (capacity kept)", async () => {
