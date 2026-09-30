@@ -1116,6 +1116,7 @@ export class EmdashOrderStore implements OrderStore {
 						enqueueEmail: true,
 						actor: entry.refundedBy,
 						now,
+						refundFinancial: { nativeRefundId: entry.id, financialRevision },
 					});
 				} else if (delta < 0) {
 					// A later bank return changes financial truth, not fulfillment. Restore
@@ -1129,6 +1130,7 @@ export class EmdashOrderStore implements OrderStore {
 							enqueueEmail: false,
 							actor: "payment-provider",
 							now,
+							refundFinancial: { nativeRefundId: entry.id, financialRevision },
 						});
 					next = {
 						...next,
@@ -1138,12 +1140,7 @@ export class EmdashOrderStore implements OrderStore {
 				const written = await this.#orders.compareAndSet(orderId, current.revision, next);
 				if (!written.applied) return CAS_RETRY;
 				if (delta !== 0)
-					await this.#reportRefund(
-						next,
-						entry.currency,
-						financialRevision === 1 ? entry.id : `${entry.id}:${financialRevision}`,
-						delta,
-					);
+					await this.#reportRefund(next, entry.currency, entry.id, delta, financialRevision);
 				if (doc.state !== next.state) {
 					if (next.state === "refunded") await this.#recordOutboxLocator(next, "refunded");
 					await this.#reportTransition(next, doc.state, next.state);
@@ -1781,6 +1778,7 @@ export class EmdashOrderStore implements OrderStore {
 						enqueueEmail: emailTemplateForState("refunded") !== null,
 						actor: intent.refundedBy,
 						now: writtenAt,
+						refundFinancial: { nativeRefundId: intent.id, financialRevision: 1 },
 					});
 					fullyRefunded = true;
 				}
@@ -1954,6 +1952,7 @@ export class EmdashOrderStore implements OrderStore {
 			actor: string | null;
 			now: string;
 			paymentReceived?: boolean;
+			refundFinancial?: { nativeRefundId: string; financialRevision: number };
 		},
 	): OrderDoc {
 		const next: OrderDoc = {
@@ -1970,6 +1969,9 @@ export class EmdashOrderStore implements OrderStore {
 					fromState: input.fromState,
 					toState: input.toState,
 					actor: input.actor,
+					...(input.refundFinancial === undefined
+						? {}
+						: { refundFinancial: input.refundFinancial }),
 					...(doc.offlinePayment
 						? {
 								fromPaymentReceived: doc.offlinePayment.status === "received",
@@ -2416,6 +2418,9 @@ export class EmdashOrderStore implements OrderStore {
 				fromState,
 				toState,
 				...(transitionRevision > 1 ? { transitionRevision } : {}),
+				...(latestEvent?.refundFinancial === undefined
+					? {}
+					: { refundFinancial: latestEvent.refundFinancial }),
 				...(doc.offlinePayment
 					? {
 							fromPaymentReceived: latestEvent?.fromPaymentReceived ?? false,
@@ -2436,6 +2441,7 @@ export class EmdashOrderStore implements OrderStore {
 		currency: Currency,
 		refundId: string,
 		amount: number,
+		financialRevision = 1,
 	): Promise<void> {
 		try {
 			await this.#reporting.recordOrderEvent({
@@ -2444,7 +2450,9 @@ export class EmdashOrderStore implements OrderStore {
 				orderCreatedAt: doc.createdAt,
 				// The REFUND's currency, which is the bucket the money came back into.
 				currency,
-				refundId,
+				refundId: financialRevision === 1 ? refundId : `${refundId}:${financialRevision}`,
+				nativeRefundId: refundId,
+				financialRevision,
 				refundedCents: amount,
 			});
 		} catch {

@@ -174,6 +174,8 @@ describeEachDialect("EmdashOrderStore reporting hook", (ctx) => {
 				orderCreatedAt: SEEDED_AT,
 				currency: "USD",
 				refundId: recorded.refund?.id,
+				nativeRefundId: recorded.refund?.id,
+				financialRevision: 1,
 				refundedCents: 250,
 			},
 		]);
@@ -203,6 +205,8 @@ describeEachDialect("EmdashOrderStore reporting hook", (ctx) => {
 				orderCreatedAt: SEEDED_AT,
 				currency: "USD",
 				refundId: recorded.refund?.id,
+				nativeRefundId: recorded.refund?.id,
+				financialRevision: 1,
 				refundedCents: 900,
 			},
 			{
@@ -212,6 +216,7 @@ describeEachDialect("EmdashOrderStore reporting hook", (ctx) => {
 				currency: "USD",
 				fromState: "paid",
 				toState: "refunded",
+				refundFinancial: { nativeRefundId: recorded.refund?.id, financialRevision: 1 },
 				orderTotalCents: 900,
 			},
 		]);
@@ -268,6 +273,8 @@ describeEachDialect("EmdashOrderStore reporting hook", (ctx) => {
 				orderCreatedAt: SEEDED_AT,
 				currency: "USD",
 				refundId: reserved.refund?.id,
+				nativeRefundId: reserved.refund?.id,
+				financialRevision: 1,
 				refundedCents: 800,
 			},
 			{
@@ -277,6 +284,7 @@ describeEachDialect("EmdashOrderStore reporting hook", (ctx) => {
 				currency: "USD",
 				fromState: "paid",
 				toState: "refunded",
+				refundFinancial: { nativeRefundId: reserved.refund?.id, financialRevision: 1 },
 				orderTotalCents: 800,
 			},
 		]);

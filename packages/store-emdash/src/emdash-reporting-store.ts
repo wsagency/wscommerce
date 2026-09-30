@@ -80,8 +80,11 @@ import {
 	normalizeStateCounts,
 	REPORTING_APPLIED_COLLECTION,
 	REPORTING_DAILY_COLLECTION,
+	REPORTING_REFUND_JOURNALS_COLLECTION,
+	REPORTING_REFUND_REBUILDS_COLLECTION,
 	reportingDailyDocId,
 	reportingRefundClaimId,
+	reportingRefundJournalId,
 	reportingTransitionClaimId,
 	isAbsorbed,
 	REVENUE_STATES,
@@ -93,6 +96,10 @@ import {
 	type ReportingDailyDoc,
 	type ReportingDailyStoredDoc,
 	type ReportingOrderEvent,
+	type ReportingRefundBinding,
+	type ReportingRefundJournalDoc,
+	type ReportingRefundOperation,
+	type ReportingRefundRebuildDoc,
 } from "./reporting-documents.js";
 import type {
 	NumericDelta,
@@ -164,20 +171,20 @@ export interface EmdashReportingStoreOptions {
 	 */
 	maxReconcilePages?: number;
 	/**
-	 * Where this adapter reports evidence of DRIFT — today, a counter that a decrement
-	 * would have driven below zero.
+	 * Where this adapter reports drift and completed native-refund recovery.
 	 *
 	 * Flooring is not a defensive nicety: it means a decrement arrived whose matching
 	 * increment is not in the document, so something was lost. The floor keeps the report
 	 * from showing a negative revenue, and this observer is what keeps it from being
-	 * silent. An operator seeing it should run a recompute over the day.
+	 * silent. `floored` and `tainted` require a recompute over the day;
+	 * `refund_rebuilt` confirms the native journal already completed that recovery.
 	 */
 	onAnomaly?: (anomaly: ReportingAnomaly) => void;
 }
 
 /**
- * Evidence that the counters have drifted from the orders. An operator seeing either kind
- * should run a recompute over the day.
+ * Evidence of counter drift or a completed native-refund recovery. `floored` and
+ * `tainted` require a recompute over the day.
  *
  * - `floored`: a decrement would have driven a counter below zero, so its matching
  *   increment is missing. The counter was floored at zero.
@@ -185,8 +192,11 @@ export interface EmdashReportingStoreOptions {
  *   adapter (a mixed-version deploy or a rollback; see `isHybridReportingDailyDoc`), and
  *   un-tainted it before applying. Whatever that writer's rewrite discarded is still
  *   missing until a recompute restores it.
+ * - `refund_rebuilt`: a native financial prefix found missing prerequisite counters and
+ *   completed a guarded rebuild immediately, including the durable prefix checkpoint.
  */
 export type ReportingAnomaly =
+	| { kind: "refund_rebuilt"; docId: string; orderId: string; nativeRefundId: string }
 	| {
 			kind: "floored";
 			/** Which counter the decrement would have driven negative. */
@@ -232,6 +242,8 @@ interface PageBudget {
 export class EmdashReportingStore implements ReportingStore {
 	readonly #daily: StorageCollection<ReportingDailyStoredDoc>;
 	readonly #applied: StorageCollection<ReportingAppliedDoc>;
+	readonly #refundJournals: StorageCollection<ReportingRefundJournalDoc>;
+	readonly #refundRebuilds: StorageCollection<ReportingRefundRebuildDoc>;
 	readonly #orders: StorageCollection<OrderDoc>;
 	readonly #inventory: StorageCollection<InventoryDoc>;
 	readonly #products: StorageCollection<ProductCommerceDoc>;
@@ -252,6 +264,8 @@ export class EmdashReportingStore implements ReportingStore {
 			REPORTING_APPLIED_COLLECTION,
 		);
 		this.#orders = collectionOf<OrderDoc>(options.storage, ORDERS_COLLECTION);
+		this.#refundJournals = collectionOf(options.storage, REPORTING_REFUND_JOURNALS_COLLECTION);
+		this.#refundRebuilds = collectionOf(options.storage, REPORTING_REFUND_REBUILDS_COLLECTION);
 		this.#inventory = collectionOf<InventoryDoc>(options.storage, INVENTORY_COLLECTION);
 		this.#products = collectionOf<ProductCommerceDoc>(options.storage, PRODUCT_COMMERCE_COLLECTION);
 		this.#skuOwners = collectionOf<SkuOwnerDoc>(options.storage, SKU_OWNERS_COLLECTION);
@@ -315,6 +329,35 @@ export class EmdashReportingStore implements ReportingStore {
 	 * without a write.
 	 */
 	async recordOrderEvent(event: ReportingOrderEvent): Promise<void> {
+		if (event.kind === "transition" && event.refundFinancial !== undefined) {
+			const refund = (await this.#orders.get(event.orderId))?.refunds.find(
+				(row) => row.id === event.refundFinancial!.nativeRefundId,
+			);
+			if (refund === undefined) throw new RangeError("Missing native refund transition proof");
+			const proof = event.refundFinancial;
+			await this.#recordFinancialRefund({
+				kind: "refund",
+				orderId: event.orderId,
+				orderCreatedAt: event.orderCreatedAt,
+				currency: refund.currency,
+				nativeRefundId: proof.nativeRefundId,
+				financialRevision: proof.financialRevision,
+				refundId: proof.nativeRefundId,
+				refundedCents: proof.financialRevision % 2 === 1 ? refund.amount : -refund.amount,
+			});
+			return;
+		}
+		if (
+			event.kind === "refund" &&
+			(event.nativeRefundId !== undefined || event.financialRevision !== undefined)
+		) {
+			await this.#recordFinancialRefund(event);
+			return;
+		}
+		if (event.kind === "refund" && event.refundedCents < 0)
+			throw new RangeError(
+				"A refund reversal requires explicit native identity and financial revision",
+			);
 		const claimId = claimIdFor(event);
 		// The fast path: a spent event costs one read and nothing else.
 		if ((await this.#applied.get(claimId)) !== null) return;
@@ -351,6 +394,357 @@ export class EmdashReportingStore implements ReportingStore {
 		// result is not inspected — and a recompute that absorbed this claim in the
 		// meantime is exactly such a loss.
 		await this.#applied.compareAndSet(claimId, created.revision, { ...claim, appliedAt: now });
+	}
+
+	/** Complete the signed native prefix. Peers help the day witness; no caller owns it. */
+	async #recordFinancialRefund(
+		event: Extract<ReportingOrderEvent, { kind: "refund" }>,
+	): Promise<void> {
+		const revision = event.financialRevision;
+		if (
+			event.nativeRefundId === undefined ||
+			revision === undefined ||
+			!Number.isSafeInteger(revision) ||
+			revision < 1 ||
+			revision > 1000 ||
+			!Number.isSafeInteger(event.refundedCents) ||
+			event.refundedCents === 0 ||
+			event.refundedCents > 0 !== (revision % 2 === 1)
+		)
+			throw new RangeError("Invalid native refund financial proof");
+		const order = await this.#orders.get(event.orderId);
+		const refund = order?.refunds.find((entry) => entry.id === event.nativeRefundId);
+		if (
+			order === null ||
+			refund === undefined ||
+			order.createdAt !== event.orderCreatedAt ||
+			refund.currency !== event.currency ||
+			refund.amount !== Math.abs(event.refundedCents) ||
+			(refund.financialRevision ?? (refund.status === "recorded" ? 1 : 0)) < revision
+		)
+			throw new RangeError("Refund financial proof does not match the native ledger");
+		const binding: ReportingRefundBinding = {
+			orderId: event.orderId,
+			nativeRefundId: event.nativeRefundId,
+			orderCreatedAt: event.orderCreatedAt,
+			date: dayKeyOf(event.orderCreatedAt),
+			currency: event.currency,
+			amountCents: Math.abs(event.refundedCents),
+		};
+		const journalId = reportingRefundJournalId(binding.orderId, binding.nativeRefundId);
+		await this.#ensureRefundJournal(binding);
+		const docId = reportingDailyDocId(binding.currency, binding.date);
+		if ((await this.#refundJournals.get(journalId))!.completedRevision >= revision) {
+			await this.#completeRefundOperation(docId);
+			return;
+		}
+		// Legacy claims are ambiguous around their counter write. Migrate from native
+		// truth through a guarded rebuild, never from the diagnostic appliedAt stamp.
+		for (let step = 1; step <= revision; step++) {
+			const claim = await this.#applied.get(
+				reportingRefundClaimId(
+					binding.orderId,
+					step === 1 ? binding.nativeRefundId : `${binding.nativeRefundId}:${step}`,
+				),
+			);
+			if (claim !== null && claim.financialJournalVersion !== 1) {
+				await this.#reconcileDay(binding.date);
+				break;
+			}
+		}
+		for (let step = 0; step < 1000; step++) {
+			const now = this.#clock.now().toISOString();
+			const day = await this.#currentDay(docId, event, binding.date, now, null);
+			if (day.refundJournalToken != null) {
+				await this.#completeRefundOperation(docId);
+				continue;
+			}
+			const journal = await this.#refundJournals.get(journalId);
+			if (journal === null) throw new Error("Missing refund journal");
+			if (journal.completedRevision >= revision) return;
+			const nextRevision = journal.completedRevision + 1;
+			await this.#ensureFinancialClaim(binding, nextRevision, now);
+			const token = crypto.randomUUID();
+			const installed = await this.#daily.updateIf(docId, {
+				where: {
+					epoch: day.epoch,
+					refundJournalToken: null,
+					refundJournalSeq: day.refundJournalSeq ?? null,
+				},
+				set: {
+					refundJournalToken: token,
+					refundJournalApplied: 0,
+					refundJournal: { kind: "delta", journalId, revision: nextRevision },
+					updatedAt: now,
+				},
+				delta: { seq: { inc: 1 }, refundJournalSeq: { inc: 1 } },
+			});
+			if (!installed.applied) continue;
+			await this.#completeRefundOperation(docId);
+		}
+		throw new RangeError("Refund journal prefix exceeds the bounded operation budget");
+	}
+
+	async #ensureRefundJournal(binding: ReportingRefundBinding): Promise<void> {
+		const id = reportingRefundJournalId(binding.orderId, binding.nativeRefundId);
+		let held = await this.#refundJournals.get(id);
+		if (held === null) {
+			await this.#refundJournals.compareAndSet(id, null, { ...binding, completedRevision: 0 });
+			held = await this.#refundJournals.get(id);
+		}
+		if (held === null || !sameRefundBinding(held, binding))
+			throw new RangeError("Refund journal binding changed");
+	}
+
+	async #ensureFinancialClaim(
+		binding: ReportingRefundBinding,
+		revision: number,
+		now: string,
+	): Promise<void> {
+		const id = reportingRefundClaimId(
+			binding.orderId,
+			revision === 1 ? binding.nativeRefundId : `${binding.nativeRefundId}:${revision}`,
+		);
+		await this.#applied.compareAndSet(id, null, {
+			orderId: binding.orderId,
+			kind: "refund",
+			date: binding.date,
+			currency: binding.currency,
+			fromState: null,
+			toState: null,
+			refundId: revision === 1 ? binding.nativeRefundId : `${binding.nativeRefundId}:${revision}`,
+			amountCents: revision % 2 === 1 ? binding.amountCents : -binding.amountCents,
+			claimedAt: now,
+			appliedAt: null,
+			absorbedAt: null,
+			financialJournalVersion: 1,
+		});
+		const transition = await this.#refundTransition(binding, revision);
+		if (transition !== undefined)
+			await this.#applied.compareAndSet(claimIdFor(transition), null, {
+				orderId: binding.orderId,
+				kind: "transition",
+				date: binding.date,
+				currency: transition.currency,
+				fromState: transition.fromState,
+				toState: transition.toState,
+				refundId: null,
+				amountCents: null,
+				claimedAt: now,
+				appliedAt: null,
+				absorbedAt: null,
+				financialJournalVersion: 1,
+			});
+	}
+
+	async #refundTransition(
+		binding: ReportingRefundBinding,
+		revision: number,
+	): Promise<Extract<ReportingOrderEvent, { kind: "transition" }> | undefined> {
+		const order = await this.#orders.get(binding.orderId);
+		if (order === null) throw new Error("Missing refund transition order");
+		const index = order.events.findIndex(
+			(event) =>
+				event.refundFinancial?.nativeRefundId === binding.nativeRefundId &&
+				event.refundFinancial.financialRevision === revision,
+		);
+		const event = order.events[index];
+		if (event === undefined || event.toState === null) return undefined;
+		if (order.currency !== binding.currency)
+			throw new RangeError("Refund transition currency mismatch");
+		const transitionRevision = order.events
+			.slice(0, index + 1)
+			.filter(
+				(item) => item.fromState === event.fromState && item.toState === event.toState,
+			).length;
+		return {
+			kind: "transition",
+			orderId: order.orderId,
+			orderCreatedAt: order.createdAt,
+			currency: order.currency,
+			fromState: event.fromState,
+			toState: event.toState,
+			...(transitionRevision > 1 ? { transitionRevision } : {}),
+			...(event.fromPaymentReceived === undefined
+				? {}
+				: {
+						fromPaymentReceived: event.fromPaymentReceived,
+						toPaymentReceived: event.toPaymentReceived,
+					}),
+			orderTotalCents: order.totals.total,
+		};
+	}
+
+	async #checkpointRefund(binding: ReportingRefundBinding, revision: number): Promise<void> {
+		await this.#ensureRefundJournal(binding);
+		const id = reportingRefundJournalId(binding.orderId, binding.nativeRefundId);
+		await withCasRetry(
+			"checkpointRefundReporting",
+			async () => {
+				const held = await this.#refundJournals.getVersioned(id);
+				if (held === null || !sameRefundBinding(held.value, binding))
+					throw new Error("Refund checkpoint binding changed");
+				if (held.value.completedRevision >= revision) return casDone(undefined);
+				const written = await this.#refundJournals.compareAndSet(id, held.revision, {
+					...held.value,
+					completedRevision: revision,
+				});
+				return written.applied ? casDone(undefined) : CAS_RETRY;
+			},
+			this.#retry,
+		);
+	}
+
+	/** The counter delta and applied witness are ONE guarded write. Stale helpers cannot reapply. */
+	async #completeRefundOperation(docId: string, discardUnapplied = false): Promise<void> {
+		for (let attempt = 0; attempt < 1000; attempt++) {
+			const day = await this.#daily.get(docId);
+			if (day?.refundJournalToken == null) return;
+			const token = day.refundJournalToken;
+			const operation = day.refundJournal;
+			if (operation == null || !isCurrentReportingDailyDoc(day))
+				throw new Error("Invalid refund operation witness");
+			if (!day.refundJournalApplied && discardUnapplied) {
+				const released = await this.#daily.updateIf(docId, {
+					where: { refundJournalToken: token, refundJournalApplied: 0 },
+					set: { refundJournalToken: null, refundJournal: null },
+					delta: { seq: { inc: 1 } },
+				});
+				if (released.applied) return;
+				continue;
+			}
+			if (operation.kind === "delta") {
+				const journal = await this.#refundJournals.get(operation.journalId);
+				if (journal === null) throw new Error("Missing refund operation binding");
+				if (!day.refundJournalApplied) {
+					const amount = operation.revision % 2 === 1 ? journal.amountCents : -journal.amountCents;
+					const plan = planDelta(day, {
+						kind: "refund",
+						orderId: journal.orderId,
+						orderCreatedAt: journal.orderCreatedAt,
+						currency: journal.currency,
+						refundId: journal.nativeRefundId,
+						refundedCents: amount,
+					});
+					const transition = await this.#refundTransition(journal, operation.revision);
+					if (transition !== undefined) {
+						const companion = planDelta(day, transition);
+						plan.where = { ...plan.where, ...companion.where };
+						plan.delta = { ...plan.delta, ...companion.delta };
+						plan.floored.push(...companion.floored);
+					}
+					if (plan.floored.length > 0) {
+						// An earlier generic transition may be missing or delayed. Heal NOW:
+						// the rebuild cancels only this unapplied token and commits against
+						// epoch/seq, absorbing the delayed transition before it can replay.
+						await this.#reconcileDay(journal.date);
+						this.#onAnomaly({
+							kind: "refund_rebuilt",
+							docId,
+							orderId: journal.orderId,
+							nativeRefundId: journal.nativeRefundId,
+						});
+						continue;
+					}
+					const applied = await this.#daily.updateIf(docId, {
+						where: {
+							...plan.where,
+							epoch: day.epoch,
+							refundJournalToken: token,
+							refundJournalApplied: 0,
+						},
+						set: { refundJournalApplied: 1, updatedAt: this.#clock.now().toISOString() },
+						delta: { ...plan.delta, seq: { inc: 1 } },
+					});
+					if (!applied.applied) continue;
+				}
+				await this.#checkpointRefund(journal, operation.revision);
+			} else {
+				if (!day.refundJournalApplied) throw new Error("Uncommitted refund rebuild witness");
+				let id: string | null = operation.manifestId;
+				while (id !== null) {
+					const chunk = await this.#refundRebuilds.get(id);
+					if (chunk === null) throw new Error("Missing refund rebuild manifest");
+					for (const binding of chunk.entries)
+						await this.#checkpointRefund(binding, binding.completedRevision);
+					id = chunk.next;
+				}
+			}
+			const cleared = await this.#daily.updateIf(docId, {
+				where: { refundJournalToken: token, refundJournalApplied: 1 },
+				set: { refundJournalToken: null, refundJournal: null },
+			});
+			if (cleared.applied) return;
+		}
+		throw new RangeError("Refund operation recovery exceeds the bounded operation budget");
+	}
+
+	/** Prepare immutable, size-bounded checkpoint proofs BEFORE the guarded absolute write. */
+	async #refundRebuildManifests(
+		orders: OrderDoc[],
+		day: string,
+		budget: PageBudget,
+	): Promise<Map<string, ReportingRefundOperation>> {
+		const journals = new Map<string, ReportingRefundJournalDoc>();
+		let cursor: string | undefined;
+		for (;;) {
+			this.#spend(budget, "readRefundReportingJournals", journals.size);
+			const page = await this.#refundJournals.query({
+				where: { date: day },
+				limit: PAGE_SIZE,
+				cursor,
+			});
+			for (const item of page.items) journals.set(item.id, item.data);
+			if (!page.hasMore || page.cursor === undefined) break;
+			cursor = page.cursor;
+		}
+		const entries = new Map<string, ReportingRefundRebuildDoc["entries"]>();
+		for (const order of orders)
+			for (const refund of order.refunds) {
+				const revision =
+					refund.financialRevision ?? (refund.status === FINALIZED_REFUND_STATUS ? 1 : 0);
+				if (revision === 0) continue;
+				if (
+					!Number.isSafeInteger(revision) ||
+					revision < 0 ||
+					revision > 1000 ||
+					!Number.isSafeInteger(refund.amount) ||
+					refund.amount <= 0
+				)
+					throw new RangeError("Invalid frozen refund journal proof");
+				const binding: ReportingRefundBinding = {
+					orderId: order.orderId,
+					nativeRefundId: refund.id,
+					orderCreatedAt: order.createdAt,
+					date: day,
+					currency: refund.currency,
+					amountCents: refund.amount,
+				};
+				const journal = journals.get(reportingRefundJournalId(order.orderId, refund.id));
+				if (journal !== undefined && !sameRefundBinding(journal, binding))
+					throw new RangeError("Refund rebuild binding changed");
+				if (journal !== undefined && journal.completedRevision >= revision) continue;
+				const currencyEntries = entries.get(refund.currency) ?? [];
+				currencyEntries.push({ ...binding, completedRevision: revision });
+				entries.set(refund.currency, currencyEntries);
+			}
+		const operations = new Map<string, ReportingRefundOperation>();
+		for (const [currency, values] of entries) {
+			let next: string | null = null;
+			for (let end = values.length; end > 0; end -= PAGE_SIZE) {
+				this.#spend(budget, "prepareRefundReportingCheckpoint", values.length);
+				const id = crypto.randomUUID();
+				const created = await this.#refundRebuilds.compareAndSet(id, null, {
+					date: day,
+					entries: values.slice(Math.max(0, end - PAGE_SIZE), end),
+					next,
+				});
+				if (!created.applied) throw new Error("Refund rebuild identity collision");
+				next = id;
+			}
+			if (next !== null) operations.set(currency, { kind: "rebuild", manifestId: next });
+		}
+		return operations;
 	}
 
 	/**
@@ -605,7 +999,9 @@ export class EmdashReportingStore implements ReportingStore {
 				// function of its traffic, so charging them would buy nothing but noise.
 				const pinned = new Map<string, Versioned<ReportingDailyStoredDoc> | null>();
 				for (const currency of await this.#dayCurrencies(day, budget)) {
-					pinned.set(currency, await this.#daily.getVersioned(reportingDailyDocId(currency, day)));
+					const docId = reportingDailyDocId(currency, day);
+					await this.#completeRefundOperation(docId, true);
+					pinned.set(currency, await this.#daily.getVersioned(docId));
 				}
 
 				// 2. SCAN.
@@ -615,6 +1011,7 @@ export class EmdashReportingStore implements ReportingStore {
 					"reconcileReporting",
 				);
 				const computed = computeDay(day, orders, now);
+				const refundOperations = await this.#refundRebuildManifests(orders, day, budget);
 
 				// 3. ABSORB, before a single counter is committed.
 				const absorbed = await this.#absorbDayClaims(day, orders, budget, now);
@@ -644,11 +1041,13 @@ export class EmdashReportingStore implements ReportingStore {
 					// A tainted (hybrid) document is always rewritten: its counters may agree by
 					// accident, but its nested map has to go.
 					const tainted = held !== null && isHybridReportingDailyDoc(held.value);
-					if (exact && absorbed.claims === 0 && !tainted) continue;
-					const applied = await this.#commitDay(docId, held, target);
+					const refundOperation = refundOperations.get(currency);
+					if (exact && absorbed.claims === 0 && !tainted && refundOperation === undefined) continue;
+					const applied = await this.#commitDay(docId, held, target, refundOperation);
 					// A peer moved this day after it was pinned. Re-scan: the value in hand was
 					// derived from an older snapshot of the orders.
 					if (!applied) return CAS_RETRY;
+					await this.#completeRefundOperation(docId);
 					if (!exact || tainted) written++;
 				}
 
@@ -677,25 +1076,36 @@ export class EmdashReportingStore implements ReportingStore {
 		docId: string,
 		held: Versioned<ReportingDailyStoredDoc> | null,
 		target: ReportingDailyDoc,
+		refundOperation?: ReportingRefundOperation,
 	): Promise<boolean> {
+		const witness: Partial<ReportingDailyStoredDoc> =
+			refundOperation === undefined
+				? {}
+				: {
+						refundJournalToken: crypto.randomUUID(),
+						refundJournalApplied: 1,
+						refundJournal: refundOperation,
+					};
 		if (held === null || !hasReportingDailyGuards(held.value)) {
 			const epoch = held === null ? 1 : 1 + (held.value.epoch ?? 0);
-			const written = await this.#daily.compareAndSet(
-				docId,
-				held?.revision ?? null,
-				toStoredReportingDailyDoc(target, epoch, 0),
-			);
+			const written = await this.#daily.compareAndSet(docId, held?.revision ?? null, {
+				...toStoredReportingDailyDoc(target, epoch, 0),
+				...witness,
+			});
 			return written.applied;
 		}
 		const pinned = held.value;
-		const next = toStoredReportingDailyDoc(target, pinned.epoch + 1, pinned.seq);
+		const next: CurrentReportingDailyDoc = {
+			...toStoredReportingDailyDoc(target, pinned.epoch + 1, pinned.seq),
+			...witness,
+		};
 		for (const state of Object.keys(storedStateCounts(pinned))) {
 			const field = stateCountField(state);
 			next[field] ??= 0;
 		}
 		const { currency: _currency, date: _date, seq: _seq, ...set } = next;
 		const written = await this.#daily.updateIf(docId, {
-			where: { epoch: pinned.epoch, seq: pinned.seq },
+			where: { epoch: pinned.epoch, seq: pinned.seq, refundJournalToken: null },
 			// Clearing the nested map is what un-taints a hybrid (`updateIf` can set a field
 			// but not remove one, so it is set to null). Harmless on a current document.
 			set: isHybridReportingDailyDoc(pinned) ? { ...set, stateCounts: null } : set,
@@ -792,6 +1202,9 @@ export class EmdashReportingStore implements ReportingStore {
 				// DIAGNOSTIC only on a reconstructed claim: the amount is read back off the
 				// order's own ledger, and nothing recomputes from the claim.
 				amountCents: event.kind === "refund" ? event.refundedCents : null,
+				...(event.kind === "refund" && event.nativeRefundId !== undefined
+					? { financialJournalVersion: 1 as const }
+					: {}),
 				claimedAt: now,
 				appliedAt: now,
 				absorbedAt: now,
@@ -1225,6 +1638,7 @@ function reconstructEvents(orders: OrderDoc[]): ReportingOrderEvent[] {
 				fromState: event.fromState,
 				toState: event.toState,
 				...(transitionRevision > 1 ? { transitionRevision } : {}),
+				...(event.refundFinancial === undefined ? {} : { refundFinancial: event.refundFinancial }),
 				...(event.fromPaymentReceived === undefined
 					? {}
 					: {
@@ -1250,6 +1664,8 @@ function reconstructEvents(orders: OrderDoc[]): ReportingOrderEvent[] {
 					currency: refund.currency,
 					refundId: revision === 1 ? refund.id : `${refund.id}:${revision}`,
 					refundedCents: revision % 2 === 1 ? refund.amount : -refund.amount,
+					nativeRefundId: refund.id,
+					financialRevision: revision,
 				});
 			}
 		}
@@ -1267,6 +1683,17 @@ function claimIdFor(event: ReportingOrderEvent): string {
 				event.transitionRevision,
 			)
 		: reportingRefundClaimId(event.orderId, event.refundId);
+}
+
+function sameRefundBinding(a: ReportingRefundBinding, b: ReportingRefundBinding): boolean {
+	return (
+		a.orderId === b.orderId &&
+		a.nativeRefundId === b.nativeRefundId &&
+		a.orderCreatedAt === b.orderCreatedAt &&
+		a.date === b.date &&
+		a.currency === b.currency &&
+		a.amountCents === b.amountCents
+	);
 }
 
 /** One counter the delta floors, reported through `onAnomaly` once the write lands. */

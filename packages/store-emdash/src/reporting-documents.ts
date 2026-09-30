@@ -44,6 +44,8 @@ import { REVENUE_COUNTING_STATES, type ReportInterval } from "@otta-sh/domain";
 export const REPORTING_DAILY_COLLECTION = "reporting_daily";
 /** Collection name: one claim per applied rollup event. */
 export const REPORTING_APPLIED_COLLECTION = "reporting_applied";
+export const REPORTING_REFUND_JOURNALS_COLLECTION = "reporting_refund_journals";
+export const REPORTING_REFUND_REBUILDS_COLLECTION = "reporting_refund_rebuilds";
 
 /** One collection as the plugin descriptor declares it. */
 export interface ReportingCollectionIndexDeclaration {
@@ -74,6 +76,8 @@ export const REPORTING_COLLECTIONS: Readonly<Record<string, ReportingCollectionI
 	{
 		[REPORTING_DAILY_COLLECTION]: { indexes: ["currency", "date"] },
 		[REPORTING_APPLIED_COLLECTION]: { indexes: ["date", "orderId"] },
+		[REPORTING_REFUND_JOURNALS_COLLECTION]: { indexes: ["date", "orderId"] },
+		[REPORTING_REFUND_REBUILDS_COLLECTION]: { indexes: ["date"] },
 	};
 
 /** The revenue-counting allow-list as a set — built once from the domain constant. */
@@ -201,6 +205,12 @@ export interface ReportingDailyStoredDoc {
 	 */
 	stateCounts?: Record<string, number> | null;
 	updatedAt?: string;
+	/** One bounded, recoverable financial operation; never a per-refund day map. */
+	refundJournal?: ReportingRefundOperation | null;
+	refundJournalToken?: string | null;
+	refundJournalApplied?: 0 | 1;
+	/** Only financial installations move this guard; generic deltas remain independent. */
+	refundJournalSeq?: number;
 	/** The per-state counters, one field per state (current shape only). */
 	[field: StateCountField]: number | undefined;
 }
@@ -269,6 +279,7 @@ export function toStoredReportingDailyDoc(
 		date: doc.date,
 		epoch,
 		seq,
+		refundJournalSeq: 0,
 		revenueOrders: doc.revenueOrders,
 		revenueCents: doc.revenueCents,
 		refundEntries: doc.refundEntries,
@@ -336,6 +347,8 @@ export interface ReportingAppliedDoc {
 	 * apply its delta. THE one gate — see the docblock.
 	 */
 	absorbedAt: string | null;
+	/** New financial claims are recoverable through the refund journal, not this stamp. */
+	financialJournalVersion?: 1;
 }
 
 /**
@@ -359,6 +372,7 @@ export type ReportingOrderEvent =
 			readonly toState: string;
 			/** A provider correction can make this pair recur. Absent for its first occurrence. */
 			readonly transitionRevision?: number;
+			readonly refundFinancial?: { nativeRefundId: string; financialRevision: number };
 			/** Offline fulfillment may precede payment. Legacy absent fields mean received. */
 			readonly fromPaymentReceived?: boolean;
 			readonly toPaymentReceived?: boolean;
@@ -373,7 +387,39 @@ export type ReportingOrderEvent =
 			readonly currency: string;
 			readonly refundId: string;
 			readonly refundedCents: number;
+			/** Explicit native business identity; never recovered by parsing refundId. */
+			readonly nativeRefundId?: string;
+			/** Monotonic native financial revision; odd revisions add, even revisions reverse. */
+			readonly financialRevision?: number;
 	  };
+
+export interface ReportingRefundBinding {
+	orderId: string;
+	nativeRefundId: string;
+	orderCreatedAt: string;
+	date: string;
+	currency: string;
+	amountCents: number;
+}
+
+export interface ReportingRefundJournalDoc extends ReportingRefundBinding {
+	completedRevision: number;
+}
+
+export type ReportingRefundOperation =
+	| { kind: "delta"; journalId: string; revision: number }
+	| { kind: "rebuild"; manifestId: string };
+
+/** Immutable chunks of at most 100 checkpoint proofs, committed by the day witness. */
+export interface ReportingRefundRebuildDoc {
+	date: string;
+	entries: Array<ReportingRefundBinding & { completedRevision: number }>;
+	next: string | null;
+}
+
+export function reportingRefundJournalId(orderId: string, nativeRefundId: string): string {
+	return reportingRefundClaimId(orderId, nativeRefundId);
+}
 
 /**
  * What the order store hands the rollups after an order write is durable.

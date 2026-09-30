@@ -64,6 +64,8 @@ than rewriting history.
 
 - [0027. Retail prices and tax proof are frozen at checkout](./0027-retail-prices-and-frozen-tax-proof.md) — accepted, amends ADR-0021's shipping-only tax jurisdiction and digital tax exemption; product-level inclusive pricing remains integer based, billing selects tax independently of delivery, and new orders freeze line/shipping proof and the immutable variant key. Historical proof stays unknown.
 
+- [0030. Refund reporting replays a durable financial prefix](./0030-refund-reporting-replays-a-durable-financial-prefix.md) — accepted; explicit native refund identity/revision, bounded recoverable day witness, guarded rebuild checkpoints and immediate old-day drift recovery.
+
 ## Queued (to promote from the private draft plans)
 
 Decisions already made that should each become an ADR:

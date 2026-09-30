@@ -410,6 +410,8 @@ export {
 	normalizeReportingDailyDoc,
 	normalizeStateCounts,
 	REPORTING_APPLIED_COLLECTION,
+	REPORTING_REFUND_JOURNALS_COLLECTION,
+	REPORTING_REFUND_REBUILDS_COLLECTION,
 	REPORTING_COLLECTIONS,
 	REPORTING_DAILY_COLLECTION,
 	reportingDailyDocId,
@@ -422,6 +424,10 @@ export {
 	type ReportingDailyStoredDoc,
 	type ReportingEventKind,
 	type ReportingOrderEvent,
+	type ReportingRefundBinding,
+	type ReportingRefundJournalDoc,
+	type ReportingRefundOperation,
+	type ReportingRefundRebuildDoc,
 	type ReportingRollupWriter,
 } from "./reporting-documents.js";
 export {

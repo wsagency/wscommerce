@@ -260,6 +260,8 @@ export interface OrderTotalsDoc {
  * compare-and-set as the flip it records.
  */
 export interface OrderEventDoc {
+	/** Immutable link for state changes caused by a native refund financial revision. */
+	refundFinancial?: { nativeRefundId: string; financialRevision: number };
 	id: string;
 	/** ISO-8601 UTC — the store clock at the instant of the flip. */
 	at: string;
