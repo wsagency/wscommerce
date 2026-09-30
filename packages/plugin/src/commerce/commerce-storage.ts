@@ -37,6 +37,11 @@ import {
 	RULES_COLLECTIONS,
 	SETTINGS_COLLECTIONS,
 } from "@otta-sh/store-emdash";
+import {
+	INVOICE_JOB_COLLECTION,
+	INVOICE_JOB_INDEXES,
+	INVOICE_PROVIDER_LOCK_COLLECTION,
+} from "@emdash-commerce/invoicing";
 
 /**
  * One collection's declaration. A composite entry (`["state", "createdAt"]`) is
@@ -50,6 +55,11 @@ export interface CommerceCollectionDeclaration {
 
 /** Collection name → its declared indexes. */
 export type CommerceStorageLayout = Readonly<Record<string, CommerceCollectionDeclaration>>;
+export const INTEGRATION_STORAGE_COLLECTIONS: CommerceStorageLayout = {
+	[INVOICE_JOB_COLLECTION]: { indexes: INVOICE_JOB_INDEXES },
+	[INVOICE_PROVIDER_LOCK_COLLECTION]: {},
+	commerce_integration_cursors: {},
+};
 
 /**
  * Every collection commerce truth occupies. The spread order is irrelevant — the
@@ -80,6 +90,7 @@ export const COMMERCE_STORAGE_COLLECTIONS: CommerceStorageLayout = Object.freeze
 	...PAYMENT_EVENT_COLLECTIONS,
 	...SETTINGS_COLLECTIONS,
 	...REPORTING_COLLECTIONS,
+	...INTEGRATION_STORAGE_COLLECTIONS,
 });
 
 /** The collection names, for a caller that needs the list rather than the map. */

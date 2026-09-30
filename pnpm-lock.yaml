@@ -222,6 +222,9 @@ importers:
 
   packages/plugin:
     dependencies:
+      '@emdash-commerce/invoicing':
+        specifier: workspace:*
+        version: link:../invoicing
       '@otta-sh/admin-presentation':
         specifier: workspace:*
         version: link:../admin-presentation

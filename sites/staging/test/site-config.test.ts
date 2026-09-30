@@ -30,6 +30,7 @@ import {
 	PAYMENT_SECRET_KEYS,
 	STRIPE_API_HOST,
 	COUPONS_PAGE,
+	COMMERCE_INTEGRATIONS_PAGE,
 	REPORTS_PAGE,
 	SETTINGS_PAGE,
 	SHIPPING_PAGE,
@@ -58,7 +59,9 @@ describe("ottaPluginDescriptor", () => {
 	test("is a standard-format descriptor for the @otta-sh/plugin default export", () => {
 		expect(descriptor.id).toBe(OTTA_PLUGIN_ID);
 		expect(descriptor.format).toBe("standard");
-		expect(descriptor.entrypoint).toBe("@otta-sh/plugin/plugin");
+		expect(descriptor.entrypoint).toBe(
+			new URL("../src/emdash-commerce-plugin.ts", import.meta.url).pathname,
+		);
 	});
 
 	test("capabilities are EXACTLY the manifest's (content:read, network:request)", () => {
@@ -104,6 +107,7 @@ describe("ottaPluginDescriptor", () => {
 			TAX_PAGE,
 			SHIPPING_PAGE,
 			COUPONS_PAGE,
+			COMMERCE_INTEGRATIONS_PAGE,
 		]);
 	});
 
@@ -240,6 +244,7 @@ describe("ottaPluginDescriptor storage, EXACTLY (INC-D1)", () => {
 			TAX_PAGE,
 			SHIPPING_PAGE,
 			COUPONS_PAGE,
+			COMMERCE_INTEGRATIONS_PAGE,
 		]);
 	});
 });

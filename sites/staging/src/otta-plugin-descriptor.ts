@@ -15,6 +15,7 @@ import type { PluginDescriptor } from "emdash";
 import {
 	COMMERCE_STORAGE_COLLECTIONS,
 	COUPONS_PAGE,
+	COMMERCE_INTEGRATIONS_PAGE,
 	type InProcessEgressUrls,
 	REPORTS_PAGE,
 	resolveAllowedHosts,
@@ -63,6 +64,8 @@ export interface OttaPluginDescriptorOptions {
 	/** Deployment-supplied in-process egress URLs (email provider, x402
 	 *  facilitator). Absent ⇒ no host granted for that provider. */
 	egress?: InProcessEgressUrls;
+	/** Public HTTPS endpoints only; credentials remain runtime secrets. */
+	commerceEgressUrls?: readonly string[];
 }
 
 export function ottaPluginDescriptor(options: OttaPluginDescriptorOptions = {}): PluginDescriptor {
@@ -70,7 +73,7 @@ export function ottaPluginDescriptor(options: OttaPluginDescriptorOptions = {}):
 		id: OTTA_PLUGIN_ID,
 		version: OTTA_PLUGIN_VERSION,
 		format: "standard",
-		entrypoint: "@otta-sh/plugin/plugin",
+		entrypoint: new URL("./emdash-commerce-plugin.ts", import.meta.url).pathname,
 		// EXACTLY the manifest's two capabilities — never more (the
 		// sandbox-clean contract, pinned by the plugin's own guard test).
 		capabilities: [...OTTA_PLUGIN_CAPABILITIES],
@@ -85,7 +88,17 @@ export function ottaPluginDescriptor(options: OttaPluginDescriptorOptions = {}):
 		// they live in write-only plugin kv (`settings:stripe*`,
 		// `settings:emailApiKey`, `settings:x402FacilitatorApiKey`), provisioned
 		// through the admin Settings form.
-		allowedHosts: resolveAllowedHosts(options.egress),
+		allowedHosts: [
+			...new Set([
+				...resolveAllowedHosts(options.egress),
+				...(options.commerceEgressUrls ?? []).map((endpoint) => {
+					const url = new URL(endpoint);
+					if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash)
+						throw new Error("INVALID_COMMERCE_EGRESS_URL");
+					return url.hostname;
+				}),
+			]),
+		],
 		// THIS DECLARATION IS THE SCHEMA. `ctx.storage.collectionOf(name)` throws
 		// "storage collection '<name>' is not declared" for anything missing from
 		// it, so an omission here is not a degraded query, it is a dead commerce
@@ -122,6 +135,13 @@ export function ottaPluginDescriptor(options: OttaPluginDescriptorOptions = {}):
 		// (webhook-notifier pattern) — no new capability: account/reports/
 		// products/tax/shipping/coupons routes are network:request proxies and
 		// ctx.kv is always-available.
-		adminPages: [REPORTS_PAGE, SETTINGS_PAGE, TAX_PAGE, SHIPPING_PAGE, COUPONS_PAGE],
+		adminPages: [
+			REPORTS_PAGE,
+			SETTINGS_PAGE,
+			TAX_PAGE,
+			SHIPPING_PAGE,
+			COUPONS_PAGE,
+			COMMERCE_INTEGRATIONS_PAGE,
+		],
 	};
 }

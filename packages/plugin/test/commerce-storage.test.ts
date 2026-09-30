@@ -27,10 +27,12 @@ import {
 import {
 	COMMERCE_STORAGE_COLLECTION_NAMES,
 	COMMERCE_STORAGE_COLLECTIONS,
+	INTEGRATION_STORAGE_COLLECTIONS,
 } from "../src/commerce/commerce-storage.js";
 
 /** The same twelve declarations the module spreads, as a list of name lists. */
 const SOURCES = [
+	INTEGRATION_STORAGE_COLLECTIONS,
 	INVENTORY_COLLECTIONS,
 	CART_COLLECTIONS,
 	ORDER_COLLECTIONS,

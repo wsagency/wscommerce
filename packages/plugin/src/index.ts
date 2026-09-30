@@ -459,3 +459,17 @@ export type {
 	SettingsFieldSpec,
 } from "./types.js";
 export { default as plugin } from "./plugin.js";
+export {
+	withInvoiceIntegrations,
+	runInvoiceIntegrationSweep,
+	COMMERCE_INTEGRATIONS_PAGE,
+	INVOICE_STATUS_ROUTE,
+	INVOICE_ORDER_ROUTE,
+	INVOICE_RUN_ROUTE,
+} from "./integrations/invoices.js";
+export type {
+	IntegrationConfiguration,
+	IntegrationConfigurationLoader,
+	InvoiceSweepResult,
+} from "./integrations/invoices.js";
+export { integrationConfigurationFromBindings } from "./integrations/runtime-configuration.js";

@@ -58,7 +58,10 @@ export interface StagingEmdashOptions {
  *   (review round 3, A3). With nothing configured the resolved allowlist is
  *   Stripe's API host alone.
  */
-export function buildEmdashOptions(egress: InProcessEgressUrls = {}): StagingEmdashOptions {
+export function buildEmdashOptions(
+	egress: InProcessEgressUrls = {},
+	commerceEgressUrls: readonly string[] = [],
+): StagingEmdashOptions {
 	return {
 		// No `session` — see the pairing invariant in the module doc above.
 		database: d1({ binding: "DB" }),
@@ -72,6 +75,6 @@ export function buildEmdashOptions(egress: InProcessEgressUrls = {}): StagingEmd
 		// which is why they must not be one descriptor (ADR-0014 Decision 7).
 		// ORDER IS LOAD-BEARING for the site-config test, which reads
 		// `plugins[0]` as the Block Kit descriptor.
-		plugins: [ottaPluginDescriptor({ egress }), ottaConsoleDescriptor()],
+		plugins: [ottaPluginDescriptor({ egress, commerceEgressUrls }), ottaConsoleDescriptor()],
 	};
 }
