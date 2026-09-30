@@ -253,7 +253,7 @@ describe("native Woo backend over migrated SQLite", () => {
 			paidAt: null,
 			transactionId: "",
 			total: 2000,
-			lines: [{ name: "Frozen title", sku: "SNAPSHOT-SKU", unitPrice: 1000, total: 2000 }],
+			lines: [{ name: "Frozen title", sku: "SNAPSHOT-SKU", total: 2000 }],
 		});
 		expect(await backend.getOrder("missing")).toBeNull();
 	});

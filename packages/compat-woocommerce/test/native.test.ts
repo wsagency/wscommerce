@@ -1,7 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { cents, currency } from "@otta-sh/domain";
 import type { Order } from "@otta-sh/domain";
-import { nativeOrderSnapshot, formatWooAmount, wooOrderStatus } from "../src/index.js";
+import { collectionOf } from "@otta-sh/store-emdash";
+import { makeSqliteStorage } from "@otta-sh/store-emdash/testing";
+import {
+	createWooMapper,
+	EmDashWooExternalIdStore,
+	WOO_STORAGE_LAYOUT,
+	nativeOrderSnapshot,
+	formatWooAmount,
+	wooOrderStatus,
+} from "../src/index.js";
+async function exportOrder(order: Order) {
+	const db = await makeSqliteStorage(WOO_STORAGE_LAYOUT);
+	try {
+		const ids = new EmDashWooExternalIdStore(collectionOf(db.storage, "woo_ids"));
+		return await createWooMapper(ids, { EUR: 2 }).order(nativeOrderSnapshot(order));
+	} finally {
+		await db.close();
+	}
+}
 function native(breakdown: unknown, subtotal = 2000, total = 2500): Order {
 	return {
 		id: "native-order",
@@ -109,7 +127,7 @@ describe("exact frozen native accounting projection", () => {
 		order.totals = { ...order.totals, shipping: cents(0), total: cents(1) };
 		expect(() => nativeOrderSnapshot(order)).toThrow(/frozen/i);
 	});
-	it("projects frozen discounts as net discount plus discount tax for both captured modes", () => {
+	it("projects frozen discounts as net discount plus discount tax for both captured modes", async () => {
 		for (const mode of ["exclusive", "inclusive"] as const) {
 			const order = native(
 				{
@@ -143,6 +161,9 @@ describe("exact frozen native accounting projection", () => {
 				total: 2250,
 				lines: [{ subtotal: 2000, subtotalTax: 500, total: 1800, totalTax: 450 }],
 			});
+			expect((await exportOrder(order)).line_items).toMatchObject([
+				{ quantity: 2, price: "9.00", total: "18.00", total_tax: "4.50" },
+			]);
 		}
 	});
 	it("rejects raw native aggregates that disagree with frozen line allocation", () => {
@@ -295,7 +316,7 @@ describe("offline payment semantics in the Woo profile", () => {
 });
 
 describe("mixed catalog tax modes and frozen variation identity", () => {
-	it("normalizes mixed order lines to net Woo amounts using each frozen mode", () => {
+	it("normalizes mixed order lines to net Woo amounts using each frozen mode", async () => {
 		const order = native(
 			{
 				priceTaxMode: "mixed",
@@ -343,5 +364,81 @@ describe("mixed catalog tax modes and frozen variation identity", () => {
 			{ subtotal: 1000, subtotalTax: 250, total: 1000, totalTax: 250, variationId: "product:blue" },
 			{ subtotal: 1000, subtotalTax: 250, total: 1000, totalTax: 250 },
 		]);
+		expect((await exportOrder(order)).line_items).toMatchObject([
+			{ quantity: 1, price: "10.00", total: "10.00", total_tax: "2.50" },
+			{ quantity: 1, price: "10.00", total: "10.00", total_tax: "2.50" },
+		]);
+	});
+});
+
+describe("frozen net unit prices and fractional minor-unit remainders", () => {
+	it("derives discounted net price from frozen total and preserves accounting totals for a remainder", async () => {
+		const order = native(
+			{
+				priceTaxMode: "exclusive",
+				lines: [
+					{
+						taxClassId: "vat25",
+						rateBps: 2500,
+						netCents: 100,
+						grossCents: 125,
+						subtotalNetCents: 150,
+						taxCents: 25,
+						discountedCents: 100,
+					},
+				],
+				shippingNetCents: 0,
+				shippingTaxCents: 0,
+				shippingRateBps: 0,
+			},
+			150,
+			125,
+		);
+		order.lines = [{ ...order.lines[0]!, quantity: 3, unitPrice: cents(50) }];
+		order.totals = { ...order.totals, discount: cents(50), tax: cents(25) };
+		const exported = await exportOrder(order);
+		expect(exported.line_items).toMatchObject([
+			{ quantity: 3, price: "0.333333", subtotal: "1.50", total: "1.00", total_tax: "0.25" },
+		]);
+		expect(exported).toMatchObject({ discount_total: "0.50", discount_tax: "0.13", total: "1.25" });
+		expect(nativeOrderSnapshot(order).lines[0]).not.toHaveProperty("unitPrice");
+	});
+	it("keeps terminating fractions and precision for large quantities without floating amounts", async () => {
+		for (const [quantity, unit, total, price] of [
+			[2, 75, 101, "0.505"],
+			[100000, 1, 1, "0.0000001"],
+		] as const) {
+			const subtotal = quantity * unit;
+			const order = native(
+				{
+					priceTaxMode: "exclusive",
+					lines: [
+						{
+							taxClassId: "zero",
+							rateBps: 0,
+							netCents: total,
+							grossCents: total,
+							subtotalNetCents: subtotal,
+							taxCents: 0,
+							discountedCents: total,
+						},
+					],
+					shippingNetCents: 0,
+					shippingTaxCents: 0,
+					shippingRateBps: 0,
+				},
+				subtotal,
+				total,
+			);
+			order.lines = [{ ...order.lines[0]!, quantity, unitPrice: cents(unit) }];
+			order.totals = { ...order.totals, discount: cents(subtotal - total), tax: cents(0) };
+			const exported = await exportOrder(order),
+				line = (exported.line_items as Array<{ price: string }>)[0]!;
+			expect(line.price).toBe(price);
+			const [whole, fraction = ""] = line.price.split("."),
+				scale = 10n ** BigInt(fraction.length),
+				digits = BigInt(whole + fraction);
+			expect((digits * BigInt(quantity) * 100n * 2n + scale) / (2n * scale)).toBe(BigInt(total));
+		}
 	});
 });

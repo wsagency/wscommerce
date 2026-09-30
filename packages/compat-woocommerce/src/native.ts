@@ -135,7 +135,6 @@ export function nativeOrderSnapshot(
 			total,
 			subtotalTax,
 			totalTax,
-			unitPrice: line.unitPrice,
 			taxes: [{ nativeTaxId: taxId, total: totalTax, subtotal: subtotalTax }],
 		};
 	});

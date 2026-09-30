@@ -54,7 +54,8 @@ export interface WooLineSnapshot {
 	subtotalTax: Cents;
 	total: Cents;
 	totalTax: Cents;
-	unitPrice: Cents;
+	/** Legacy captured retail field, ignored by the mapper; unit net price derives from total/quantity. */
+	unitPrice?: Cents;
 	taxes: WooTaxAmount[];
 	metadata?: WooMetadata[];
 }

@@ -1,4 +1,4 @@
-import type { Cents, Currency, OrderState } from "@otta-sh/domain";
+import { cents, type Cents, type Currency, type OrderState } from "@otta-sh/domain";
 import type {
 	WooCustomerSnapshot,
 	WooExternalIdStore,
@@ -35,6 +35,37 @@ export function formatWooAmount(
 		.toString()
 		.padStart(precision + 1, "0");
 	return precision === 0 ? digits : `${digits.slice(0, -precision)}.${digits.slice(-precision)}`;
+}
+/** Discounted net total / quantity. Line totals remain the authoritative accounting amounts. */
+export function formatWooUnitPrice(
+	total: Cents,
+	quantity: number,
+	code: Currency,
+	decimals: Readonly<Record<string, number>>,
+): string {
+	// Validate the frozen amount/currency before division can disguise malformed data.
+	formatWooAmount(total, code, decimals);
+	if (!Number.isSafeInteger(quantity) || quantity < 1)
+		throw new WooMutationError(
+			"woocommerce_rest_invalid_snapshot",
+			"An exact positive integer quantity is required.",
+			503,
+		);
+	const divisor = BigInt(quantity),
+		amount = BigInt(total);
+	if (amount % divisor === 0n)
+		return formatWooAmount(cents(Number(amount / divisor)), code, decimals);
+	const currencyPrecision = decimals[code]!,
+		extra = Math.max(4, String(quantity).length),
+		precision = currencyPrecision + extra,
+		scaled = (amount * 10n ** BigInt(extra) * 2n + divisor) / (2n * divisor),
+		digits = scaled.toString().padStart(precision + 1, "0"),
+		whole = digits.slice(0, -precision);
+	let fraction = digits.slice(-precision);
+	while (fraction.length > currencyPrecision && fraction.endsWith("0"))
+		fraction = fraction.slice(0, -1);
+	// At least quantity-digit guard places bound aggregate rounding below half a minor unit.
+	return fraction ? `${whole}.${fraction}` : whole;
 }
 export function wooOrderStatus(state: OrderState, paymentMethod?: string): WooOrderStatus {
 	if (state === "pending" && ["bacs", "bank_transfer", "cod"].includes(paymentMethod ?? ""))
@@ -217,8 +248,7 @@ export function createWooMapper(
 						subtotal_tax: amount(line.subtotalTax, snapshot.currency),
 						total: amount(line.total, snapshot.currency),
 						total_tax: amount(line.totalTax, snapshot.currency),
-						// Decimal strings keep the amount exact at this protocol boundary.
-						price: amount(line.unitPrice, snapshot.currency),
+						price: formatWooUnitPrice(line.total, line.quantity, snapshot.currency, decimals),
 						taxes: await taxAmounts(line.taxes, snapshot.currency),
 						meta_data: line.metadata ?? [],
 					})),
