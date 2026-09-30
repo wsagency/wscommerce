@@ -81,6 +81,7 @@ import {
 	idempotencyKey,
 	orderId as toOrderId,
 	productId as toProductId,
+	reservationId as toReservationId,
 	sku as toSku,
 	type Order,
 } from "@otta-sh/domain";
@@ -207,7 +208,7 @@ async function seedOrder(
 				currency: currency("USD"),
 				quantity: 1,
 				fulfillmentKind: options.offline === "cod" ? "physical" : "digital",
-				reservationId,
+				reservationId: reservationId === null ? null : toReservationId(reservationId),
 			},
 		],
 		totals: { subtotal: cents(TOTAL_CENTS), total: cents(TOTAL_CENTS), currency: currency("USD") },

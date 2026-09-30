@@ -111,7 +111,7 @@ export function offlineHoldSafetyCases(makeHarness: () => OrderHarness): void {
 	for (const action of ["bank_transfer", "cod", "recovery"] as const) {
 		const method = action === "bank_transfer" ? "bank_transfer" : "cod";
 		for (const partialFailure of [false, true]) {
-			test(`${action} releases late adoption when cancellation won (${partialFailure ? "partial failure" : "success"})`, async () => {
+			test(`${action} fences late adoption when cancellation won (${partialFailure ? "partial failure" : "success"})`, async () => {
 				const h = makeHarness();
 				const stockSku = sku(`LATE-${method}-${partialFailure}`);
 				await h.inventory.seedOnHand(stockSku, 10);
@@ -246,14 +246,14 @@ export function offlineHoldSafetyCases(makeHarness: () => OrderHarness): void {
 				else
 					expect(outcome.result).toMatchObject(
 						action === "recovery"
-							? { completed: true, lost: [] }
+							? { completed: true, lost: [hold.reservationId, second.reservationId] }
 							: { outcome: "not_payable", order: { state: "cancelled" } },
 					);
 				expect((await h.store.getById(id))?.state).toBe("cancelled");
-				expect(await h.inventory.getOnHand(stockSku)).toBe(10);
-				// The untouched second cart hold belongs to the cart until its deadline;
-				// cleanup must release only reservations adopted by this cancelled order.
-				expect(await h.inventory.getOnHand(secondSku)).toBe(partialFailure ? 9 : 10);
+				// Cancellation blocks the stale adoption CAS. Both reservations still
+				// belong to the cart and keep their original quantity and deadline.
+				expect(await h.inventory.getOnHand(stockSku)).toBe(8);
+				expect(await h.inventory.getOnHand(secondSku)).toBe(9);
 				expect(await h.store.getCapturedPayments(id)).toEqual([]);
 			});
 		}
