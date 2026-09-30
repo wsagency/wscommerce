@@ -1,3 +1,4 @@
+import { renderHub3Svg } from "./pdf417.js";
 import {
 	PaymentIntentError,
 	type PaymentGateway,
@@ -6,6 +7,9 @@ import {
 	type ConfirmationResult,
 	type RefundResult,
 	type RawConfirmation,
+	validateBankTransferRecipient,
+	type BankTransferRecipient,
+	type BankTransferSnapshot,
 } from "@otta-sh/domain";
 import type { PluginContext } from "../types.js";
 
@@ -18,15 +22,26 @@ export const OFFLINE_SETTING_KEYS = {
 	codEnabled: "settings:codEnabled",
 	codInstructions: "settings:codInstructions",
 	codWindowHours: "settings:codWindowHours",
+	bankName: "settings:bankBarcodeName",
+	bankAddress: "settings:bankBarcodeAddress",
+	bankCity: "settings:bankBarcodeCity",
+	bankIban: "settings:bankBarcodeIban",
+	bankModel: "settings:bankBarcodeModel",
+	bankPurpose: "settings:bankBarcodePurpose",
 } as const;
 
 export class OfflinePaymentGateway implements PaymentGateway {
 	readonly refundable = false;
-	readonly checkoutPolicy: { holdTtlMs: number; offlineInstructions: string };
+	readonly checkoutPolicy: {
+		holdTtlMs: number;
+		offlineInstructions: string;
+		bankTransferRecipient?: BankTransferRecipient;
+	};
 	constructor(
 		readonly id: "bank_transfer" | "cod",
 		instructions: string,
 		windowHours: number,
+		recipient?: BankTransferRecipient,
 	) {
 		if (
 			!Number.isInteger(windowHours) ||
@@ -39,7 +54,11 @@ export class OfflinePaymentGateway implements PaymentGateway {
 		this.checkoutPolicy = {
 			holdTtlMs: windowHours * 3600000,
 			offlineInstructions: instructions.trim(),
+			...(recipient ? { bankTransferRecipient: validateBankTransferRecipient(recipient) } : {}),
 		};
+	}
+	validateBankTransferSnapshot(snapshot: BankTransferSnapshot): void {
+		renderHub3Svg(snapshot);
 	}
 	async createIntent(input: CreateIntentInput): Promise<PaymentIntentHandle> {
 		const payment = input.offlinePayment;
@@ -79,6 +98,11 @@ export async function readOfflineSettings(ctx: PluginContext): Promise<Map<strin
 
 /** Validates the full proposed configuration before any setting is saved. */
 export function offlineSettingsError(values: ReadonlyMap<string, string>): string | null {
+	try {
+		bankRecipientFromSettings(values);
+	} catch {
+		return "Complete a valid bank barcode recipient, Croatian IBAN, HR00/HR99 model and four-letter purpose, or clear all six barcode fields.";
+	}
 	for (const [enabledKey, instructionsKey, windowKey] of [
 		[
 			OFFLINE_SETTING_KEYS.bankEnabled,
@@ -141,10 +165,31 @@ export async function offlineGatewaysFromCtx(
 				method,
 				settings.get(instructions) ?? "",
 				Number(settings.get(window)),
+				method === "bank_transfer" ? bankRecipientFromSettings(settings) : undefined,
 			);
 		} catch {
 			/* fail closed for this method */
 		}
 	}
 	return gateways;
+}
+export function bankRecipientFromSettings(
+	values: ReadonlyMap<string, string>,
+): BankTransferRecipient | undefined {
+	const { bankName, bankAddress, bankCity, bankIban, bankModel, bankPurpose } =
+		OFFLINE_SETTING_KEYS;
+	if (
+		[bankName, bankAddress, bankCity, bankIban, bankModel, bankPurpose].every(
+			(key) => !values.get(key),
+		)
+	)
+		return undefined;
+	return validateBankTransferRecipient({
+		name: values.get(bankName) ?? "",
+		address: values.get(bankAddress) ?? "",
+		city: values.get(bankCity) ?? "",
+		iban: values.get(bankIban) ?? "",
+		model: (values.get(bankModel) ?? "") as BankTransferRecipient["model"],
+		purpose: values.get(bankPurpose) ?? "",
+	});
 }

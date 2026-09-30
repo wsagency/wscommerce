@@ -9,6 +9,14 @@ export { resolveShippingRate } from "./pricing/shipping.js";
 export { computeTotals } from "./pricing/compute-totals.js";
 export { CouponCurrencyMismatchError } from "./pricing/errors.js";
 export {
+	freezeBankTransferSnapshot,
+	validateBankTransferRecipient,
+	normalizeBankIban,
+	bankText,
+	type BankTransferRecipient,
+	type BankTransferSnapshot,
+} from "./orders/bank-transfer-snapshot.js";
+export {
 	validateCoupon,
 	type CouponValidationContext,
 	type CouponValidationFailure,

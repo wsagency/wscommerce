@@ -46,6 +46,7 @@
 		"build": "tsdown"
 	},
 	"dependencies": {
+		"@bwip-js/generic": "4.11.4",
 		"@emdash-commerce/compat-woocommerce": "workspace:*",
 		"@emdash-commerce/invoicing": "workspace:*",
 		"@otta-sh/admin-presentation": "workspace:*",

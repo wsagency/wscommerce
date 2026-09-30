@@ -486,3 +486,9 @@ export type {
 	WooIntegrationOptions,
 	WooWebhookSweepResult,
 } from "./integrations/woocommerce.js";
+
+export {
+	createBankBarcodeRouteHandler,
+	STOREFRONT_BANK_BARCODE_ROUTE,
+	type BankBarcodeResult,
+} from "./storefront/bank-barcode-route.js";

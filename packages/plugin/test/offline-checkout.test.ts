@@ -156,3 +156,37 @@ test("COD refuses digital checkout and changing a placed method cannot create an
 		),
 	).toEqual({ ok: false, reason: "IDEMPOTENCY_KEY_REUSED" });
 });
+
+test("unrenderable maximum Croatian bank data is refused before the native order insert", async () => {
+	const previous = gateways.bank_transfer;
+	gateways.bank_transfer = new OfflinePaymentGateway("bank_transfer", "Test only", 72, {
+		name: "Č".repeat(25),
+		address: "Ć".repeat(25),
+		city: "Ž".repeat(27),
+		iban: "HR3799999990000000001",
+		model: "HR00",
+		purpose: "GDDS",
+	});
+	try {
+		const cartId = await cart();
+		const placed = await h.client.createOrder(
+			{
+				cartId,
+				paymentMethod: "bank_transfer",
+				buyerRef: "buyer@example.test",
+				billingAddress: {
+					name: "Š".repeat(30),
+					line1: "Đ".repeat(27),
+					postalCode: "10000",
+					city: "Č".repeat(27),
+					country: "HR",
+				},
+			},
+			"unrenderable",
+		);
+		expect(placed).toEqual({ ok: false, reason: "PAYMENT_METHOD_NOT_AVAILABLE" });
+		expect(await collectionOf(h.ctx.storage!, "orders").count()).toBe(0);
+	} finally {
+		gateways.bank_transfer = previous;
+	}
+});

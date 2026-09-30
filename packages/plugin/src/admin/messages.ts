@@ -155,6 +155,17 @@ export const CROATIAN_PLUGIN_MESSAGES: Readonly<Record<string, PluginMessage>> =
 	edge: "edge",
 	"Order email from-address": "Adresa pošiljatelja e-pošte narudžbi",
 	"Enable bank transfer (true or false)": "Omogući bankovnu uplatu (true ili false)",
+	"Bank barcode recipient name (optional profile)": "Primatelj bankovne uplate (neobavezan profil)",
+	"Recipient legal name": "Pravni naziv primatelja",
+	"Bank barcode recipient street": "Ulica primatelja bankovne uplate",
+	"Street and number": "Ulica i broj",
+	"Bank barcode recipient postal code and city": "Poštanski broj i mjesto primatelja",
+	"Postal code and city": "Poštanski broj i mjesto",
+	"Bank barcode Croatian IBAN": "Hrvatski IBAN za bankovni barkod",
+	"Bank barcode reference model (HR00 or HR99)": "Model poziva na broj (HR00 ili HR99)",
+	"Bank barcode four-letter purpose": "Četveroslovna šifra namjene",
+	"Complete a valid bank barcode recipient, Croatian IBAN, HR00/HR99 model and four-letter purpose, or clear all six barcode fields.":
+		"Unesite valjanog primatelja, hrvatski IBAN, model HR00/HR99 i četveroslovnu šifru namjene ili ispraznite svih šest polja barkoda.",
 	"Bank transfer instructions shown to buyers": "Upute kupcima za bankovnu uplatu",
 	"Bank account details and payment reference instructions":
 		"Podaci za uplatu i upute za poziv na broj",

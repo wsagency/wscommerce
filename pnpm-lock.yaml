@@ -152,6 +152,24 @@ importers:
         specifier: 'catalog:'
         version: 4.1.10(@types/node@22.20.1)(happy-dom@20.11.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(yaml@2.9.0))
 
+  packages/domain:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.1
+      fast-check:
+        specifier: 'catalog:'
+        version: 3.23.2
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.22.4(typescript@5.9.3)
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.10(@types/node@22.20.1)(happy-dom@20.11.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(yaml@2.9.0))
+
   packages/invoicing:
     dependencies:
       '@otta-sh/domain':
@@ -173,24 +191,6 @@ importers:
       vitest:
         specifier: 'catalog:'
         version: 4.1.10(@types/node@22.20.1)(happy-dom@20.11.1)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(yaml@2.9.0))
-
-  packages/domain:
-    devDependencies:
-      '@types/node':
-        specifier: 'catalog:'
-        version: 22.20.1
-      fast-check:
-        specifier: 'catalog:'
-        version: 3.23.2
-      tsdown:
-        specifier: 'catalog:'
-        version: 0.22.4(typescript@5.9.3)
-      typescript:
-        specifier: 'catalog:'
-        version: 5.9.3
-      vitest:
-        specifier: 'catalog:'
-        version: 4.1.10(@types/node@22.20.1)(happy-dom@20.11.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(yaml@2.9.0))
 
   packages/payments-stripe:
     dependencies:
@@ -232,6 +232,9 @@ importers:
 
   packages/plugin:
     dependencies:
+      '@bwip-js/generic':
+        specifier: 4.11.4
+        version: 4.11.4
       '@emdash-commerce/compat-woocommerce':
         specifier: workspace:*
         version: link:../compat-woocommerce
@@ -731,6 +734,9 @@ packages:
     resolution: {integrity: sha512-5Kw9ZAtTGS8WHizyn+CJhjjfIQrw+7jcZodpmpXJjefnO15M8UexIi6JR2E5thyvsmHyhL6ZDDMUNR4bKJPd4g==}
     cpu: [x64]
     os: [win32]
+
+  '@bwip-js/generic@4.11.4':
+    resolution: {integrity: sha512-76pksC4twTPnYqTNK7XSOqIQuzXit7OKFz+N+LgX2MUJCvMGc3Wimi9/OqCwcod2+ZLL7tKMQBYdhOE/MxqEhQ==}
 
   '@capsizecss/unpack@4.0.1':
     resolution: {integrity: sha512-CuNiSqg7+e1cO/GjffyMOm5Tt2jUF9CWHHnvQ/UkqvtkGfHdgwEC0wpmq7fkN3gxwpRnrAN0WzO3vREKmNolMQ==}
@@ -5824,6 +5830,8 @@ snapshots:
 
   '@bruits/satteri-win32-x64-msvc@0.9.5':
     optional: true
+
+  '@bwip-js/generic@4.11.4': {}
 
   '@capsizecss/unpack@4.0.1':
     dependencies:

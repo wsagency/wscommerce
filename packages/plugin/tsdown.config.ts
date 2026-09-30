@@ -42,6 +42,7 @@ export default defineConfig({
 	 * surviving bare specifier has no resolver.
 	 */
 	noExternal: [
+		"@bwip-js/generic",
 		"@emdash-commerce/invoicing",
 		"@emdash-commerce/compat-woocommerce",
 		"@otta-sh/domain",
