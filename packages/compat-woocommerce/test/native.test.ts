@@ -39,6 +39,76 @@ function native(breakdown: unknown, subtotal = 2000, total = 2500): Order {
 	} as unknown as Order;
 }
 describe("exact frozen native accounting projection", () => {
+	it("preserves a frozen 25-percent rate when one-cent VAT rounds to zero", () => {
+		const order = native(
+			{
+				priceTaxMode: "exclusive",
+				lines: [
+					{
+						taxClassId: "vat25",
+						rateBps: 2500,
+						netCents: 1,
+						grossCents: 1,
+						subtotalNetCents: 1,
+						taxCents: 0,
+						discountedCents: 1,
+					},
+				],
+				shippingNetCents: 1,
+				shippingTaxCents: 0,
+				shippingRateBps: 2500,
+			},
+			2,
+			2,
+		);
+		order.lines = [{ ...order.lines[0]!, quantity: 1, unitPrice: cents(1) }];
+		order.totals = {
+			...order.totals,
+			subtotal: cents(1),
+			shipping: cents(1),
+			tax: cents(0),
+			shippingMethodSnapshot: { id: "post", name: "Post" },
+		};
+		expect(nativeOrderSnapshot(order)).toMatchObject({
+			taxLines: [
+				{ ratePercent: "25.0000", total: 0 },
+				{ ratePercent: "25.0000", shippingTotal: 0 },
+			],
+			lines: [{ taxes: [{ nativeTaxId: "vat25", total: 0 }] }],
+		});
+	});
+	it("refuses missing frozen line or shipping rates even when rounded tax is zero", () => {
+		const proof = {
+			priceTaxMode: "exclusive",
+			lines: [
+				{
+					taxClassId: "vat25",
+					netCents: 1,
+					grossCents: 1,
+					subtotalNetCents: 1,
+					taxCents: 0,
+					discountedCents: 1,
+				},
+			],
+			shippingNetCents: 1,
+			shippingTaxCents: 0,
+		};
+		const order = native(proof, 2, 2);
+		order.lines = [{ ...order.lines[0]!, quantity: 1, unitPrice: cents(1) }];
+		order.totals = {
+			...order.totals,
+			subtotal: cents(1),
+			shipping: cents(1),
+			tax: cents(0),
+			shippingMethodSnapshot: { id: "post", name: "Post" },
+		};
+		expect(() => nativeOrderSnapshot(order)).toThrow(/frozen/i);
+		order.totals.taxBreakdown = { ...proof, lines: [{ ...proof.lines[0]!, rateBps: 2500 }] };
+		expect(() => nativeOrderSnapshot(order)).toThrow(/frozen/i);
+		order.totals.taxBreakdown = null;
+		order.totals = { ...order.totals, shipping: cents(0), total: cents(1) };
+		expect(() => nativeOrderSnapshot(order)).toThrow(/frozen/i);
+	});
 	it("projects frozen discounts as net discount plus discount tax for both captured modes", () => {
 		for (const mode of ["exclusive", "inclusive"] as const) {
 			const order = native(
@@ -198,7 +268,27 @@ describe("offline payment semantics in the Woo profile", () => {
 			...native(null, 2000, 2000),
 			paymentMethod: "bank_transfer",
 			state: "pending",
-			totals: { ...native(null, 2000, 2000).totals, tax: cents(0) },
+			totals: {
+				...native(null, 2000, 2000).totals,
+				tax: cents(0),
+				taxBreakdown: {
+					priceTaxMode: "exclusive",
+					lines: [
+						{
+							taxClassId: "zero",
+							rateBps: 0,
+							netCents: 2000,
+							grossCents: 2000,
+							subtotalNetCents: 2000,
+							taxCents: 0,
+							discountedCents: 2000,
+						},
+					],
+					shippingNetCents: 0,
+					shippingTaxCents: 0,
+					shippingRateBps: 0,
+				},
+			},
 		} as unknown as Order;
 		expect(nativeOrderSnapshot(transfer).paymentMethod).toBe("bacs");
 	});

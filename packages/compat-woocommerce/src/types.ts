@@ -226,6 +226,8 @@ export interface GuardedOrderPatch {
 }
 export interface GuardedStockPatch {
 	stockQuantity: number;
+	/** Internal variation parent identity, verified by the HTTP route; never a public write field. */
+	parentId?: string;
 }
 /** Implementations must atomically validate all fields and enter native guarded commands; no raw markPaid. */
 export interface WooBackendPort {

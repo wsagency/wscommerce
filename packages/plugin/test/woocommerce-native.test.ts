@@ -93,7 +93,28 @@ async function order(id = "native-order", method = "stripe") {
 					reservationId: null,
 				},
 			],
-			totals: { subtotal: cents(2000), total: cents(2000), currency: EUR },
+			totals: {
+				subtotal: cents(2000),
+				total: cents(2000),
+				currency: EUR,
+				taxBreakdown: {
+					priceTaxMode: "exclusive",
+					lines: [
+						{
+							taxClassId: "zero",
+							rateBps: 0,
+							netCents: 2000,
+							grossCents: 2000,
+							subtotalNetCents: 2000,
+							taxCents: 0,
+							discountedCents: 2000,
+						},
+					],
+					shippingNetCents: 0,
+					shippingTaxCents: 0,
+					shippingRateBps: 0,
+				},
+			},
 		})
 	).order;
 }
@@ -113,6 +134,27 @@ async function orderDoc(id = "native-order") {
 	return collectionOf<OrderDoc>(db.storage, "orders").get(id);
 }
 describe("native Woo backend over migrated SQLite", () => {
+	it("projects only the selected order page after complete native filters and totals", async () => {
+		await order("current");
+		await order("historical");
+		const collection = collectionOf<OrderDoc>(db.storage, "orders"),
+			historical = (await collection.get("historical"))!;
+		await collection.put("historical", {
+			...historical,
+			createdAt: "2026-09-29T10:00:00.000Z",
+			updatedAt: "2026-09-29T10:00:00.000Z",
+			totals: { ...historical.totals, tax: cents(500), total: cents(2500), taxBreakdown: null },
+		});
+		const filtered = await backend.listOrders({ ...query, after: "2026-09-30T00:00:00Z" });
+		expect(filtered.total).toBe(1);
+		expect(filtered.items.map((item) => item.nativeId)).toEqual(["current"]);
+		const first = await backend.listOrders({ ...query, order: "desc", perPage: 1 });
+		expect(first.total).toBe(2);
+		expect(first.items.map((item) => item.nativeId)).toEqual(["current"]);
+		await expect(
+			backend.listOrders({ ...query, order: "desc", perPage: 1, page: 2 }),
+		).rejects.toMatchObject({ status: 503 });
+	});
 	it("requires exact succeeded capture before date_paid even when a paid state event exists", async () => {
 		await order();
 		await stores.orderStore.recordPayment({
@@ -473,10 +515,169 @@ describe("native Woo backend over migrated SQLite", () => {
 		).rejects.toMatchObject({ status: 503 });
 		expect(await metadata.get("order:native-order")).toEqual([]);
 	});
-	it("refuses unsafe stock writes until an absolute native guard is composed", async () => {
+	it("sets native available stock atomically while preserving holds and old replay outcomes", async () => {
+		await stores.productCommerce.upsert(
+			{ productId: productId("p"), sku: sku("S"), price: money(cents(1234), EUR) },
+			idempotencyKey("p"),
+		);
+		await stores.inventory.seedOnHand("S", 5);
+		const held = await stores.inventory.reserve(sku("S"), 2, idempotencyKey("hold"));
+		expect(held.ok).toBe(true);
+		const first = await backend.applyStockUpdate("p", { stockQuantity: 0 }, command);
+		expect(first).toMatchObject({ stockQuantity: 0, stockStatus: "outofstock" });
+		await stores.inventory.restock("S", 4, idempotencyKey("new-stock"));
+		expect(await backend.applyStockUpdate("p", { stockQuantity: 0 }, command)).toMatchObject({
+			stockQuantity: 0,
+		});
+		expect(await stores.inventory.getOnHand("S")).toBe(4);
 		await expect(
 			backend.applyStockUpdate("p", { stockQuantity: 10 }, command),
+		).rejects.toMatchObject({
+			status: 409,
+		});
+		if (held.ok) await stores.inventory.release(held.reservationId);
+		expect(await stores.inventory.getOnHand("S")).toBe(6);
+	});
+	it("rejects absent stock and invalid targets without seeding inventory", async () => {
+		await stores.productCommerce.upsert(
+			{ productId: productId("unseeded"), sku: sku("NO-STOCK") },
+			idempotencyKey("unseeded"),
+		);
+		await stores.productCommerce.upsert(
+			{ productId: productId("unmanaged") },
+			idempotencyKey("unmanaged"),
+		);
+		await expect(
+			backend.applyStockUpdate("unseeded", { stockQuantity: 5 }, command),
+		).rejects.toMatchObject({ status: 404 });
+		await expect(
+			backend.applyStockUpdate("unmanaged", { stockQuantity: 5 }, command),
 		).rejects.toMatchObject({ status: 501 });
+		await expect(
+			backend.applyStockUpdate("missing", { stockQuantity: 5 }, command),
+		).rejects.toMatchObject({ status: 404 });
+		await expect(
+			backend.applyStockUpdate("unseeded", { stockQuantity: -1 }, command),
+		).rejects.toMatchObject({ status: 400 });
+		expect(await stores.inventory.findOnHand("NO-STOCK")).toBeNull();
+	});
+	it("accepts headerless variation stock targets and binds the exact native parent", async () => {
+		await stores.productCommerce.upsert(
+			{ productId: productId("parent") },
+			idempotencyKey("parent"),
+		);
+		await stores.productCommerce.upsert({ productId: productId("other") }, idempotencyKey("other"));
+		const variant = await stores.productCommerce.upsertVariant(
+			{ productId: productId("parent"), variantKey: "blue:large" },
+			idempotencyKey("blue"),
+		);
+		expect(
+			(
+				await stores.productCommerce.updateVariantFields(
+					{ productId: productId("parent"), variantKey: "blue:large", sku: sku("BLUE") },
+					idempotencyKey("price-blue"),
+					variant.updatedAt.toISOString(),
+				)
+			).ok,
+		).toBe(true);
+		await stores.inventory.seedOnHand("BLUE", 8);
+		const parent = await ids.getOrAssign("product", "parent"),
+			other = await ids.getOrAssign("product", "other"),
+			variation = await ids.getOrAssign("variation", "parent:blue:large");
+		const handler = createWooCommerceHandler({
+			backend,
+			ids,
+			authenticate: { authenticate: async () => command.principal },
+			currencyDecimals: { EUR: 2 },
+		});
+		const update = (parentId: number) =>
+			handler(
+				new Request(
+					`https://shop.test/wp-json/wc/v3/products/${parentId}/variations/${variation}`,
+					{
+						method: "PUT",
+						headers: {
+							Authorization: `Basic ${btoa("ck_" + "a".repeat(40) + ":cs_" + "b".repeat(40))}`,
+							"Content-Type": "application/json",
+						},
+						body: JSON.stringify({ stock_quantity: 3 }),
+					},
+				),
+			);
+		const first = await update(parent);
+		expect(first.status).toBe(200);
+		expect(await first.json()).toMatchObject({ id: variation, stock_quantity: 3 });
+		await stores.inventory.restock("BLUE", 2, idempotencyKey("new-stock"));
+		expect((await update(parent)).status).toBe(200);
+		expect(await stores.inventory.getOnHand("BLUE")).toBe(3);
+		expect((await update(other)).status).toBe(404);
+		expect(await stores.inventory.getOnHand("BLUE")).toBe(3);
+		await stores.productCommerce.deactivateVariant(
+			productId("parent"),
+			"blue:large",
+			idempotencyKey("orphan"),
+			NOW,
+		);
+		expect((await update(parent)).status).toBe(404);
+		expect(await stores.inventory.getOnHand("BLUE")).toBe(3);
+	});
+	it("applies headerless metadata ABA requests as new commands while explicit keys replay", async () => {
+		await order();
+		const numeric = await ids.getOrAssign("order", "native-order");
+		const handler = createWooCommerceHandler({
+			backend,
+			ids,
+			authenticate: { authenticate: async () => command.principal },
+			currencyDecimals: { EUR: 2 },
+		});
+		const write = (value: string, key?: string) =>
+			handler(
+				new Request(`https://shop.test/wp-json/wc/v3/orders/${numeric}`, {
+					method: "PUT",
+					headers: {
+						Authorization: `Basic ${btoa("ck_" + "a".repeat(40) + ":cs_" + "b".repeat(40))}`,
+						"Content-Type": "application/json",
+						...(key ? { "Idempotency-Key": key } : {}),
+					},
+					body: JSON.stringify({ meta_data: [{ key: "erp_invoice", value }] }),
+				}),
+			);
+		for (const value of ["A", "B", "A"]) {
+			expect((await write(value)).status).toBe(200);
+			expect((await metadata.get("order:native-order"))[0]!.value).toBe(value);
+		}
+		expect((await write("explicit", "same-command")).status).toBe(200);
+		expect((await write("newer")).status).toBe(200);
+		expect((await write("explicit", "same-command")).status).toBe(200);
+		expect((await metadata.get("order:native-order"))[0]!.value).toBe("newer");
+	});
+	it("applies headerless absolute stock ABA requests without mistaking a new target for an old retry", async () => {
+		await stores.productCommerce.upsert(
+			{ productId: productId("p"), sku: sku("S") },
+			idempotencyKey("p"),
+		);
+		await stores.inventory.seedOnHand("S", 1);
+		const numeric = await ids.getOrAssign("product", "p");
+		const handler = createWooCommerceHandler({
+			backend,
+			ids,
+			authenticate: { authenticate: async () => command.principal },
+			currencyDecimals: { EUR: 2 },
+		});
+		for (const quantity of [7, 8, 7]) {
+			const response = await handler(
+				new Request(`https://shop.test/wp-json/wc/v3/products/${numeric}`, {
+					method: "PUT",
+					headers: {
+						Authorization: `Basic ${btoa("ck_" + "a".repeat(40) + ":cs_" + "b".repeat(40))}`,
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify({ stock_quantity: quantity }),
+				}),
+			);
+			expect(response.status).toBe(200);
+			expect(await stores.inventory.getOnHand("S")).toBe(quantity);
+		}
 	});
 	it("returns actual HTTP pagination headers and accepts headerless vendor metadata", async () => {
 		await order("a");

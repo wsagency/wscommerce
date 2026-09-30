@@ -223,7 +223,7 @@ describe("Woo REST v3 accounting HTTP contract", () => {
 });
 
 describe("standard ERP metadata writes", () => {
-	it("accepts headerless metadata PUT with a stable principal/route/body replay key", async () => {
+	it("gives headerless PUT fresh command identities and preserves explicit durable replay keys", async () => {
 		const keys: string[] = [];
 		const writeBackend = {
 			...backend,
@@ -240,11 +240,14 @@ describe("standard ERP metadata writes", () => {
 			},
 		};
 		const process = handler(["orders:write"], { backend: writeBackend });
-		const write = (body: string) =>
+		const write = (body: string, key?: string) =>
 			process(
 				request("orders/42", {
 					method: "PUT",
-					headers: { "Content-Type": "application/json" },
+					headers: {
+						"Content-Type": "application/json",
+						...(key ? { "Idempotency-Key": key } : {}),
+					},
 					body,
 				}),
 			);
@@ -255,8 +258,14 @@ describe("standard ERP metadata writes", () => {
 			200,
 		);
 		expect(keys).toHaveLength(2);
-		expect(keys[0]).toBe(keys[1]);
-		expect(keys[0]).toMatch(/^woo:erp:auto:[a-f0-9]{64}$/);
+		expect(keys[0]).not.toBe(keys[1]);
+		expect(keys[0]).toMatch(/^woo:erp:auto:[a-f0-9-]{36}$/);
+		for (let retry = 0; retry < 2; retry++)
+			expect(
+				(await write('{"meta_data":[{"key":"invoice_number","value":"001"}]}', "stable-command"))
+					.status,
+			).toBe(200);
+		expect(keys[2]).toBe(keys[3]);
 		expect((await write('{"status":"completed"}')).status).toBe(400);
 	});
 });

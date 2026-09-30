@@ -5,6 +5,8 @@ import {
 	idempotencyKey,
 	orderId,
 	productId,
+	sku,
+	StockMovementMismatchError,
 	transitionOrder,
 	type Address,
 	type OrderNote,
@@ -17,6 +19,7 @@ import {
 	ORDER_NOTES_COLLECTION,
 	PRODUCT_COMMERCE_COLLECTION,
 	normalizeProductDoc,
+	isStorageContentionError,
 	type CustomerDoc,
 	type OrderDoc,
 	type OrderNoteDoc,
@@ -310,6 +313,21 @@ export function createNativeWooBackend(
 		if (!doc) return null;
 		return (await enrich([await productSnapshot(native, doc)]))[0]!;
 	}
+	async function getVariation(
+		parentId: string,
+		nativeId: string,
+	): Promise<WooProductSnapshot | null> {
+		const native = await stores.productCommerce.getByProductId(productId(parentId));
+		if (!native || native.deletedAt !== null) return null;
+		const raw = await products.get(parentId);
+		if (!raw) return null;
+		const doc = normalizeProductDoc(raw);
+		const variant = Object.values(doc.variants).find(
+			(item) => `${parentId}:${item.variantKey}` === nativeId && item.orphanedAt === null,
+		);
+		if (!variant) return null;
+		return (await enrich([await productSnapshot(native, doc, variant.variantKey)]))[0]!;
+	}
 	async function listVariations(
 		parentId: string,
 		query: ListQuery,
@@ -408,7 +426,7 @@ export function createNativeWooBackend(
 		getOrder,
 		async listOrders(query) {
 			const rows = await scan(orders),
-				items: WooOrderSnapshot[] = [];
+				items: Array<{ nativeId: string; createdAt: string; updatedAt: string }> = [];
 			for (const { id, data } of rows) {
 				if (query.customerId !== undefined && data.customerId !== query.customerId) continue;
 				if (query.search !== undefined) {
@@ -422,11 +440,28 @@ export function createNativeWooBackend(
 					)
 						continue;
 				}
-				const order = await getOrder(id);
-				if (order && (!query.statuses || query.statuses.includes(nativeWooOrderStatus(order))))
-					items.push(order);
+				if (
+					query.statuses &&
+					!query.statuses.includes(
+						nativeWooOrderStatus({ state: data.state, paymentMethod: data.paymentMethod ?? "" }),
+					)
+				)
+					continue;
+				items.push({ nativeId: id, createdAt: data.createdAt, updatedAt: data.updatedAt });
 			}
-			return paginate(items, "order", query, (item) => item.updatedAt);
+			const selected = await paginate(items, "order", query, (item) => item.updatedAt),
+				projected: WooOrderSnapshot[] = [];
+			for (const item of selected.items) {
+				const snapshot = await getOrder(item.nativeId);
+				if (!snapshot)
+					failure(
+						"Native order disappeared during projection; retry the request.",
+						503,
+						"woocommerce_rest_snapshot_busy",
+					);
+				projected.push(snapshot);
+			}
+			return { total: selected.total, items: projected };
 		},
 		getProduct,
 		async listProducts(query) {
@@ -456,18 +491,7 @@ export function createNativeWooBackend(
 			return { ...result, items: await enrich(result.items) };
 		},
 		listVariations,
-		async getVariation(parentId, nativeId) {
-			const native = await stores.productCommerce.getByProductId(productId(parentId));
-			if (!native || native.deletedAt !== null) return null;
-			const raw = await products.get(parentId);
-			if (!raw) return null;
-			const doc = normalizeProductDoc(raw);
-			const variant = Object.values(doc.variants).find(
-				(item) => `${parentId}:${item.variantKey}` === nativeId && item.orphanedAt === null,
-			);
-			if (!variant) return null;
-			return (await enrich([await productSnapshot(native, doc, variant.variantKey)]))[0]!;
-		},
+		getVariation,
 		getCustomer,
 		async listCustomers(query) {
 			if (
@@ -560,12 +584,53 @@ export function createNativeWooBackend(
 			} else failure("Unsupported native order status.", 400);
 			return (await getOrder(nativeId))!;
 		},
-		async applyStockUpdate() {
-			failure(
-				"An atomic native absolute-stock adapter is not composed.",
-				501,
-				"woocommerce_rest_stock_not_supported",
+		async applyStockUpdate(nativeId, patch, context) {
+			if (!Number.isSafeInteger(patch.stockQuantity) || patch.stockQuantity < 0)
+				failure("stock_quantity must be a nonnegative safe integer.", 400);
+			const before =
+				patch.parentId === undefined
+					? await getProduct(nativeId)
+					: await getVariation(patch.parentId, nativeId);
+			if (!before) missing();
+			if (!before.manageStock || !before.sku)
+				failure(
+					"Only physical products with a native SKU support stock writes.",
+					501,
+					"woocommerce_rest_stock_not_supported",
+				);
+			const key = idempotencyKey(
+				`woo-stock:${await hashWooSecret(
+					JSON.stringify([
+						context.principal.id,
+						patch.parentId ?? null,
+						nativeId,
+						context.idempotencyKey,
+					]),
+				)}`,
 			);
+			try {
+				const result = await stores.inventory.setOnHandAbsolute(
+					sku(before.sku),
+					patch.stockQuantity,
+					key,
+				);
+				if (!result.ok) missing();
+				return {
+					...before,
+					stockQuantity: result.onHand,
+					stockStatus: result.onHand > 0 ? "instock" : "outofstock",
+				};
+			} catch (error) {
+				if (error instanceof StockMovementMismatchError)
+					failure(
+						"The stock replay key belongs to another command.",
+						409,
+						"woocommerce_rest_idempotency_conflict",
+					);
+				if (isStorageContentionError(error))
+					failure("Native stock is busy; retry the request.", 503, "woocommerce_rest_stock_busy");
+				throw error;
+			}
 		},
 		async appendNote(parentId, body, context: MutationContext) {
 			const key = idempotencyKey(

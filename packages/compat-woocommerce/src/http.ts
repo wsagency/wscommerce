@@ -11,7 +11,6 @@ import type {
 import { invalid, unsupportedField, WooMutationError } from "./errors.js";
 import { validateMetadata } from "./metadata.js";
 import { createWooMapper } from "./mapping.js";
-import { hashWooSecret } from "./security.js";
 export const WOO_REST_BASE = "/wp-json/wc/v3";
 const COMMON = [
 	"page",
@@ -317,21 +316,12 @@ async function bodyOf(request: Request): Promise<Record<string, unknown>> {
 		invalid("Request body must be an object.");
 	return body as Record<string, unknown>;
 }
-function canonicalJson(value: unknown): string {
-	if (value === null || typeof value !== "object") return JSON.stringify(value);
-	if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-	const object = value as Record<string, unknown>;
-	return `{${Object.keys(object)
-		.toSorted()
-		.map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`)
-		.join(",")}}`;
-}
-async function mutationKey(
+function mutationKey(
 	request: Request,
 	principal: WooPrincipal,
 	body: Record<string, unknown>,
 	route: Route,
-): Promise<string> {
+): string {
 	const value = request.headers.get("Idempotency-Key");
 	if (value !== null) {
 		if (!value || value.length > 200 || !/^[\x21-\x7e]+$/.test(value))
@@ -348,17 +338,9 @@ async function mutationKey(
 		route.resource === "products" && fields.length === 1 && fields[0] === "stock_quantity";
 	if (!["PUT", "PATCH"].includes(request.method) || (!metadataOnly && !stockOnly))
 		invalid("An Idempotency-Key header is required for notes and state transitions.");
-	const url = new URL(request.url);
-	url.searchParams.sort();
-	const fingerprint = await hashWooSecret(
-		canonicalJson({
-			principal: principal.id,
-			url: url.origin + url.pathname.replace(/\/$/, "") + url.search,
-			method: request.method,
-			body,
-		}),
-	);
-	return `woo:${principal.id}:auto:${fingerprint}`;
+	// Identical bodies can be new commands after an intervening update (A -> B -> A).
+	// Only a client-supplied Idempotency-Key distinguishes retries from later commands durably.
+	return `woo:${principal.id}:auto:${crypto.randomUUID()}`;
 }
 function orderPatch(body: Record<string, unknown>): GuardedOrderPatch {
 	for (const key of Object.keys(body))
@@ -456,7 +438,7 @@ export function createWooCommerceHandler(
 				const body = await bodyOf(request),
 					context = {
 						principal,
-						idempotencyKey: await mutationKey(request, principal, body, route),
+						idempotencyKey: mutationKey(request, principal, body, route),
 					};
 				if (route.resource === "orders" && !route.child && parent) {
 					const patch = orderPatch(body);
@@ -491,7 +473,10 @@ export function createWooCommerceHandler(
 						await mapper.product(
 							await options.backend.applyStockUpdate(
 								child ?? parent,
-								{ stockQuantity: body.stock_quantity as number },
+								{
+									stockQuantity: body.stock_quantity as number,
+									...(child ? { parentId: parent } : {}),
+								},
 								context,
 							),
 						),

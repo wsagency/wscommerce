@@ -52,7 +52,7 @@ export function nativeWooAddress(address: OrderAddress | null): WooAddress | nul
 		phone: address.phone ?? "",
 	};
 }
-/** Uses only frozen order data. Old nonzero tax/discount rows need reconciliation, never current rates. */
+/** Uses only frozen order data; every line needs captured rate proof, including rounded-zero VAT. */
 export function nativeOrderSnapshot(
 	order: NativeOrder,
 	options: NativeSnapshotOptions = {},
@@ -60,11 +60,9 @@ export function nativeOrderSnapshot(
 	if (order.totals.currency !== order.currency) projectionError();
 	const breakdown = object(order.totals.taxBreakdown),
 		frozenLines = Array.isArray(breakdown?.lines) ? breakdown.lines : [];
-	const mode = breakdown?.priceTaxMode === undefined ? "exclusive" : breakdown.priceTaxMode;
+	const mode = breakdown?.priceTaxMode;
 	if (mode !== "exclusive" && mode !== "inclusive" && mode !== "mixed") projectionError();
-	const taxed = order.totals.tax > 0 || order.totals.discount > 0 || mode !== "exclusive";
-	if (taxed && (frozenLines.length !== order.lines.length || breakdown?.priceTaxMode === undefined))
-		projectionError();
+	if (frozenLines.length !== order.lines.length) projectionError();
 	const taxes = new Map<string, WooTaxSnapshot>();
 	let nativeSubtotal = 0n;
 	let nativeDiscount = 0n;
@@ -78,33 +76,18 @@ export function nativeOrderSnapshot(
 		const rawSubtotal = integer(BigInt(line.unitPrice) * BigInt(line.quantity)),
 			proof = object(frozenLines[index]);
 		if (
-			taxed &&
-			(!proof ||
-				typeof proof.taxClassId !== "string" ||
-				!Number.isSafeInteger(proof.rateBps) ||
-				Number(proof.rateBps) < 0)
+			!proof ||
+			typeof proof.taxClassId !== "string" ||
+			!proof.taxClassId ||
+			!Number.isSafeInteger(proof.rateBps) ||
+			Number(proof.rateBps) < 0
 		)
 			projectionError();
-		const subtotal =
-			proof?.subtotalNetCents === undefined
-				? taxed
-					? projectionError()
-					: rawSubtotal
-				: minor(proof.subtotalNetCents);
-		const total =
-			proof?.netCents === undefined
-				? taxed
-					? projectionError()
-					: rawSubtotal
-				: minor(proof.netCents);
-		const totalTax =
-			proof?.taxCents === undefined
-				? taxed
-					? projectionError()
-					: cents(0)
-				: minor(proof.taxCents);
-		const rate = proof?.rateBps === undefined ? 0 : Number(proof.rateBps);
-		const lineMode = proof?.priceTaxMode ?? mode;
+		const subtotal = minor(proof.subtotalNetCents),
+			total = minor(proof.netCents),
+			totalTax = minor(proof.taxCents),
+			rate = Number(proof.rateBps);
+		const lineMode = proof.priceTaxMode ?? mode;
 		if (lineMode !== "exclusive" && lineMode !== "inclusive") projectionError();
 		if (mode !== "mixed" && mode !== lineMode) projectionError();
 		const subtotalTax =
@@ -114,21 +97,17 @@ export function nativeOrderSnapshot(
 		if (
 			total > subtotal ||
 			(lineMode === "exclusive" && subtotal !== rawSubtotal) ||
-			(taxed && (proof?.grossCents === undefined || proof.discountedCents === undefined)) ||
-			(proof?.grossCents !== undefined && minor(proof.grossCents) !== total + totalTax)
+			minor(proof.grossCents) !== total + totalTax
 		)
 			projectionError();
 		const discountedNative =
 			lineMode === "inclusive" ? integer(BigInt(total) + BigInt(totalTax)) : total;
-		if (
-			discountedNative > rawSubtotal ||
-			(proof?.discountedCents !== undefined && minor(proof.discountedCents) !== discountedNative)
-		)
+		if (discountedNative > rawSubtotal || minor(proof.discountedCents) !== discountedNative)
 			projectionError();
 		nativeSubtotal += BigInt(rawSubtotal);
 		nativeDiscount += BigInt(rawSubtotal) - BigInt(discountedNative);
-		const taxId = proof?.taxClassId === undefined ? "zero" : String(proof.taxClassId);
-		if (totalTax > 0) {
+		const taxId = proof.taxClassId;
+		{
 			const current = taxes.get(taxId);
 			if (
 				current &&
@@ -157,18 +136,18 @@ export function nativeOrderSnapshot(
 			subtotalTax,
 			totalTax,
 			unitPrice: line.unitPrice,
-			taxes: totalTax > 0 ? [{ nativeTaxId: taxId, total: totalTax, subtotal: subtotalTax }] : [],
+			taxes: [{ nativeTaxId: taxId, total: totalTax, subtotal: subtotalTax }],
 		};
 	});
 	const shippingTax =
 		breakdown?.shippingTaxCents === undefined
-			? taxed && order.totals.shipping > 0
+			? order.totals.shipping > 0
 				? projectionError()
 				: cents(0)
 			: minor(breakdown.shippingTaxCents);
 	const shippingTotal =
 		breakdown?.shippingNetCents === undefined
-			? mode === "inclusive" && order.totals.shipping > 0
+			? order.totals.shipping > 0
 				? projectionError()
 				: order.totals.shipping
 			: minor(breakdown.shippingNetCents);
@@ -195,7 +174,7 @@ export function nativeOrderSnapshot(
 	const shippingId = `${order.id}:shipping`;
 	if ((shippingTotal > 0 || shippingTax > 0) && !method) projectionError();
 	let shippingTaxId: string | undefined;
-	if (shippingTax > 0) {
+	if (shippingTotal > 0 || shippingTax > 0) {
 		if (!Number.isSafeInteger(breakdown?.shippingRateBps) || Number(breakdown?.shippingRateBps) < 0)
 			projectionError();
 		const rate = Number(breakdown?.shippingRateBps);
