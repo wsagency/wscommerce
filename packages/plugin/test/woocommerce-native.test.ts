@@ -16,6 +16,8 @@ import {
 	EmDashWooMetadataStore,
 	WOO_STORAGE_LAYOUT,
 	createWooCommerceHandler,
+	nativeOrderSnapshot,
+	nativeWooAddress,
 	type ListQuery,
 	type MutationContext,
 	type WooBackendPort,
@@ -133,7 +135,95 @@ async function paid(id = "native-order") {
 async function orderDoc(id = "native-order") {
 	return collectionOf<OrderDoc>(db.storage, "orders").get(id);
 }
+async function httpOrder(id = "native-order") {
+	const numeric = await ids.getOrAssign("order", id);
+	const handler = createWooCommerceHandler({
+		backend,
+		ids,
+		authenticate: {
+			authenticate: async () => ({ id: "erp", scopes: ["orders:read"] }),
+		},
+		currencyDecimals: { EUR: 2 },
+	});
+	const response = await handler(
+		new Request(`https://shop.test/wp-json/wc/v3/orders/${numeric}`, {
+			headers: {
+				Authorization: `Basic ${btoa("ck_" + "a".repeat(40) + ":cs_" + "b".repeat(40))}`,
+			},
+		}),
+	);
+	expect(response.status).toBe(200);
+	return response.json();
+}
+const frozenBilling = {
+	name: "Frozen Billing Buyer",
+	line1: "Billing Street 1",
+	line2: null,
+	city: "Zagreb",
+	region: null,
+	postalCode: "10000",
+	country: "HR",
+	email: null,
+	phone: null,
+	company: null,
+	taxNumber: null,
+	vatId: null,
+};
 describe("native Woo backend over migrated SQLite", () => {
+	for (const billing of [null, frozenBilling]) {
+		it(`exports the frozen guest email with ${billing ? "billing details" : "no address"}`, async () => {
+			await order();
+			const collection = collectionOf<OrderDoc>(db.storage, "orders"),
+				doc = (await orderDoc())!;
+			await collection.put("native-order", {
+				...doc,
+				buyerRef: "Guest+Retail@Example.test",
+				billingAddress: billing,
+				shippingAddress: { ...frozenBilling, email: "Shipping@Example.test" },
+			});
+			const exported = await httpOrder();
+			expect(exported.billing).toMatchObject({
+				email: "Guest+Retail@Example.test",
+				country: billing ? "HR" : "",
+				address_1: billing ? "Billing Street 1" : "",
+			});
+			expect(exported.shipping.email).toBe("Shipping@Example.test");
+			expect((await orderDoc())!.billingAddress).toEqual(billing);
+		});
+	}
+	it("keeps explicit frozen billing contact ahead of the guest or current customer email", async () => {
+		await order();
+		const customer = await stores.customerStore.create({ email: email("Current@Example.test") });
+		const collection = collectionOf<OrderDoc>(db.storage, "orders"),
+			doc = (await orderDoc())!;
+		await collection.put("native-order", {
+			...doc,
+			customerId: customer.id,
+			billingAddress: { ...frozenBilling, email: "Billing@Example.test" },
+		});
+		expect((await httpOrder()).billing.email).toBe("Billing@Example.test");
+	});
+	it("never exports opaque or invalid buyer claims as billing emails", async () => {
+		await order();
+		const collection = collectionOf<OrderDoc>(db.storage, "orders"),
+			doc = (await orderDoc())!;
+		for (const buyerRef of [
+			"session:private-claim",
+			"not@complete",
+			"a@b..test",
+			" space@example.test",
+			`${"a".repeat(321)}@example.test`,
+		]) {
+			await collection.put("native-order", { ...doc, buyerRef });
+			expect((await httpOrder()).billing.email).toBe("");
+		}
+	});
+	it("respects an explicit snapshot billing override including deliberate omission", async () => {
+		const frozen = await order();
+		expect(nativeOrderSnapshot(frozen, { billing: null }).billing).toBeNull();
+		const override = { ...nativeWooAddress(frozenBilling)!, email: "" };
+		expect(nativeOrderSnapshot(frozen, { billing: override }).billing).toEqual(override);
+	});
 	it("projects only the selected order page after complete native filters and totals", async () => {
 		await order("current");
 		await order("historical");

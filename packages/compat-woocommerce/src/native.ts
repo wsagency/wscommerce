@@ -192,7 +192,29 @@ export function nativeOrderSnapshot(
 	const paymentMethod = nativeMethod === "bank_transfer" ? "bacs" : (nativeMethod ?? "");
 	const billingNative =
 		(order as NativeOrder & { billingAddress?: OrderAddress | null }).billingAddress ?? null;
-	const billing = options.billing === undefined ? nativeWooAddress(billingNative) : options.billing;
+	let billing = options.billing === undefined ? nativeWooAddress(billingNative) : options.billing;
+	// Guest checkout freezes its contact in buyerRef. Only an email-shaped value
+	// may fill an absent billing contact; opaque session claims stay private.
+	if (
+		options.billing === undefined &&
+		!billing?.email &&
+		order.buyerRef.length <= 320 &&
+		/^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(order.buyerRef)
+	) {
+		billing = {
+			first_name: "",
+			last_name: "",
+			company: "",
+			address_1: "",
+			address_2: "",
+			city: "",
+			state: "",
+			postcode: "",
+			country: "",
+			...billing,
+			email: order.buyerRef,
+		};
+	}
 	return {
 		nativeId: order.id,
 		number: order.id,
