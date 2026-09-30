@@ -619,6 +619,14 @@ function normalizeEvent(event: unknown): ConfirmationResult {
 	const amount = obj["amount"];
 	const cur = obj["currency"];
 	const metadata = obj["metadata"];
+	const refundKey =
+		typeof metadata === "object" && metadata !== null
+			? (metadata as Record<string, unknown>)["refund_key"]
+			: undefined;
+	// Dashboard/out-of-band refunds have no native reservation. Acknowledge
+	// verified events before requiring native order metadata; they cannot settle a ledger row.
+	if (refundEvent && (typeof refundKey !== "string" || refundKey.length === 0))
+		return { ok: false, reason: "UNKNOWN_EVENT" };
 	const orderRef =
 		typeof metadata === "object" && metadata !== null
 			? (metadata as Record<string, unknown>)["order_id"]
@@ -634,12 +642,7 @@ function normalizeEvent(event: unknown): ConfirmationResult {
 	) {
 		return { ok: false, reason: "MALFORMED" };
 	}
-	if (refundEvent) {
-		const refundKey = (metadata as Record<string, unknown> | null)?.["refund_key"];
-		// Dashboard/out-of-band refunds have no native reservation. Acknowledge
-		// them without manufacturing a completed local ledger row.
-		if (typeof refundKey !== "string" || refundKey.length === 0)
-			return { ok: false, reason: "UNKNOWN_EVENT" };
+	if (refundEvent && typeof refundKey === "string") {
 		const paymentRef =
 			typeof obj["payment_intent"] === "string" ? obj["payment_intent"] : obj["charge"];
 		const status = obj["status"];
