@@ -42,6 +42,7 @@ import {
 	INVOICE_JOB_INDEXES,
 	INVOICE_PROVIDER_LOCK_COLLECTION,
 } from "@emdash-commerce/invoicing";
+import { WOO_STORAGE_LAYOUT } from "@emdash-commerce/compat-woocommerce";
 
 /**
  * One collection's declaration. A composite entry (`["state", "createdAt"]`) is
@@ -91,6 +92,7 @@ export const COMMERCE_STORAGE_COLLECTIONS: CommerceStorageLayout = Object.freeze
 	...SETTINGS_COLLECTIONS,
 	...REPORTING_COLLECTIONS,
 	...INTEGRATION_STORAGE_COLLECTIONS,
+	...WOO_STORAGE_LAYOUT,
 });
 
 /** The collection names, for a caller that needs the list rather than the map. */

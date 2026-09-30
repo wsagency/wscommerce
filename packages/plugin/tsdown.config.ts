@@ -42,6 +42,8 @@ export default defineConfig({
 	 * surviving bare specifier has no resolver.
 	 */
 	noExternal: [
+		"@emdash-commerce/invoicing",
+		"@emdash-commerce/compat-woocommerce",
 		"@otta-sh/domain",
 		"@otta-sh/payments-stripe",
 		"@otta-sh/payments-x402",

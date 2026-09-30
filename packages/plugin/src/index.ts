@@ -473,3 +473,15 @@ export type {
 	InvoiceSweepResult,
 } from "./integrations/invoices.js";
 export { integrationConfigurationFromBindings } from "./integrations/runtime-configuration.js";
+export {
+	withWooCommerceIntegrations,
+	runWooWebhookSweep,
+	wooConfigurationFromBindings,
+	WOO_HTTP_ROUTE,
+	WOO_SWEEP_TASK,
+} from "./integrations/woocommerce.js";
+export type {
+	WooIntegrationConfiguration,
+	WooIntegrationOptions,
+	WooWebhookSweepResult,
+} from "./integrations/woocommerce.js";

@@ -74,9 +74,8 @@ export function ottaPluginDescriptor(options: OttaPluginDescriptorOptions = {}):
 		version: OTTA_PLUGIN_VERSION,
 		format: "standard",
 		entrypoint: new URL("./emdash-commerce-plugin.ts", import.meta.url).pathname,
-		// EXACTLY the manifest's two capabilities — never more (the
-		// sandbox-clean contract, pinned by the plugin's own guard test).
-		capabilities: [...OTTA_PLUGIN_CAPABILITIES],
+		// The host-only Woo product reader resolves CMS image references. It has no media write access.
+		capabilities: [...OTTA_PLUGIN_CAPABILITIES, "media:read"],
 		// The egress allowlist — resolved by the plugin's own `resolveAllowedHosts`
 		// so this descriptor and the bundle's `ALLOWED_HOSTS` can never drift into
 		// two different answers.

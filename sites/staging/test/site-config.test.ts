@@ -64,8 +64,8 @@ describe("ottaPluginDescriptor", () => {
 		);
 	});
 
-	test("capabilities are EXACTLY the manifest's (content:read, network:request)", () => {
-		expect(descriptor.capabilities).toEqual([...OTTA_PLUGIN_CAPABILITIES]);
+	test("capabilities include read-only image resolution for the host Woo product adapter", () => {
+		expect(descriptor.capabilities).toEqual([...OTTA_PLUGIN_CAPABILITIES, "media:read"]);
 	});
 
 	test("allowedHosts is exactly the in-process egress list (Stripe alone, unconfigured)", () => {
@@ -223,7 +223,7 @@ describe("ottaPluginDescriptor storage, EXACTLY (INC-D1)", () => {
 		// sandbox-clean contract (`capabilities` are exactly the manifest's) must
 		// therefore survive the fold-in untouched — this is the assertion that would
 		// catch someone "fixing" a storage error by widening capabilities.
-		expect(inProcess.capabilities).toEqual([...OTTA_PLUGIN_CAPABILITIES]);
+		expect(inProcess.capabilities).toEqual([...OTTA_PLUGIN_CAPABILITIES, "media:read"]);
 	});
 
 	test("the descriptor stays standard format with NO React entry", () => {

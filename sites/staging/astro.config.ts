@@ -62,7 +62,7 @@ const egress = {
 const commerceEgressUrls = [
 	process.env.SOLO_API_URL ?? readDotEnv("SOLO_API_URL"),
 	process.env.ERACUNI_API_URL ?? readDotEnv("ERACUNI_API_URL"),
-	process.env.WOO_WEBHOOK_DELIVERY_URL ?? readDotEnv("WOO_WEBHOOK_DELIVERY_URL"),
+	process.env.WOO_WEBHOOK_API_ORIGIN ?? readDotEnv("WOO_WEBHOOK_API_ORIGIN"),
 ].filter((url): url is string => Boolean(url));
 
 /**
@@ -186,7 +186,12 @@ export default defineConfig({
 			// @otta-sh/admin-react is here for the second reason only: its
 			// workspace `"."`/`"./admin"` exports point at TS/TSX SOURCE, so it
 			// cannot be externalized. It carries no build-time define.
-			noExternal: ["@otta-sh/plugin", "@otta-sh/admin-react", "@emdash-commerce/invoicing"],
+			noExternal: [
+				"@otta-sh/plugin",
+				"@otta-sh/admin-react",
+				"@emdash-commerce/invoicing",
+				"@emdash-commerce/compat-woocommerce",
+			],
 		},
 	},
 	devToolbar: { enabled: false },

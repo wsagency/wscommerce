@@ -10,6 +10,7 @@
  * way and comparing counts.
  */
 import { describe, expect, test } from "vitest";
+import { WOO_STORAGE_LAYOUT } from "@emdash-commerce/compat-woocommerce";
 import {
 	CART_COLLECTIONS,
 	COUPON_COLLECTIONS,
@@ -28,10 +29,12 @@ import {
 	COMMERCE_STORAGE_COLLECTION_NAMES,
 	COMMERCE_STORAGE_COLLECTIONS,
 	INTEGRATION_STORAGE_COLLECTIONS,
+	type CommerceStorageLayout,
 } from "../src/commerce/commerce-storage.js";
 
 /** The same twelve declarations the module spreads, as a list of name lists. */
-const SOURCES = [
+const SOURCES: readonly CommerceStorageLayout[] = [
+	WOO_STORAGE_LAYOUT,
 	INTEGRATION_STORAGE_COLLECTIONS,
 	INVENTORY_COLLECTIONS,
 	CART_COLLECTIONS,
