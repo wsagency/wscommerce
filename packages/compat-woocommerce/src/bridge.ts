@@ -105,9 +105,13 @@ export async function handleWooHttpBridge(
 			),
 		);
 	}
+	const responseHeaders: Record<string, string> = {};
+	response.headers.forEach((value, name) => {
+		responseHeaders[name] = value;
+	});
 	return {
 		status: response.status,
-		headers: Object.fromEntries(response.headers.entries()),
+		headers: responseHeaders,
 		body: await response.text(),
 	};
 }
