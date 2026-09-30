@@ -150,6 +150,7 @@ import {
 	requireNonNegativeInteger,
 	requireNullableInteger,
 	requireProductId,
+	requirePriceTaxMode,
 	requireQty,
 	requireShippingAddress,
 	requireSku,
@@ -258,6 +259,7 @@ export class InProcessCommerceClient implements CommerceClient {
 		requireIdempotencyKey(idempotencyKey);
 		if (input.sku !== undefined) requireSku(input.sku);
 		if (input.price !== undefined) requireMoney("price", input.price);
+		if (input.priceTaxMode !== undefined) requirePriceTaxMode(input.priceTaxMode);
 		if (input.title !== undefined) requireTitle(input.title);
 		if (input.weightGrams !== undefined) requireNullableInteger("weightGrams", input.weightGrams);
 		if (input.lengthMm !== undefined) requireNullableInteger("lengthMm", input.lengthMm);
@@ -275,6 +277,7 @@ export class InProcessCommerceClient implements CommerceClient {
 				productId: toProductId(productId),
 				...(input.sku !== undefined ? { sku: toSku(input.sku) } : {}),
 				...(input.price !== undefined ? { price: toMoney(input.price) } : {}),
+				...(input.priceTaxMode === undefined ? {} : { priceTaxMode: input.priceTaxMode }),
 				...(input.title !== undefined ? { title: input.title } : {}),
 				...(input.taxClass !== undefined ? { taxClass: input.taxClass } : {}),
 				...(input.weightGrams !== undefined ? { weightGrams: input.weightGrams } : {}),
@@ -850,6 +853,7 @@ export class InProcessCommerceClient implements CommerceClient {
 		requireIdToken("cartId", input.cartId);
 		refuseSuppliedZone(input);
 		if (input.destination !== undefined) requireDestination(input.destination);
+		if (input.taxDestination !== undefined) requireDestination(input.taxDestination);
 		if (input.shippingMethodId !== undefined) {
 			requireIdToken("shippingMethodId", input.shippingMethodId);
 		}
@@ -886,6 +890,7 @@ export class InProcessCommerceClient implements CommerceClient {
 				unitPriceCents: unit.price.amount,
 				qty: line.qty,
 				taxClassId: row.taxClass ?? "standard",
+				priceTaxMode: row.priceTaxMode ?? "exclusive",
 			});
 		}
 
@@ -901,6 +906,7 @@ export class InProcessCommerceClient implements CommerceClient {
 				lines,
 				requiresShipping,
 				...(input.destination !== undefined ? { destination: input.destination } : {}),
+				...(input.taxDestination === undefined ? {} : { taxDestination: input.taxDestination }),
 				...(input.shippingMethodId !== undefined ? { methodId: input.shippingMethodId } : {}),
 				...(input.couponCode !== undefined ? { couponCode: input.couponCode } : {}),
 			},
@@ -912,6 +918,7 @@ export class InProcessCommerceClient implements CommerceClient {
 			ok: true,
 			requiresShipping,
 			destination: serializeDestination(quote.destination),
+			taxDestination: serializeDestination(quote.taxDestination),
 			discountedSubtotalCents: breakdown.subtotalCents - breakdown.discountCents,
 			breakdown: {
 				currency: breakdown.currency,
@@ -1068,6 +1075,7 @@ function serializeCommerce(row: DomainProductCommerce): ProductCommerce {
 		productId: row.productId,
 		sku: row.sku,
 		price: toMoneyWire(row.price),
+		...(row.priceTaxMode === undefined ? {} : { priceTaxMode: row.priceTaxMode }),
 		taxClass: row.taxClass,
 		weightGrams: row.weightGrams,
 		lengthMm: row.lengthMm,
@@ -1209,6 +1217,7 @@ function serializePublicOrder(order: Order): PublicOrderWire {
 			totalCents: order.totals.total,
 			appliedCouponCode: order.totals.appliedCouponCode,
 			shippingZoneId: shippingZoneIdOf(order.totals.shippingMethodSnapshot),
+			...taxZoneSnapshot(order.totals.taxBreakdown),
 			shippingMethodId: shippingMethodIdOf(order.totals.shippingMethodSnapshot),
 		},
 		lines: serializeOrderLines(order),
@@ -1312,4 +1321,10 @@ function serializeAddress(address: Address): AddressWire {
  *  client secret beyond handing it on. */
 function serializeIntent(intent: PaymentIntentHandle): PaymentIntentWire {
 	return { gateway: intent.gateway, intentId: intent.intentId, clientAction: intent.clientAction };
+}
+
+function taxZoneSnapshot(snapshot: unknown): { taxZoneId?: string | null } {
+	if (snapshot === null || typeof snapshot !== "object" || !("taxDestination" in snapshot))
+		return {};
+	return { taxZoneId: shippingZoneIdOf(snapshot.taxDestination) };
 }

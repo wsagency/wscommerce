@@ -698,6 +698,7 @@ export class EmdashProductCommerceStore implements ProductCommerceStore {
 					),
 					sku: input.sku ?? doc.sku,
 					price: input.price ?? doc.price,
+					...(input.priceTaxMode === undefined ? {} : { priceTaxMode: input.priceTaxMode }),
 					title: input.title !== undefined ? input.title : doc.title,
 					taxClass: input.taxClass !== undefined ? input.taxClass : doc.taxClass,
 					weightGrams: input.weightGrams !== undefined ? input.weightGrams : doc.weightGrams,
@@ -733,6 +734,7 @@ export class EmdashProductCommerceStore implements ProductCommerceStore {
 				lifecycle: "live",
 				sku: input.sku ?? null,
 				price: input.price ?? null,
+				...(input.priceTaxMode === undefined ? {} : { priceTaxMode: input.priceTaxMode }),
 				title: input.title ?? null,
 				taxClass: input.taxClass ?? null,
 				// compare-at / cost / inventory-policy are EDIT-ONLY: a fresh row starts at
@@ -855,6 +857,7 @@ export class EmdashProductCommerceStore implements ProductCommerceStore {
 				pendingRenames: EmdashProductCommerceStore.#withRecord(doc.pendingRenames, prepared.carry),
 				sku: input.sku ?? doc.sku,
 				price: input.price ?? doc.price,
+				...(input.priceTaxMode === undefined ? {} : { priceTaxMode: input.priceTaxMode }),
 				// `title` is ABSENT from this input by design (ADR-0013): the CMS sync is
 				// its sole writer, so an edit always preserves it.
 				taxClass: input.taxClass !== undefined ? input.taxClass : doc.taxClass,

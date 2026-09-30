@@ -3,7 +3,7 @@ export { cents, currency, money, type Cents, type Currency, type Money } from ".
 // Phase 6 pricing engines (pure, IO-free): the totals pipeline + its components.
 export { divRoundHalfUp } from "./pricing/round.js";
 export { allocateCents } from "./pricing/allocate.js";
-export { computeLineTax } from "./pricing/tax.js";
+export { computeLineTax, computeInclusiveNet } from "./pricing/tax.js";
 export { computeCouponDiscount } from "./pricing/coupon.js";
 export { resolveShippingRate } from "./pricing/shipping.js";
 export { computeTotals } from "./pricing/compute-totals.js";
@@ -55,6 +55,7 @@ export type {
 	CouponType,
 	FixedAmountCoupon,
 	PercentageCoupon,
+	PriceTaxMode,
 	RulesSnapshot,
 	ShippingMethodSnapshot,
 	ShippingMethodType,

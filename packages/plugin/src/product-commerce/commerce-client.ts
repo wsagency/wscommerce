@@ -42,6 +42,7 @@ export type CommerceProductKind = "physical" | "digital";
 export interface UpsertProductCommerceInput {
 	sku?: string;
 	price?: CommerceMoney;
+	priceTaxMode?: "exclusive" | "inclusive";
 	/** The product title an ORDER LINE SNAPSHOTS at purchase time (service
 	 *  schema: non-empty, ≤500 chars). Not a merchant-editable commerce field:
 	 *  it is derived from the CMS CONTENT field `data.title` — em-dash's
@@ -77,6 +78,7 @@ export interface ProductCommerce {
 	productId: string;
 	sku: string | null;
 	price: CommerceMoney | null;
+	priceTaxMode?: "exclusive" | "inclusive";
 	taxClass: string | null;
 	weightGrams: number | null;
 	lengthMm: number | null;
@@ -416,6 +418,8 @@ export interface CommerceClient {
 // + an ISO-4217 string, never a float.
 
 export interface QuoteRequestWire {
+	/** Billing tax jurisdiction, independent of physical delivery. */
+	taxDestination?: DestinationRequestWire;
 	cartId: string;
 	/**
 	 * Where the order ships: an ISO 3166-1 alpha-2 country and an optional ISO
@@ -470,6 +474,9 @@ export interface QuoteBreakdownWire {
 /** The quote rejections: the cart pre-checks run before `computeQuote`, plus
  *  the domain `QuoteFailure`'s own union. */
 export type QuoteFailureReason =
+	| "INVALID_TAX_DESTINATION"
+	| "TAX_REGION_CODE_REQUIRED"
+	| "TAX_DESTINATION_NOT_MATCHED"
 	| "CART_NOT_FOUND"
 	| "CART_EMPTY"
 	| "PRODUCT_NOT_PRICED"
@@ -496,6 +503,7 @@ export type QuoteResult =
 			/** Whether any line ships. A digital-only cart needs no address. */
 			requiresShipping: boolean;
 			destination: QuoteDestinationWire;
+			taxDestination?: QuoteDestinationWire;
 			/** `subtotal − discount` — what a delivery option's free-shipping
 			 *  threshold is measured against (`listShippingOptions`). */
 			discountedSubtotalCents: number;
@@ -556,7 +564,11 @@ export interface PublicOrderWire {
 	 *  snapshot: opaque merchant config ids, never buyer data. They are the only
 	 *  evidence on the wire of WHAT the totals were priced with — the method
 	 *  decides whether shipping was calculated, the zone whether tax was. */
-	totals: QuoteBreakdownWire & { shippingZoneId: string | null; shippingMethodId: string | null };
+	totals: QuoteBreakdownWire & {
+		shippingZoneId: string | null;
+		shippingMethodId: string | null;
+		taxZoneId?: string | null;
+	};
 	lines: OrderLineWire[];
 	fulfillment: {
 		carrier: string;
@@ -569,6 +581,11 @@ export interface PublicOrderWire {
 
 /** `CreateOrderFailure` verbatim (`@otta-sh/domain`'s orders/errors.ts). */
 export type CheckoutFailureReason =
+	| "INVALID_BILLING_ADDRESS"
+	| "MISSING_BILLING_ADDRESS"
+	| "INVALID_TAX_DESTINATION"
+	| "TAX_REGION_CODE_REQUIRED"
+	| "TAX_DESTINATION_NOT_MATCHED"
 	| "CART_NOT_FOUND"
 	| "CART_EMPTY"
 	| "CART_CHECKED_OUT"

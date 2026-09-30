@@ -304,3 +304,9 @@ function requireCodeShapes(prefix: string, country: string, region: string | und
 
 /** Two letters, either case — the SHAPE of an ISO 3166-1 alpha-2 code. */
 export const COUNTRY_SHAPE = /^[A-Za-z]{2}$/;
+
+export function requirePriceTaxMode(value: unknown): "exclusive" | "inclusive" {
+	if (value !== "exclusive" && value !== "inclusive")
+		fail("priceTaxMode", "must be exclusive or inclusive");
+	return value;
+}

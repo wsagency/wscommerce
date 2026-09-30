@@ -89,7 +89,21 @@ export interface ProductPriceViewModel {
 	formatted: string;
 }
 
+export interface ProductVariantOptionView {
+	id: string;
+	sku: string;
+	title: string;
+	price: ProductPriceViewModel;
+	availability: AvailabilityToken;
+	selected: boolean;
+}
+
 export interface ProductViewModel {
+	/** Live, priced choices; each submits its own SKU. */
+	variants?: ProductVariantOptionView[];
+	selectedVariantId?: string | null;
+	baseOption?: { sku: string; title: string };
+	priceTaxMode?: "exclusive" | "inclusive";
 	id: string;
 	title: string;
 	slug?: string;

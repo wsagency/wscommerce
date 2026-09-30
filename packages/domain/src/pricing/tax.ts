@@ -20,3 +20,13 @@ export function computeLineTax(amountCents: Cents, rateBps: number): Cents {
 	}
 	return cents(mulDivRoundHalfUp(amountCents, rateBps, 10_000));
 }
+
+/** Extract net from an inclusive LINE amount, half-up; VAT is gross minus net.
+ * BigInt handles odd denominators and intermediate overflow without floats. */
+export function computeInclusiveNet(grossCents: Cents, rateBps: number): Cents {
+	if (!Number.isSafeInteger(rateBps) || rateBps < 0) {
+		throw new RangeError(`computeInclusiveNet requires non-negative integer rateBps`);
+	}
+	const denominator = 10_000n + BigInt(rateBps);
+	return cents(Number((2n * BigInt(grossCents) * 10_000n + denominator) / (2n * denominator)));
+}

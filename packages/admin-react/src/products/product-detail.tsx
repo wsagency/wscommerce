@@ -238,6 +238,7 @@ function canonicalPriceValues(
 ): Readonly<Record<string, string>> {
 	return {
 		price: canonicalMoneyInput(values["price"] ?? ""),
+		priceTaxMode: values["priceTaxMode"] ?? "exclusive",
 		currency: (values["currency"] ?? "").trim().toUpperCase(),
 		compareAt: canonicalMoneyInput(values["compareAt"] ?? ""),
 		unitCost: canonicalMoneyInput(values["unitCost"] ?? ""),
@@ -1442,11 +1443,12 @@ export function PriceGroup({
 	const committed = React.useMemo(
 		() => ({
 			price: moneyInput(p.priceCents),
+			priceTaxMode: p.priceTaxMode ?? "exclusive",
 			currency: p.currency ?? "",
 			compareAt: moneyInput(p.compareAtCents),
 			unitCost: moneyInput(p.unitCostCents),
 		}),
-		[p.priceCents, p.currency, p.compareAtCents, p.unitCostCents],
+		[p.priceCents, p.currency, p.compareAtCents, p.unitCostCents, p.priceTaxMode],
 	);
 	const [values, setValues] = React.useState<Record<string, string>>(committed);
 	const changed = changedPriceFields(committed, values);
@@ -1501,6 +1503,21 @@ export function PriceGroup({
 						/>
 					</Field>
 				)}
+				<Field label="Price tax mode">
+					<select
+						className="otta-focusable"
+						data-testid="edit-price-tax-mode"
+						style={fieldStyle(changed, "priceTaxMode")}
+						value={values["priceTaxMode"] ?? "exclusive"}
+						onChange={(event) =>
+							setValues((prev) => ({ ...prev, priceTaxMode: event.target.value }))
+						}
+					>
+						<option value="exclusive">Tax added at checkout</option>
+						<option value="inclusive">Price includes tax</option>
+					</select>
+				</Field>
+
 				<Field label={compareAtFieldLabel(p.currency)}>
 					<input
 						className="otta-focusable"

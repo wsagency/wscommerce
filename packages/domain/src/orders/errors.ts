@@ -53,6 +53,11 @@ export type CreateOrderFailure =
 	 */
 	| "IDEMPOTENCY_KEY_REUSED"
 	// Phase 6 checkout-pipeline failures (shipping / tax / coupon):
+	| "INVALID_BILLING_ADDRESS"
+	| "MISSING_BILLING_ADDRESS"
+	| "INVALID_TAX_DESTINATION"
+	| "TAX_REGION_CODE_REQUIRED"
+	| "TAX_DESTINATION_NOT_MATCHED"
 	| "SHIPPING_METHOD_NOT_FOUND"
 	| "SHIPPING_RATE_NOT_FOUND"
 	| "COUPON_NOT_FOUND"

@@ -11,6 +11,9 @@ import type { Cents, Currency } from "../money/cents.js";
 /** A tax class identifier, e.g. `"standard" | "reduced" | "zero" | "digital"`. */
 export type TaxClassId = string;
 
+/** Catalog prices are net by default; inclusive prices already contain VAT. */
+export type PriceTaxMode = "exclusive" | "inclusive";
+
 export type CouponType = "fixed_amount" | "percentage";
 
 /** A flat amount off the subtotal, currency-bound and clamped at the subtotal. */
@@ -72,6 +75,7 @@ export interface TotalsLineInput {
 	unitPriceCents: Cents;
 	qty: number;
 	taxClassId: TaxClassId;
+	priceTaxMode?: PriceTaxMode;
 }
 
 export interface TotalsInput {
@@ -85,7 +89,14 @@ export interface TotalsInput {
 /** Per-line detail feeding `order_totals.tax_breakdown` (§6). */
 export interface TotalsLineBreakdown {
 	taxClassId: TaxClassId;
-	/** The line's share of the discounted subtotal (pro-rata, §4). */
+	priceTaxMode: PriceTaxMode;
+	rateBps: number;
+	/** Net line subtotal before coupon allocation. */
+	subtotalNetCents: Cents;
+	/** Net and gross LINE amounts after coupon allocation, never unit amounts. */
+	netCents: Cents;
+	grossCents: Cents;
+	/** The discounted line amount in the catalog's price mode. */
 	discountedCents: Cents;
 	taxCents: Cents;
 }
@@ -99,5 +110,8 @@ export interface TotalsBreakdown {
 	totalCents: Cents;
 	lineBreakdown: ReadonlyArray<TotalsLineBreakdown>;
 	shippingTaxCents: Cents;
+	shippingNetCents: Cents;
+	shippingRateBps: number;
+	priceTaxMode: PriceTaxMode | "mixed";
 	appliedCouponCode?: string;
 }

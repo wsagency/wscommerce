@@ -370,6 +370,9 @@ describe("selectionFieldFor — which selection a quote refusal blames", () => {
 	/** Typed as a Record over the WHOLE union, so a reason added to the wire
 	 *  without a classification here fails the type check, not a buyer. */
 	const EXPECTED: Record<QuoteFailureReason, SelectionField | null> = {
+		INVALID_TAX_DESTINATION: "destination",
+		TAX_REGION_CODE_REQUIRED: "destination",
+		TAX_DESTINATION_NOT_MATCHED: "destination",
 		COUPON_NOT_FOUND: "coupon",
 		COUPON_NOT_ACTIVE: "coupon",
 		COUPON_MIN_SUBTOTAL: "coupon",

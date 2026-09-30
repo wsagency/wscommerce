@@ -73,6 +73,7 @@ import {
 	isCommerceInputError,
 	requireBoundedText,
 	requireIdToken,
+	requirePriceTaxMode,
 	requireMoney,
 	requireNullableInteger,
 	requireWatermark,
@@ -422,6 +423,7 @@ function toProductDetailWire(
 		priceCents: product.price?.amount ?? null,
 		currency: product.price?.currency ?? null,
 		taxClass: product.taxClass,
+		...(product.priceTaxMode === undefined ? {} : { priceTaxMode: product.priceTaxMode }),
 		compareAtCents: product.compareAtPrice?.amount ?? null,
 		compareAtCurrency: product.compareAtPrice?.currency ?? null,
 		unitCostCents: product.unitCost?.amount ?? null,
@@ -515,6 +517,7 @@ const PRODUCT_EDIT_KEYS = [
 	"expectedUpdatedAt",
 	"sku",
 	"price",
+	"priceTaxMode",
 	"taxClass",
 	"compareAtPrice",
 	"unitCost",
@@ -548,6 +551,7 @@ function toUpdateInput(productId: string, body: ProductEditWire): UpdateProductC
 	}
 	// No `title`: it is CMS-owned and the other transport's `.strict()` body
 	// rejects one outright (ADR-0013). The port has no field for it either.
+	if (body.priceTaxMode !== undefined) input.priceTaxMode = requirePriceTaxMode(body.priceTaxMode);
 	if (body.taxClass !== undefined) input.taxClass = body.taxClass;
 	if (body.compareAtPrice !== undefined) {
 		input.compareAtPrice = toNullableMoney("compareAtPrice", body.compareAtPrice);

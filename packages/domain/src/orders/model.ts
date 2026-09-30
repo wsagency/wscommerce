@@ -1,3 +1,4 @@
+import type { TotalsLineBreakdown } from "../pricing/types.js";
 /**
  * Order model (Phase 4 §4). An order is an **immutable** record minted from a
  * cart: its line items snapshot price + title at purchase time, so a later
@@ -188,7 +189,9 @@ export interface OrderBillingAddress extends OrderAddress {
  * structural. A **physical** line carries its adopted reservation; a **digital**
  * line carries `reservationId = null` (digital never reserves, §6).
  */
-export interface OrderLine {
+export interface OrderLine extends Partial<TotalsLineBreakdown> {
+	/** Immutable product/variant key; absent on historical orders. */
+	variantId?: string | null;
 	id: string;
 	orderId: OrderId;
 	productId: ProductId;

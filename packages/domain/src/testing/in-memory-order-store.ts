@@ -154,6 +154,15 @@ export class InMemoryOrderStore implements OrderStore {
 			quantity: l.quantity,
 			fulfillmentKind: l.fulfillmentKind,
 			reservationId: l.reservationId,
+			...(l.variantId === undefined ? {} : { variantId: l.variantId }),
+			...(l.taxClassId === undefined ? {} : { taxClassId: l.taxClassId }),
+			...(l.priceTaxMode === undefined ? {} : { priceTaxMode: l.priceTaxMode }),
+			...(l.rateBps === undefined ? {} : { rateBps: l.rateBps }),
+			...(l.subtotalNetCents === undefined ? {} : { subtotalNetCents: l.subtotalNetCents }),
+			...(l.netCents === undefined ? {} : { netCents: l.netCents }),
+			...(l.grossCents === undefined ? {} : { grossCents: l.grossCents }),
+			...(l.discountedCents === undefined ? {} : { discountedCents: l.discountedCents }),
+			...(l.taxCents === undefined ? {} : { taxCents: l.taxCents }),
 		}));
 		const totals: OrderTotals = {
 			orderId,

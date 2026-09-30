@@ -1427,6 +1427,15 @@ export class EmdashOrderStore implements OrderStore {
 			quantity: line.quantity,
 			fulfillmentKind: line.fulfillmentKind,
 			reservationId: line.reservationId,
+			...(line.variantId === undefined ? {} : { variantId: line.variantId }),
+			...(line.taxClassId === undefined ? {} : { taxClassId: line.taxClassId }),
+			...(line.priceTaxMode === undefined ? {} : { priceTaxMode: line.priceTaxMode }),
+			...(line.rateBps === undefined ? {} : { rateBps: line.rateBps }),
+			...(line.subtotalNetCents === undefined ? {} : { subtotalNetCents: line.subtotalNetCents }),
+			...(line.netCents === undefined ? {} : { netCents: line.netCents }),
+			...(line.grossCents === undefined ? {} : { grossCents: line.grossCents }),
+			...(line.discountedCents === undefined ? {} : { discountedCents: line.discountedCents }),
+			...(line.taxCents === undefined ? {} : { taxCents: line.taxCents }),
 		}));
 		// The CREATE use-case's predicate, unfiltered by fulfillment kind: it is the id
 		// list `createOrderFromCart` hands to `adoptMany` immediately after this write,
@@ -2755,6 +2764,15 @@ function toOrder(doc: OrderDoc): Order {
 		quantity: item.quantity,
 		fulfillmentKind: item.fulfillmentKind,
 		reservationId: item.reservationId,
+		...(item.variantId === undefined ? {} : { variantId: item.variantId }),
+		...(item.taxClassId === undefined ? {} : { taxClassId: item.taxClassId }),
+		...(item.priceTaxMode === undefined ? {} : { priceTaxMode: item.priceTaxMode }),
+		...(item.rateBps === undefined ? {} : { rateBps: item.rateBps }),
+		...(item.subtotalNetCents === undefined ? {} : { subtotalNetCents: item.subtotalNetCents }),
+		...(item.netCents === undefined ? {} : { netCents: item.netCents }),
+		...(item.grossCents === undefined ? {} : { grossCents: item.grossCents }),
+		...(item.discountedCents === undefined ? {} : { discountedCents: item.discountedCents }),
+		...(item.taxCents === undefined ? {} : { taxCents: item.taxCents }),
 	}));
 	return {
 		id: orderId,

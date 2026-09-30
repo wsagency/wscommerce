@@ -224,7 +224,10 @@ export const ORDER_COLLECTIONS: Readonly<Record<string, OrderCollectionIndexDecl
  * what makes "no code path ever updates a snapshot" checkable by the compiler
  * rather than by review.
  */
-export interface OrderItemDoc {
+export interface OrderItemDoc extends Readonly<
+	Partial<import("@otta-sh/domain").TotalsLineBreakdown>
+> {
+	readonly variantId?: string | null;
 	readonly id: string;
 	readonly productId: ProductId;
 	readonly sku: Sku;

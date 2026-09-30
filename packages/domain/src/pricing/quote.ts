@@ -20,23 +20,30 @@ export interface QuoteCommand {
 	currency: Currency;
 	lines: ReadonlyArray<TotalsLineInput>;
 	/**
-	 * Whether any line ships (ADR-0021 Decision 5). A digital-only cart ignores
-	 * the destination entirely — it is never priced by it and never refused on
-	 * zone grounds — and refuses a shipping method.
+	 * Whether any line ships. A digital-only cart ignores the delivery
+	 * destination and refuses a shipping method; an explicit taxDestination
+	 * still resolves its tax jurisdiction (ADR-0027).
 	 */
 	requiresShipping: boolean;
 	/**
-	 * Where the order ships. The zone — and so the tax — is DERIVED from it;
-	 * there is deliberately no way to pass a zone (ADR-0021 Decision 1).
+	 * Where the order ships. Its delivery zone is DERIVED from it; there is
+	 * deliberately no way to pass a zone (ADR-0021 Decision 1). It also supplies
+	 * the tax jurisdiction when taxDestination is absent.
 	 * Validated here with the same rules as the order's address.
 	 */
 	destination?: { country: string; region?: string | null };
+	/** Billing jurisdiction, independent of delivery, including digital orders.
+	 * Absent preserves physical shipping-based tax and historical digital behavior. */
+	taxDestination?: { country: string; region?: string | null };
 	/** The selected shipping method; absent ⇒ zero shipping (no method chosen). */
 	methodId?: string;
 	couponCode?: string;
 }
 
 export type QuoteFailure =
+	| "INVALID_TAX_DESTINATION"
+	| "TAX_REGION_CODE_REQUIRED"
+	| "TAX_DESTINATION_NOT_MATCHED"
 	/** The destination's country is not an ISO 3166-1 alpha-2 code. */
 	| "INVALID_SHIPPING_ADDRESS"
 	/** The destination's region is not a real subdivision code of its country,
@@ -60,9 +67,10 @@ export type QuoteResult =
 			ok: true;
 			breakdown: TotalsBreakdown;
 			couponRecord: CouponRecord | null;
-			/** How the zone was resolved — `matched` names the zone that priced
-			 *  the shipping and the tax. */
+			/** How the delivery zone was resolved — `matched` names the zone
+			 *  that priced shipping. Tax uses taxDestination independently. */
 			destination: ZoneResolution;
+			taxDestination: ZoneResolution;
 	  }
 	| { ok: false; reason: QuoteFailure };
 
@@ -91,8 +99,11 @@ export async function computeQuote(deps: QuoteDeps, command: QuoteCommand): Prom
 		destination = { country, region: region.code };
 	}
 
-	// 2. The zone. A digital-only cart needs none, so it reads none.
-	const zones = command.requiresShipping ? await deps.shippingRules.listZones() : [];
+	// 2. Delivery and tax zones, independently derived from their addresses.
+	const zones =
+		command.requiresShipping || command.taxDestination !== undefined
+			? await deps.shippingRules.listZones()
+			: [];
 	const resolution = resolveShippingZone(zones, {
 		requiresShipping: command.requiresShipping,
 		...(destination !== undefined ? { destination } : {}),
@@ -102,6 +113,22 @@ export async function computeQuote(deps: QuoteDeps, command: QuoteCommand): Prom
 		return { ok: false, reason: "SHIPPING_REGION_CODE_REQUIRED" };
 	}
 	const zoneId = resolution.status === "matched" ? resolution.zoneId : null;
+	let taxResolution: ZoneResolution = resolution;
+	if (command.taxDestination !== undefined) {
+		const country = normalizeCountryCode(command.taxDestination.country);
+		if (country === null) return { ok: false, reason: "INVALID_TAX_DESTINATION" };
+		const region = normalizeSubdivision(country, command.taxDestination.region);
+		if (!region.ok) return { ok: false, reason: "TAX_REGION_CODE_REQUIRED" };
+		taxResolution = resolveShippingZone(zones, {
+			requiresShipping: true,
+			destination: { country, region: region.code },
+		});
+		if (taxResolution.status === "unmatched")
+			return { ok: false, reason: "TAX_DESTINATION_NOT_MATCHED" };
+		if (taxResolution.status === "region_code_required")
+			return { ok: false, reason: "TAX_REGION_CODE_REQUIRED" };
+	}
+	const taxZoneId = taxResolution.status === "matched" ? taxResolution.zoneId : null;
 
 	// 3–4. The method, which must belong to the matched zone, and its rate;
 	//    absent ⇒ the zero-shipping synthetic method (no method chosen — the
@@ -143,8 +170,8 @@ export async function computeQuote(deps: QuoteDeps, command: QuoteCommand): Prom
 	const taxRatesByClass: Record<string, number> = {};
 	let shippingTaxable = false;
 	let shippingTaxClassId = "standard";
-	if (zoneId !== null) {
-		const zoneRates = await deps.taxRules.listRatesForZone(zoneId);
+	if (taxZoneId !== null) {
+		const zoneRates = await deps.taxRules.listRatesForZone(taxZoneId);
 		for (const r of zoneRates) {
 			taxRatesByClass[r.taxClassId] = r.rateBps;
 			if (r.appliesToShipping) {
@@ -183,7 +210,13 @@ export async function computeQuote(deps: QuoteDeps, command: QuoteCommand): Prom
 		...(coupon !== undefined ? { coupon } : {}),
 		rules,
 	});
-	return { ok: true, breakdown, couponRecord, destination: resolution };
+	return {
+		ok: true,
+		breakdown,
+		couponRecord,
+		destination: resolution,
+		taxDestination: taxResolution,
+	};
 }
 
 /** Convenience: subtotal of a line set (integer minor units). */

@@ -105,6 +105,30 @@ afterEach(async () => {
 	mounted = null;
 });
 
+test("changing only price tax mode enables Save and forwards the chosen policy", async () => {
+	const container = await mountForWrites(() =>
+		actPayload({ variant: "info", title: "Saved", description: "Price mode updated." }),
+	);
+	const mode = container.querySelector<HTMLSelectElement>('[data-testid="edit-price-tax-mode"]');
+	const save = container.querySelector<HTMLButtonElement>('[data-testid="save-price"]');
+	if (mode === null || save === null) throw new Error("missing pricing controls");
+	mode.value = "inclusive";
+	await React.act(async () => {
+		mode.dispatchEvent(new Event("change", { bubbles: true }));
+	});
+	expect(save.disabled).toBe(false);
+	await fire(save, "click");
+	const sent = apiFetch.mock.calls.map(
+		([, init]) => JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+	);
+	expect(sent).toContainEqual(
+		expect.objectContaining({
+			type: "otta_console_act",
+			value: expect.objectContaining({ priceTaxMode: "inclusive" }),
+		}),
+	);
+});
+
 async function mountDetail(over: Partial<ProductRecord> = {}): Promise<HTMLElement> {
 	apiFetch.mockImplementation(() => Promise.resolve(payload(over)));
 	const node = <ProductDetail productId="p_base" onBack={() => undefined} />;

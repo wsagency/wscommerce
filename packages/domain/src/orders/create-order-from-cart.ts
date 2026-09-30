@@ -29,10 +29,16 @@ import {
 import type { ShippingRulesStore } from "../ports/shipping-rules-store.js";
 import type { TaxRulesStore } from "../ports/tax-rules-store.js";
 import { computeQuote } from "../pricing/quote.js";
+import type { ZoneResolution } from "../pricing/zone-match.js";
 import type { TotalsLineInput } from "../pricing/types.js";
 import type { CreateOrderFailure } from "./errors.js";
-import type { Order, OrderAddress, PaymentMethod } from "./model.js";
-import { normalizeOrderAddress, type OrderAddressInput } from "./order-address.js";
+import type { Order, OrderAddress, OrderBillingAddress, PaymentMethod } from "./model.js";
+import {
+	normalizeOrderAddress,
+	normalizeOrderBillingAddress,
+	type OrderAddressInput,
+	type OrderBillingAddressInput,
+} from "./order-address.js";
 
 /** 15 minutes — the checkout hold TTL (§9 decision 5), configurable. */
 export const DEFAULT_CHECKOUT_TTL_MS = 15 * 60 * 1000;
@@ -61,8 +67,8 @@ export interface CreateOrderCommand {
 	buyerRef: string;
 	paymentMethod: PaymentMethod;
 	// -- Phase 6 checkout inputs -------------------------------------------
-	// There is deliberately NO zone: the shipping/tax zone is derived from
-	// `shippingAddress` (ADR-0021 Decision 1). Nobody can supply one.
+	// There is deliberately NO zone: delivery and tax zones are derived from
+	// the submitted addresses (ADR-0021 / ADR-0027). Nobody can supply one.
 	/** The selected shipping method. Required for a physical cart once the
 	 *  address matched a zone; refused for a digital-only cart. */
 	shippingMethodId?: string;
@@ -74,11 +80,13 @@ export interface CreateOrderCommand {
 	 * The shipping address the checkout submitted (ADR-0009). Validated (shape,
 	 * bounds, ISO codes — ADR-0021) and snapshotted IMMUTABLY onto the order — a
 	 * frozen copy of whatever checkout submitted (the Shopify model), never a
-	 * live pointer to the profile address book. It is the ONLY input to the
-	 * shipping/tax zone. Required for a cart with a physical line when zones
+	 * live pointer to the profile address book. It supplies the delivery zone
+	 * and the tax jurisdiction when billing is absent. Required for a physical cart when zones
 	 * are configured (`MISSING_SHIPPING_ADDRESS`); optional otherwise.
 	 */
 	shippingAddress?: OrderAddressInput;
+	/** Immutable invoice recipient and tax jurisdiction. */
+	billingAddress?: OrderBillingAddressInput | null;
 }
 
 export type CreateOrderFromCartResult =
@@ -198,6 +206,20 @@ export async function createOrderFromCart(
 		shippingAddress = normalized.value;
 	}
 
+	let billingAddress: OrderBillingAddress | null = null;
+	if (command.billingAddress != null) {
+		const normalized = normalizeOrderBillingAddress(command.billingAddress);
+		if (!normalized.ok)
+			return {
+				ok: false,
+				reason:
+					normalized.reason === "REGION_NOT_A_CODE"
+						? "TAX_REGION_CODE_REQUIRED"
+						: "INVALID_BILLING_ADDRESS",
+			};
+		billingAddress = normalized.value;
+	}
+
 	const cart = await deps.cartStore.get(command.cartId);
 	if (cart === null) return { ok: false, reason: "CART_NOT_FOUND" };
 	if (cart.lines.length === 0) return { ok: false, reason: "CART_EMPTY" };
@@ -267,6 +289,7 @@ export async function createOrderFromCart(
 		}
 		lines.push({
 			productId: pc.productId,
+			variantId: unit.variantKey === null ? null : `${pc.productId}:${unit.variantKey}`,
 			sku: brandSku(line.sku),
 			title: unit.title,
 			unitPrice: price.amount,
@@ -281,6 +304,7 @@ export async function createOrderFromCart(
 			unitPriceCents: price.amount,
 			qty: line.qty,
 			taxClassId: pc.taxClass ?? "standard",
+			priceTaxMode: pc.priceTaxMode ?? "exclusive",
 		});
 	}
 
@@ -290,6 +314,7 @@ export async function createOrderFromCart(
 	// derived from the address inside the quote (ADR-0021), so the review and
 	// the order resolve it identically.
 	const requiresShipping = lines.some((line) => line.fulfillmentKind === "physical");
+	const taxAddress = billingAddress ?? shippingAddress;
 	const quote = await computeQuote(
 		{
 			shippingRules: deps.shippingRules,
@@ -301,6 +326,9 @@ export async function createOrderFromCart(
 			currency,
 			lines: totalsLines,
 			requiresShipping,
+			...(taxAddress === null
+				? {}
+				: { taxDestination: { country: taxAddress.country, region: taxAddress.region } }),
 			...(shippingAddress !== null
 				? { destination: { country: shippingAddress.country, region: shippingAddress.region } }
 				: {}),
@@ -309,7 +337,16 @@ export async function createOrderFromCart(
 		},
 	);
 	if (!quote.ok) return { ok: false, reason: quote.reason };
+	if (
+		!requiresShipping &&
+		billingAddress === null &&
+		shippingAddress === null &&
+		(await deps.shippingRules.listZones()).length > 0
+	) {
+		return { ok: false, reason: "MISSING_BILLING_ADDRESS" };
+	}
 	const breakdown = quote.breakdown;
+	for (const [index, line] of lines.entries()) Object.assign(line, breakdown.lineBreakdown[index]);
 	// Completeness is enforced HERE only, never by the read-only quote (a review
 	// may be priced before the buyer has chosen) — and before any redemption or
 	// mint.
@@ -372,6 +409,8 @@ export async function createOrderFromCart(
 			couponRecord: quote.couponRecord,
 			shippingMethodSnapshot,
 			shippingAddress,
+			billingAddress,
+			taxDestination: quote.taxDestination,
 			gateway,
 			onFailure: async () => {
 				if (redemptionId !== null) await deps.couponStore.release(redemptionId);
@@ -434,6 +473,8 @@ interface FinalizeContext {
 	shippingMethodSnapshot: { zoneId: string; methodId: string; matchedRegion: string } | null;
 	/** The validated ship-to snapshot (ADR-0009), or null when none was captured. */
 	shippingAddress: OrderAddress | null;
+	billingAddress: OrderBillingAddress | null;
+	taxDestination: ZoneResolution;
 	gateway: PaymentGateway;
 	/** Release the coupon redemption NOW — the eager, use-case-decided release
 	 *  (RESERVATION_LOST, whose recovery is a new cart + a new key). */
@@ -474,6 +515,7 @@ async function finalizeOrder(
 		// ADR-0009: freeze the ship-to snapshot alongside the order, in the same
 		// guarded insert. A replay re-inserts nothing (idempotency-key conflict).
 		shippingAddress: ctx.shippingAddress,
+		billingAddress: ctx.billingAddress,
 		totals: {
 			subtotal: breakdown.subtotalCents,
 			total: breakdown.totalCents,
@@ -485,7 +527,11 @@ async function finalizeOrder(
 			shippingMethodSnapshot: ctx.shippingMethodSnapshot,
 			taxBreakdown: {
 				lines: breakdown.lineBreakdown,
+				priceTaxMode: breakdown.priceTaxMode,
+				taxDestination: ctx.taxDestination,
+				shippingNetCents: breakdown.shippingNetCents,
 				shippingTaxCents: breakdown.shippingTaxCents,
+				shippingRateBps: breakdown.shippingRateBps,
 			},
 		},
 	});

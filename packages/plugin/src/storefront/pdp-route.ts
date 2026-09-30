@@ -23,6 +23,8 @@
  * the PLP proves at scale.
  */
 import { isRetryableStorageBusy } from "@otta-sh/store-emdash";
+import { formatMoney } from "../presentation/format-money.js";
+import { cents, currency } from "../presentation/money.js";
 import { makeCommerceClient } from "../commerce/make-commerce-client.js";
 import { CommerceBatchLoader } from "../catalog/commerce-batch-loader.js";
 import { parseCommerceBatchItem } from "../catalog/commerce-view.js";
@@ -38,6 +40,8 @@ import { parseCmsProductContent, sanitizeLocale } from "./route-input.js";
 export const STOREFRONT_PRODUCT_ROUTE = "storefront/product";
 
 export interface PdpRouteInput {
+	/** Selected sellable SKU from the visible product/variant choice. */
+	sku?: unknown;
 	/** The tier-① CMS product content (validated here — the route is public). */
 	content?: unknown;
 	/** BCP-47 tag for price formatting; garbage falls back, never fails. */
@@ -56,6 +60,7 @@ export type PdpRouteResult =
 			cartHoldMinutes: number;
 	  }
 	| { ok: false; error: "INVALID_CONTENT" }
+	| { ok: false; error: "INVALID_VARIANT" }
 	| RenderGuardFailure;
 
 /**
@@ -138,17 +143,75 @@ export function createPdpRouteHandler(): RouteHandler<PdpRouteInput> {
 			const locale = sanitizeLocale(routeCtx.input.locale);
 
 			const client = await makeCommerceClient(ctx);
-			const [commerce, cartHoldMinutes] = await Promise.all([
+			const [commerce, cartHoldMinutes, rawProduct, variants] = await Promise.all([
 				commerceLoaderFor(client).load(content.id),
 				client.getCartHoldTtlMinutes(),
+				client.getProductCommerce(content.id),
+				client.listProductVariants(content.id),
 			]);
 			// null covers unsynced / soft-deleted / batch-omitted identically
 			// (§4.2): the page renders not-purchasable instead of 500ing.
-			const joined = joinProduct(content, commerce);
+			const live = rawProduct?.active === true && rawProduct.deletedAt === null;
+			const availableVariants = live
+				? variants.filter((v) => v.sku !== null && v.price !== null)
+				: [];
+			const selectedSku = routeCtx.input.sku;
+			if (
+				selectedSku !== undefined &&
+				(typeof selectedSku !== "string" || selectedSku.length === 0)
+			) {
+				return { ok: false, error: "INVALID_VARIANT" } as const;
+			}
+			const selectedVariant =
+				selectedSku === undefined
+					? commerce === null
+						? availableVariants[0]
+						: undefined
+					: availableVariants.find((v) => v.sku === selectedSku);
+			if (
+				selectedSku !== undefined &&
+				selectedVariant === undefined &&
+				selectedSku !== commerce?.sku
+			) {
+				return { ok: false, error: "INVALID_VARIANT" } as const;
+			}
+			const selectedCommerce =
+				selectedVariant?.sku != null && selectedVariant.price !== null
+					? parseCommerceBatchItem({
+							productId: content.id,
+							sku: selectedVariant.sku,
+							price: selectedVariant.price,
+							active: true,
+							inStock: rawProduct?.productKind === "digital" || selectedVariant.inStock,
+						})
+					: commerce;
+			if (selectedCommerce !== null && rawProduct?.productKind === "digital")
+				selectedCommerce.inStock = true;
+			const joined = joinProduct(content, selectedCommerce);
+			const product = buildProductViewModel(joined, locale);
+			if (availableVariants.length > 0) {
+				product.selectedVariantId =
+					selectedVariant === undefined ? null : `${content.id}:${selectedVariant.variantKey}`;
+				product.variants = availableVariants.map((v) => ({
+					id: `${content.id}:${v.variantKey}`,
+					sku: v.sku!,
+					title: v.title ?? v.variantKey,
+					price: {
+						amount: v.price!.amount,
+						currency: v.price!.currency,
+						formatted: formatMoney(cents(v.price!.amount), currency(v.price!.currency), locale),
+					},
+					availability:
+						rawProduct?.productKind === "digital" || v.inStock ? "in_stock" : "out_of_stock",
+					selected: v.sku === product.sku,
+				}));
+				if (commerce !== null) product.baseOption = { sku: commerce.sku, title: content.title };
+			}
+			if (rawProduct?.priceTaxMode !== undefined) product.priceTaxMode = rawProduct.priceTaxMode;
 
 			return {
 				ok: true as const,
-				product: buildProductViewModel(joined, locale),
+				product,
 				jsonLd: buildProductJsonLd(joined),
 				cartHoldMinutes,
 			};

@@ -53,6 +53,7 @@ export async function upsertProductCommerce(
 	key: IdempotencyKey,
 	initialOnHand?: number,
 ): Promise<ProductCommerce> {
+	validatePriceTaxMode(input.priceTaxMode);
 	const row = await deps.productCommerce.upsert(input, key);
 
 	// Seed against the RETURNED row's sku, never the input's. The returned row is
@@ -170,6 +171,7 @@ export async function updateProductCommerceFields(
 	key: IdempotencyKey,
 	expectedUpdatedAt: string,
 ): Promise<ProductCommerceUpdateResult> {
+	validatePriceTaxMode(input.priceTaxMode);
 	if (input.price !== undefined && input.price.amount <= 0) {
 		throw new InvalidProductFieldError("price", "price must be greater than zero");
 	}
@@ -346,4 +348,10 @@ export async function deactivateProductVariant(
 	contentUpdatedAt: string,
 ): Promise<void> {
 	return store.deactivateVariant(productId, variantKey, key, contentUpdatedAt);
+}
+
+function validatePriceTaxMode(mode: unknown): void {
+	if (mode !== undefined && mode !== "exclusive" && mode !== "inclusive") {
+		throw new InvalidProductFieldError("priceTaxMode", "must be exclusive or inclusive");
+	}
 }

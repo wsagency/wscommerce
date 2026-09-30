@@ -1,3 +1,4 @@
+import type { TotalsLineBreakdown } from "../pricing/types.js";
 import type { Cents, Currency } from "../money/cents.js";
 import type { RefundProviderStatus } from "./payment-gateway.js";
 import type {
@@ -494,7 +495,9 @@ export interface OutboxEmail {
 
 /** A line to snapshot into `order_items` — price + title already resolved from
  *  `product_commerce` by the use-case (insert-once). */
-export interface CreateOrderLineInput {
+export interface CreateOrderLineInput extends Partial<TotalsLineBreakdown> {
+	/** Immutable product/variant key; absent on historical orders. */
+	variantId?: string | null;
 	productId: ProductId;
 	sku: Sku;
 	title: string;

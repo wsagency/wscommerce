@@ -43,6 +43,7 @@ export interface ProductSummaryWire {
  *  read (`onHand`) the detail leaf fetches for the ONE product opened; the
  *  list gets the same field from its per-page join instead. */
 export interface ProductDetailWire {
+	priceTaxMode?: "exclusive" | "inclusive";
 	productId: string;
 	sku: string | null;
 	title: string | null;
@@ -136,6 +137,7 @@ export interface ProductsListResult {
  *  publish gate is not edited here) and NO `title` (CMS-owned, written only by
  *  the content sync — `adr/0013-product-title-is-cms-owned.md`). */
 export interface ProductEditWire {
+	priceTaxMode?: "exclusive" | "inclusive";
 	expectedUpdatedAt: string;
 	sku?: string;
 	price?: { amount: number; currency: string };

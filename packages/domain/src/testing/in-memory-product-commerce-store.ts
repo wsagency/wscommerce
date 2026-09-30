@@ -242,6 +242,7 @@ export class InMemoryProductCommerceStore implements ProductCommerceStore {
 				...existing,
 				sku: input.sku !== undefined ? input.sku : existing.sku,
 				price: input.price !== undefined ? input.price : existing.price,
+				...(input.priceTaxMode === undefined ? {} : { priceTaxMode: input.priceTaxMode }),
 				title: input.title !== undefined ? input.title : existing.title,
 				taxClass: input.taxClass !== undefined ? input.taxClass : existing.taxClass,
 				weightGrams: input.weightGrams !== undefined ? input.weightGrams : existing.weightGrams,
@@ -264,6 +265,7 @@ export class InMemoryProductCommerceStore implements ProductCommerceStore {
 			productId: input.productId,
 			sku: input.sku ?? null,
 			price: input.price ?? null,
+			...(input.priceTaxMode === undefined ? {} : { priceTaxMode: input.priceTaxMode }),
 			title: input.title ?? null,
 			taxClass: input.taxClass ?? null,
 			// compare-at / cost / inventory-policy are EDIT-ONLY (set via
@@ -388,6 +390,7 @@ export class InMemoryProductCommerceStore implements ProductCommerceStore {
 			...existing,
 			sku: input.sku !== undefined ? input.sku : existing.sku,
 			price: input.price !== undefined ? input.price : existing.price,
+			...(input.priceTaxMode === undefined ? {} : { priceTaxMode: input.priceTaxMode }),
 			// `title` is ABSENT from the edit input by design — the CMS content sync
 			// is its sole writer (ADR-0013), so an edit always preserves it.
 			taxClass: input.taxClass !== undefined ? input.taxClass : existing.taxClass,

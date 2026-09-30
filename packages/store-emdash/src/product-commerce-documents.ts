@@ -220,6 +220,7 @@ export interface ProductVariantDoc {
  * the indexed lifecycle discriminator.
  */
 export interface ProductCommerceDoc {
+	priceTaxMode?: import("@otta-sh/domain").PriceTaxMode;
 	/** INDEXED — the document id, repeated as a field so a batch can be read with `in`. */
 	productId: ProductId;
 	/** INDEXED. See {@link ProductLifecycle}. */
@@ -433,6 +434,7 @@ export function toProductCommerce(doc: ProductCommerceDoc): ProductCommerce {
 		productId: doc.productId,
 		sku: doc.sku,
 		price: doc.price,
+		...(doc.priceTaxMode === undefined ? {} : { priceTaxMode: doc.priceTaxMode }),
 		title: doc.title,
 		taxClass: doc.taxClass,
 		compareAtPrice: doc.compareAtPrice,

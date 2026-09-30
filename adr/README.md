@@ -62,6 +62,8 @@ than rewriting history.
 
 - [0024. Frozen adoption and durable movement replay witnesses](./0024-inventory-replay-witnesses-are-durable.md) — accepted, supersedes ADR-0019's movement eviction residual and periodic-healer assumption; checkout guards the persisted SKU/quantity in its adoption CAS, and every movement persists evicted results before dropping their inventory witnesses. Legacy unknown outcomes require reconciliation.
 
+- [0027. Retail prices and tax proof are frozen at checkout](./0027-retail-prices-and-frozen-tax-proof.md) — accepted, amends ADR-0021's shipping-only tax jurisdiction and digital tax exemption; product-level inclusive pricing remains integer based, billing selects tax independently of delivery, and new orders freeze line/shipping proof and the immutable variant key. Historical proof stays unknown.
+
 ## Queued (to promote from the private draft plans)
 
 Decisions already made that should each become an ADR:

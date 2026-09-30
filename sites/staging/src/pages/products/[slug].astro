@@ -124,7 +124,7 @@ const result =
 		? await dispatchOttaRoute<PdpRouteResult>(
 				getPublicPluginApiRouteHandler(Astro.locals),
 				STOREFRONT_PRODUCT_ROUTE,
-				{ content },
+				{ content, ...(Astro.url.searchParams.get("sku") === null ? {} : { sku: Astro.url.searchParams.get("sku") }) },
 				Astro.url,
 			)
 		: null;
@@ -286,6 +286,18 @@ const soldOut = product?.availability === "out_of_stock";
 									)}
 								</div>
 
+								{product.variants && product.variants.length > 0 && (
+									<form method="GET" action={Astro.url.pathname} class="variant-choice">
+										<label for="product-variant">Choose a variant</label>
+										<select id="product-variant" name="sku">
+											{product.baseOption && <option value={product.baseOption.sku} selected={product.selectedVariantId === null}>{product.baseOption.title}</option>}
+											{product.variants.map((variant) => <option value={variant.sku} selected={variant.selected}>{variant.title} — {variant.price.formatted}{variant.availability === "out_of_stock" ? " (Sold out)" : ""}</option>)}
+										</select>
+										<button class="u-btn u-btn-ghost" type="submit">Choose variant</button>
+									</form>
+								)}
+								{product.priceTaxMode === "inclusive" && <p class="u-label">Price includes applicable VAT.</p>}
+
 								{addToCart && inStock && (
 									<div class="buy-block">
 										<form class="buy" method="POST" action="/cart/add">
@@ -369,6 +381,8 @@ const soldOut = product?.availability === "out_of_stock";
 </Base>
 
 <style>
+	.variant-choice { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-block: 1rem; }
+	.variant-choice select { font: inherit; color: inherit; background: var(--bg, transparent); padding: 0.5rem; max-inline-size: 100%; }
 	/* §8: media left (~4/5), the decision on the right. */
 	.pdp {
 		display: grid;

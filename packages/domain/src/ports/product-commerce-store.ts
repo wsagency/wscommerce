@@ -1,3 +1,4 @@
+import type { PriceTaxMode } from "../pricing/types.js";
 import type { Money } from "../money/cents.js";
 import type { IdempotencyKey, ProductId, Sku } from "../money/ids.js";
 
@@ -250,6 +251,8 @@ export interface UpsertProductCommerceInput {
 	productId: ProductId;
 	sku?: Sku;
 	price?: Money;
+	/** The product and its variants share this catalog price policy; absent is exclusive. */
+	priceTaxMode?: PriceTaxMode;
 	/**
 	 * Product title (Phase 4 §4) — a DERIVED CACHE of the CMS content title, and
 	 * the source an order line snapshots at purchase time.
@@ -327,6 +330,8 @@ export interface UpdateProductCommerceFieldsInput {
 	 */
 	sku?: Sku;
 	price?: Money;
+	/** The product and its variants share this catalog price policy; absent is exclusive. */
+	priceTaxMode?: PriceTaxMode;
 	taxClass?: string | null;
 	/**
 	 * Optional "compare-at" / was-price (product data-model adds, Increment 2
@@ -403,6 +408,7 @@ export interface ProductCommerce {
 	productId: ProductId;
 	sku: Sku | null;
 	price: Money | null;
+	priceTaxMode?: PriceTaxMode;
 	/** DERIVED CACHE of the CMS content title, with a SINGLE writer — the
 	 *  `content:afterSave`/`content:afterPublish` sync, via `upsert` (Phase 4 §4;
 	 *  `adr/0013-product-title-is-cms-owned.md`). It exists so an order line can

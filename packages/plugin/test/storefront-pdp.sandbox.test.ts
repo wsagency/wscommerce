@@ -123,6 +123,52 @@ async function renderProduct(input: Record<string, unknown>): Promise<Record<str
 }
 
 describe("storefront PDP route (workerd sandbox)", () => {
+	test("a selected live variant supplies its own price, stock and add-to-cart SKU", async () => {
+		const id = "pdp-variant-selection";
+		await seedProduct({ id, sku: "PDP-BASE", amount: 1250, currency: "EUR", onHand: 10 });
+		const commerce = new EmdashProductCommerceStore({ storage, clock: systemClock });
+		const inventory = new EmdashInventoryStore({ storage, idGen: uuidIdGen, clock: systemClock });
+		await commerce.upsertVariant(
+			{
+				productId: toProductId(id),
+				variantKey: "large",
+				title: "Large",
+				contentUpdatedAt: PUBLISHED_AT,
+			},
+			idempotencyKey("pdp-declare-large"),
+		);
+		const variant = (await commerce.listVariants(toProductId(id)))[0]!;
+		await commerce.updateVariantFields(
+			{
+				productId: toProductId(id),
+				variantKey: "large",
+				sku: toSku("PDP-LARGE"),
+				price: { amount: cents(2500), currency: currency("EUR") },
+			},
+			idempotencyKey("pdp-price-large"),
+			variant.updatedAt.toISOString(),
+		);
+		await inventory.seedOnHand(toSku("PDP-LARGE"), 2);
+		const response = await renderProduct({
+			content: { ...CONTENT, id },
+			sku: "PDP-LARGE",
+			locale: "en",
+		});
+		expect(response).toMatchObject({
+			ok: true,
+			product: {
+				sku: "PDP-LARGE",
+				price: { amount: 2500, currency: "EUR" },
+				availability: "in_stock",
+				selectedVariantId: `${id}:large`,
+				variants: [{ id: `${id}:large`, sku: "PDP-LARGE", title: "Large", selected: true }],
+				slots: { addToCart: { productId: id, sku: "PDP-LARGE" } },
+			},
+		});
+		expect(
+			await renderProduct({ content: { ...CONTENT, id }, sku: "PDP-NOT-A-VARIANT" }),
+		).toMatchObject({ ok: false, error: "INVALID_VARIANT" });
+	});
 	test("rendering the PDP for a product with a commerce record joins content+commerce and emits Product+Offer JSON-LD", async () => {
 		await seedProduct({
 			id: CONTENT.id,

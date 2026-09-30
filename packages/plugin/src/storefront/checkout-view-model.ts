@@ -237,7 +237,8 @@ export function orderTotalsFlags(
 ): Pick<CheckoutTotalsOptions, "shippingSelected" | "taxZoneSelected"> {
 	return {
 		shippingSelected: totals.shippingMethodId !== null,
-		taxZoneSelected: totals.shippingZoneId !== null,
+		taxZoneSelected:
+			(totals.taxZoneId === undefined ? totals.shippingZoneId : totals.taxZoneId) !== null,
 	};
 }
 
@@ -309,6 +310,9 @@ export type SelectionField = "coupon" | "shippingMethod" | "destination";
  * the destination.
  */
 const SELECTION_FIELD: Record<QuoteFailureReason, SelectionField | null> = {
+	INVALID_TAX_DESTINATION: "destination",
+	TAX_REGION_CODE_REQUIRED: "destination",
+	TAX_DESTINATION_NOT_MATCHED: "destination",
 	COUPON_NOT_FOUND: "coupon",
 	COUPON_NOT_ACTIVE: "coupon",
 	COUPON_MIN_SUBTOTAL: "coupon",

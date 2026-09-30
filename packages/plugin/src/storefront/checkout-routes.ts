@@ -454,7 +454,7 @@ export function createCheckoutSummaryRouteHandler(): RouteHandler<CheckoutSummar
 					// Shipping was calculated iff a method was priced (a free-threshold
 					// method is a COMPUTED zero); tax iff a zone matched (ADR-0021).
 					shippingSelected: methodSelected,
-					taxZoneSelected: status === "matched",
+					taxZoneSelected: (quote.taxDestination?.status ?? status) === "matched",
 				}),
 				idempotencyKey: checkoutIdempotencyKey(cart.cartId),
 				hasUnpricedLines: !pricing.allLinesPriced,

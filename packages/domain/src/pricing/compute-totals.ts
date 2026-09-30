@@ -2,7 +2,7 @@ import { type Cents, cents } from "../money/cents.js";
 import { allocateCents } from "./allocate.js";
 import { computeCouponDiscount } from "./coupon.js";
 import { resolveShippingRate } from "./shipping.js";
-import { computeLineTax } from "./tax.js";
+import { computeInclusiveNet, computeLineTax } from "./tax.js";
 import type { TotalsBreakdown, TotalsInput, TotalsLineBreakdown } from "./types.js";
 
 /**
@@ -15,9 +15,9 @@ import type { TotalsBreakdown, TotalsInput, TotalsLineBreakdown } from "./types.
  *   (free-shipping threshold vs the DISCOUNTED subtotal) → per-line tax on the
  *   discounted line amount → shipping tax (if the zone taxes shipping) → total.
  *
- * The sum-of-parts identity `subtotal − discount + shipping + tax === total`
- * holds **by construction**: `allocateCents` reconciles the discount across
- * lines exactly, so per-line tax sums back without rounding leftover.
+ * Coupon allocation uses each catalog price's stated mode. Inclusive line VAT
+ * is extracted rather than added. The invoice identity is always
+ * `sum(line.netCents) + shippingNetCents + taxCents === totalCents`.
  */
 export function computeTotals(input: TotalsInput): TotalsBreakdown {
 	const { currency, lines, coupon, rules } = input;
@@ -48,19 +48,45 @@ export function computeTotals(input: TotalsInput): TotalsBreakdown {
 	const lineBreakdown: TotalsLineBreakdown[] = lines.map((l, i) => {
 		const rateBps = rules.taxRatesByClass[l.taxClassId] ?? 0;
 		const discountedCents = discountedLines[i] as Cents;
-		const taxCents = computeLineTax(discountedCents, rateBps);
+		const priceTaxMode = l.priceTaxMode ?? "exclusive";
+		if (priceTaxMode !== "exclusive" && priceTaxMode !== "inclusive") {
+			throw new RangeError("invalid priceTaxMode");
+		}
+		const inclusive = priceTaxMode === "inclusive";
+		const netCents = inclusive ? computeInclusiveNet(discountedCents, rateBps) : discountedCents;
+		const taxCents = inclusive
+			? cents(discountedCents - netCents)
+			: computeLineTax(netCents, rateBps);
+		const grossCents = cents(netCents + taxCents);
+		const subtotalCents = cents(lineSubtotals[i]!);
+		const subtotalNetCents = inclusive
+			? computeInclusiveNet(subtotalCents, rateBps)
+			: subtotalCents;
 		perLineTax += taxCents;
-		return { taxClassId: l.taxClassId, discountedCents, taxCents };
+		return {
+			taxClassId: l.taxClassId,
+			priceTaxMode,
+			rateBps,
+			subtotalNetCents,
+			discountedCents,
+			netCents,
+			grossCents,
+			taxCents,
+		};
 	});
 
 	// 7. Shipping tax (§ case 5).
-	const shippingTax = rules.shippingTaxable
-		? computeLineTax(shipping, rules.taxRatesByClass[rules.shippingTaxClassId] ?? 0)
-		: cents(0);
+	const shippingRateBps = rules.shippingTaxable
+		? (rules.taxRatesByClass[rules.shippingTaxClassId] ?? 0)
+		: 0;
+	const shippingTax = computeLineTax(shipping, shippingRateBps);
 
 	// 8. Tax total, 9. grand total.
 	const tax = cents(perLineTax + shippingTax);
-	const total = cents(discountedTotal + shipping + tax);
+	const total = cents(
+		lineBreakdown.reduce((sum, line) => sum + line.grossCents, 0) + shipping + shippingTax,
+	);
+	const modes = new Set(lineBreakdown.map((line) => line.priceTaxMode));
 
 	const breakdown: TotalsBreakdown = {
 		currency,
@@ -71,6 +97,9 @@ export function computeTotals(input: TotalsInput): TotalsBreakdown {
 		totalCents: total,
 		lineBreakdown,
 		shippingTaxCents: shippingTax,
+		shippingNetCents: shipping,
+		shippingRateBps,
+		priceTaxMode: modes.size > 1 ? "mixed" : (lineBreakdown[0]?.priceTaxMode ?? "exclusive"),
 	};
 	if (coupon !== undefined && discount > 0) {
 		breakdown.appliedCouponCode = coupon.code;

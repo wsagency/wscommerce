@@ -221,6 +221,13 @@ function buildEditWire(
 ): BuildEditResult {
 	const wire: ProductEditWire = { expectedUpdatedAt };
 
+	const mode = readString(values.priceTaxMode);
+	if (mode !== undefined) {
+		if (mode !== "exclusive" && mode !== "inclusive")
+			return { ok: false, message: "Choose whether prices include tax." };
+		wire.priceTaxMode = mode;
+	}
+
 	const sku = readString(values.sku)?.trim();
 	if (sku !== undefined && sku.length > 0) wire.sku = sku;
 
@@ -323,6 +330,7 @@ function deriveEditIdempotencyKey(productId: string, wire: ProductEditWire): str
 		wire.expectedUpdatedAt,
 		wire.sku ?? null,
 		wire.price ?? null,
+		wire.priceTaxMode ?? null,
 		// No `title` component — the wire cannot carry one (ADR-0013).
 		wire.taxClass ?? null,
 		wire.compareAtPrice ?? null,

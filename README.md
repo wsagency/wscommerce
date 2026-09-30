@@ -148,6 +148,14 @@ process, so it verifies the SQL is correct, not that it's race-safe under conten
 
 ## Status
 
+Products default to tax-exclusive prices. **Pricing & inventory** also offers
+“Price includes tax” for retail prices; variants inherit their product's policy.
+Checkout resolves tax from billing, with shipping as the legacy fallback, and
+freezes each line's net, gross, rate and tax alongside the shipping tax proof.
+Existing orders keep their original evidence; missing historic rates are not
+reconstructed. The product page offers a server-rendered variant selector with
+the selected SKU's price and stock. See [ADR-0027](./adr/0027-retail-prices-and-frozen-tax-proof.md).
+
 **v0.0.1 — in active development.** First open-source release. The `@otta-sh/*` packages
 are all at `0.0.1` and are not published to npm yet; consume them from the workspace. Expect
 breaking changes before 1.0.

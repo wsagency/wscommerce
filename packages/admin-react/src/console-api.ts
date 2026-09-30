@@ -322,6 +322,7 @@ export interface ProductSummary {
 }
 
 export interface ProductRecord {
+	readonly priceTaxMode?: "exclusive" | "inclusive";
 	readonly productId: string;
 	readonly sku: string | null;
 	readonly title: string | null;

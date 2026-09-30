@@ -56,6 +56,12 @@ const SELECTION_MESSAGES = {
 >;
 
 const MESSAGES: Record<string, string> = {
+	INVALID_VARIANT: "Choose an available variant of this product.",
+	INVALID_BILLING_ADDRESS: "Please check your billing address.",
+	MISSING_BILLING_ADDRESS: "Enter your billing address to continue.",
+	INVALID_TAX_DESTINATION: "Enter a valid billing country code.",
+	TAX_REGION_CODE_REQUIRED: "Enter a valid billing state or province code.",
+	TAX_DESTINATION_NOT_MATCHED: "This store cannot price tax for your billing address.",
 	OUT_OF_STOCK: "Sorry, that item is out of stock.",
 	CART_NOT_FOUND: "Your cart could not be found — it may have expired.",
 	LINE_NOT_FOUND: "That cart item could not be found — it may have already been removed.",
