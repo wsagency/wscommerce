@@ -66,6 +66,7 @@ describe("mounted Woo REST and durable order webhooks", () => {
 					priceTaxMode: "exclusive",
 					lines: [
 						{
+							taxClassId: "zero-rated",
 							discountedCents: 1500,
 							netCents: 1500,
 							grossCents: 1500,

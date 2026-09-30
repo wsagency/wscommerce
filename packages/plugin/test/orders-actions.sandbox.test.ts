@@ -127,6 +127,7 @@ interface ActOutcome {
 let sandbox: SandboxHandle;
 let storage: StorageAccess;
 let orderStore: EmdashOrderStore;
+let inventory: EmdashInventoryStore;
 let seq = 0;
 
 /** A namespace no other suite writes under. The document store is process-scoped
@@ -136,7 +137,7 @@ const NS = "oa";
 
 beforeAll(async () => {
 	({ storage } = await storageBridge());
-	const inventory = new EmdashInventoryStore({ storage, idGen: uuidIdGen, clock: systemClock });
+	inventory = new EmdashInventoryStore({ storage, idGen: uuidIdGen, clock: systemClock });
 	orderStore = new EmdashOrderStore({ storage, inventory, idGen: uuidIdGen, clock: systemClock });
 	// ONE boot for the file. The isolate holds no per-case state — the commerce
 	// truth lives in the store beside it — so a boot per case would only pay the
@@ -162,6 +163,15 @@ async function seedOrder(
 	seq += 1;
 	const suffix = `${NS}-${String(seq)}`;
 	const id = `order-${suffix}`;
+	const stockSku = toSku(`SKU-${suffix.toUpperCase()}`);
+	let reservationId: string | null = null;
+	if (options.offline === "cod") {
+		await inventory.seedOnHand(stockSku, 5);
+		const held = await inventory.reserve(stockSku, 1, idempotencyKey(`hold-${suffix}`));
+		if (!held.ok) throw new Error("could not reserve the COD fixture stock");
+		reservationId = held.reservationId;
+		expect(await inventory.stampHoldDeadline(reservationId, "2099-01-01T00:00:00.000Z")).toBe(true);
+	}
 	await orderStore.createFromCart({
 		orderId: toOrderId(id),
 		cartId: null,
@@ -191,13 +201,13 @@ async function seedOrder(
 		lines: [
 			{
 				productId: toProductId(`prod-${suffix}`),
-				sku: toSku(`SKU-${suffix.toUpperCase()}`),
+				sku: stockSku,
 				title: "Linen apron",
 				unitPrice: cents(TOTAL_CENTS),
 				currency: currency("USD"),
 				quantity: 1,
 				fulfillmentKind: options.offline === "cod" ? "physical" : "digital",
-				reservationId: null,
+				reservationId,
 			},
 		],
 		totals: { subtotal: cents(TOTAL_CENTS), total: cents(TOTAL_CENTS), currency: currency("USD") },
@@ -341,6 +351,7 @@ describe("the Orders write path (workerd sandbox)", () => {
 		);
 		expect((await readOrder(id)).state).toBe("processing");
 		expect(await orderStore.getCapturedPayments(toOrderId(id))).toHaveLength(1);
+		expect(await inventory.getOnHand((await readOrder(id)).lines[0]!.sku)).toBe(4);
 	});
 
 	test("a transition APPLIES to the persisted order and reports no notice", async () => {

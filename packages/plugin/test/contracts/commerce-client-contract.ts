@@ -2703,6 +2703,8 @@ export function adminOrdersProductsClientContract(tier: CommerceClientTier): voi
 					// order — and never the customer's mutable profile book, which lives
 					// on the customer-context panel.
 					shippingAddress: null,
+					billingAddress: null,
+					offlinePayment: null,
 					totals: {
 						currency: "USD",
 						subtotalCents: 5000,

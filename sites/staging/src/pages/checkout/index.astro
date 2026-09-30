@@ -114,7 +114,7 @@ const { lines, totals } = summary;
 
 /** The plugin offers only store-enabled methods. Card also needs the site's key. */
 const paymentMethods = (summary.paymentMethods ?? [{ id: "stripe", label: "Card" }]).filter(
-	method => method.id !== "stripe" || STRIPE_PUBLISHABLE_KEY !== undefined,
+	choice => choice.id !== "stripe" || STRIPE_PUBLISHABLE_KEY !== undefined,
 );
 
 /** The dead-cart trap's exit, offered only where it applies. */

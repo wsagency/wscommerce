@@ -24,6 +24,7 @@ import {
 } from "../src/payment-secrets.js";
 import type { PluginContext } from "../src/types.js";
 import type { StorageAccess, StorageCollection } from "@otta-sh/store-emdash";
+import { OFFLINE_SETTING_KEYS } from "../src/payments/offline-gateway.js";
 
 /**
  * A document store that EXISTS and is never used. This file is about which
@@ -87,7 +88,7 @@ function makeCtx(seed: Record<string, string> = {}): {
 }
 
 describe("makeCommerceClient", () => {
-	test("returns the in-process client, reading only the credentials Stripe always needs", async () => {
+	test("returns the in-process client, reading Stripe credentials and offline configuration", async () => {
 		// SEEDED, so a read would be a read of something real: if the composition
 		// root ever starts reaching for a credential it should not, the recorded
 		// key names it.
@@ -106,10 +107,14 @@ describe("makeCommerceClient", () => {
 		// still short-circuits on an unconfigured facilitator URL BEFORE it
 		// touches kv, so neither `EMAIL_API_KEY_KEY` nor
 		// `X402_FACILITATOR_API_KEY_KEY` is read here.
-		expect(kvReads).toEqual([STRIPE_SECRET_KEY_KEY, STRIPE_WEBHOOK_SECRET_KEY]);
+		expect(kvReads).toEqual([
+			STRIPE_SECRET_KEY_KEY,
+			STRIPE_WEBHOOK_SECRET_KEY,
+			...Object.values(OFFLINE_SETTING_KEYS),
+		]);
 	});
 
-	test("the client spans the whole port — 28 methods, none of them a stub's", async () => {
+	test("the client spans the whole port — 29 methods, none of them a stub's", async () => {
 		const { ctx } = makeCtx();
 		const client = await makeCommerceClient(ctx);
 		const methods = [...Object.getOwnPropertyNames(Object.getPrototypeOf(client))].filter(
@@ -117,7 +122,7 @@ describe("makeCommerceClient", () => {
 		);
 		// `typecheck` fails first if the port grows and the client does not, but the
 		// count is asserted here too so a silently-dropped method cannot pass.
-		expect(methods.length).toBe(28);
+		expect(methods.length).toBe(29);
 		for (const name of methods) {
 			expect(typeof (client as unknown as Record<string, unknown>)[name], name).toBe("function");
 		}
