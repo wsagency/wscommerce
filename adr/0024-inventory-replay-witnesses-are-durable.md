@@ -95,3 +95,28 @@ other cancellation fences. Native SQLite and local D1 regressions park a stale
 adoption CAS and reproduce a bank/COD writer dying after cancellation recovery
 closed both brackets. Those cases also drive the actual cart expiry sweep and
 verify that held units return once, without any order post-adoption cleanup.
+
+## Concurrent terminal settlement and integer conservation
+
+The first `reservation_index.terminalState` CAS is the immutable winner of a
+commit/release race. Its caller returns that winner to the settlement path;
+every prune uses it, rather than the losing caller's requested state. A release
+losing to commit cannot return spent units. A commit losing to release reports
+`ReservationCommitLostError`, or the ID in `commitMany.lost`, after completing
+the correct once-only stock return. Batch replays also finish terminal records
+whose inventory prune was interrupted, including released records.
+
+Available units plus all retained holds must fit `Number.MAX_SAFE_INTEGER`.
+The stock CAS checks this total on every attempt, so an absolute target cannot
+pass a stale bound after a concurrent reservation adds a hold. Additions and
+adjustment/release arithmetic are checked before their inventory writes too.
+Overflow throws `RangeError` without changing stock; quantities are never
+rounded or clamped. There is no schema migration. Previously invalid aggregate
+counts require an explicit merchant stock correction before an overflowing
+release can be completed; this change does not guess lost inventory quantities.
+
+Native SQLite and local D1 regressions park terminal and inventory writes to
+exercise both race directions, singular and batch commits, normal and scoped
+releases, interrupted batch completion, and the concurrent absolute-target bound.
+The shared absolute-stock port contract covers exact safe-boundary adjustment
+and release plus overflow rejection with held stock.

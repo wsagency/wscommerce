@@ -321,14 +321,12 @@ describe("(g) a partial commitMany across 3 SKUs [d1]", () => {
 		expect(await onHand(SKUS[1])).toBe(8);
 		expect(await holdCount(SKUS[1])).toBe(1);
 
-		// A REPLAY of the same batch: every already-committed id is a no-op, and the
-		// unreached SKU is finished.
+		// A REPLAY heals terminal-but-unpruned ids and finishes the unreached SKU.
 		expect(await store.commitMany(ids)).toEqual({ lost: [] });
 		expect(await holdCount(SKUS[2])).toBe(0);
 		expect(await onHand(SKUS[2])).toBe(8);
-		// `commitMany` skips an id that is ALREADY terminal, so the singular `commit`
-		// any replayer runs is what completes SKU 2 — exactly once.
-		expect(await holdCount(SKUS[1])).toBe(1);
+		// The replayed batch also completes SKU 2's interrupted prune exactly once.
+		expect(await holdCount(SKUS[1])).toBe(0);
 		await expect(store.commit(id2)).resolves.toBeUndefined();
 		expect(await holdCount(SKUS[1])).toBe(0);
 		await expect(store.commit(id2)).resolves.toBeUndefined();

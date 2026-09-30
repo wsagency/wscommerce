@@ -30,6 +30,9 @@ export interface InventoryStore {
 	// vanished reservation still surfaces as a **500**. Deliberate and out of
 	// scope: the cart failure taxonomy (`CartFailure`) has no "reservation
 	// vanished" member, and adding one is a domain-model change with its own PR.
+	// The first durable terminal state wins any concurrent commit/release. Both
+	// pruning and the result must follow that winner: committed consumes held
+	// units; released returns them exactly once. A losing commit remains loud.
 	commit(reservationId: string): Promise<void>;
 	release(reservationId: string): Promise<void>;
 	// Additive (Phase 4 §5): the single guarded `held → adopted` flip that hands a
@@ -176,6 +179,8 @@ export interface InventoryStore {
 	 * Reusing a key for another SKU, target or stock operation throws
 	 * StockMovementMismatchError. Unknown SKU does not consume the key.
 	 * Negative, fractional or unsafe targets throw RangeError before any write.
+	 * Target + retained held units must also fit Number.MAX_SAFE_INTEGER in the
+	 * same atomic stock write; overflow throws RangeError without moving stock.
 	 */
 	setOnHandAbsolute(sku: Sku, quantity: number, key: IdempotencyKey): Promise<RestockResult>;
 
@@ -241,6 +246,8 @@ export interface InventoryStore {
 	// uniqueness is independent); reuse is only rejected WITHIN a ledger — for the
 	// stock-movements ledger, when the recorded (sku, direction, qty) differs
 	// (`StockMovementMismatchError`).
+	// Available + retained held units + the addition must fit a safe integer;
+	// overflow throws RangeError without moving stock.
 	restock(sku: string, qty: number, key: IdempotencyKey): Promise<RestockResult>;
 
 	// Additive (admin-UX Increment 2, merchant stock removal): REMOVE `qty` units

@@ -98,4 +98,55 @@ export function absoluteStockContract(make: () => InventoryStore): void {
 		}
 		await expect(store.setOnHandAbsolute(item, 0, key)).resolves.toEqual({ ok: true, onHand: 0 });
 	});
+
+	test("an absolute target plus retained holds must fit a safe integer before any stock changes", async () => {
+		const store = make();
+		const item = sku("BOOK");
+		await store.seedOnHand(item, 2);
+		const held = await store.reserve(item, 1, idempotencyKey("hold"));
+		if (!held.ok) throw new Error("the reservation must succeed");
+		await expect(
+			store.setOnHandAbsolute(item, Number.MAX_SAFE_INTEGER, idempotencyKey("unsafe-total")),
+		).rejects.toThrow(RangeError);
+		expect(await store.getOnHand(item)).toBe(1);
+		await store.release(held.reservationId);
+		await store.release(held.reservationId);
+		expect(await store.getOnHand(item)).toBe(2);
+	});
+
+	test("the largest safe target with held units remains exact through adjustment and release", async () => {
+		const store = make();
+		const item = sku("BOOK");
+		await store.seedOnHand(item, 3);
+		const held = await store.reserve(item, 2, idempotencyKey("hold"));
+		if (!held.ok) throw new Error("the reservation must succeed");
+		expect(
+			await store.setOnHandAbsolute(
+				item,
+				Number.MAX_SAFE_INTEGER - 2,
+				idempotencyKey("safe-total"),
+			),
+		).toEqual({ ok: true, onHand: Number.MAX_SAFE_INTEGER - 2 });
+		await store.adjust(held.reservationId, 1, idempotencyKey("decrease"));
+		expect(await store.getOnHand(item)).toBe(Number.MAX_SAFE_INTEGER - 1);
+		await store.release(held.reservationId);
+		await store.release(held.reservationId);
+		expect(await store.getOnHand(item)).toBe(Number.MAX_SAFE_INTEGER);
+		await expect(store.restock(item, 1, idempotencyKey("overflow"))).rejects.toThrow(RangeError);
+		expect(await store.getOnHand(item)).toBe(Number.MAX_SAFE_INTEGER);
+	});
+
+	test("restock also counts retained holds when rejecting an unsafe total", async () => {
+		const store = make();
+		const item = sku("BOOK");
+		await store.seedOnHand(item, 2);
+		const held = await store.reserve(item, 1, idempotencyKey("hold"));
+		if (!held.ok) throw new Error("the reservation must succeed");
+		await expect(
+			store.restock(item, Number.MAX_SAFE_INTEGER - 1, idempotencyKey("unsafe-restock")),
+		).rejects.toThrow(RangeError);
+		expect(await store.getOnHand(item)).toBe(1);
+		await store.release(held.reservationId);
+		expect(await store.getOnHand(item)).toBe(2);
+	});
 }

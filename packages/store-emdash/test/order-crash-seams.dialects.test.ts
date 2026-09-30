@@ -308,7 +308,7 @@ describeEachDialect("order crash seams", (ctx) => {
 		});
 	});
 
-	test("a partial commit is completed by the SINGULAR commit per id, including one already committed", async () => {
+	test("a partial commit completion heals terminal-but-unpruned and unreached reservations", async () => {
 		const skus = [
 			{ sku: "SKU-A", product: "pa" },
 			{ sku: "SKU-B", product: "pb" },
@@ -334,9 +334,8 @@ describeEachDialect("order crash seams", (ctx) => {
 		expect((await orders.get(res.order.id))?.holdsCommitted?.completedAt).toBeNull();
 
 		// Put the FIRST id into the exact state ADR-0019 §2 names: its terminal record
-		// written, its hold NOT yet pruned. That is what `commitMany` skips — and
-		// skipping it leaves the hold live in the aggregate forever, which is why the
-		// completion must drive the singular call. Injected on the PRUNE (the inventory
+		// written, its hold NOT yet pruned. The following batch now heals this
+		// interrupted terminal record before proceeding. Injected on the PRUNE (the inventory
 		// write that follows the terminal record in `reservation_index`).
 		const pruneCrash = failCall(inventory, isUpdateWrite, { mode: "instead" });
 		const prunelessCommit = makeOrderHarness(bound.storage, {
@@ -370,29 +369,24 @@ describeEachDialect("order crash seams", (ctx) => {
 			if (doc === null) throw new Error(`inventory document for ${entry.sku} is missing`);
 			return doc.holds[entry.idempotencyKey]?.reservationId;
 		};
-		// id[0]: terminal-committed, hold STILL LIVE (the unpruned case).
+		// id[0]: the batch healed the interrupted committed terminal record.
 		expect((await index.get(first))?.terminalState).toBe("committed");
-		expect(await holdFor(first)).toBe(first);
+		expect(await holdFor(first)).toBeUndefined();
 		// The batch wrote every terminal record it reached BEFORE pruning (that
-		// ordering is the once-only rule), and its second prune died — so all three
-		// reservations read `committed` while TWO holds are still live in the
-		// aggregates: id[0]'s, which the batch skipped entirely, and the one whose
-		// prune crashed. Live holds over spent units are exactly what a later expiry
-		// path would try to return.
+		// ordering is the once-only rule), and its second prune died. The second
+		// reservation is terminal-but-unpruned; the third is not reached yet.
 		const terminals = await Promise.all(
 			ids.map(async (id) => (await index.get(id))?.terminalState),
 		);
-		expect(terminals).toEqual(["committed", "committed", "committed"]);
+		expect(terminals).toEqual(["committed", "committed", undefined]);
 		const liveBefore = await Promise.all(ids.map((id) => holdFor(id)));
 		expect(liveBefore.filter((held) => held !== undefined)).toHaveLength(2);
 
 		const done = await h.store.completeHoldCommit(res.order.id);
 		expect(done).toEqual({ completed: true, lost: [] });
 		for (const id of ids) expect(await h.reservationState(id)).toBe("committed");
-		// THE assertion that fails if the completion ever re-ran `commitMany`: every
-		// hold is PRUNED. The batch `continue`s an already-committed id without
-		// touching the aggregate, so both live holds above would still be sitting
-		// there — live to every expiry path, over units that are already spent.
+		// Completion heals the remaining terminal record and commits the unreached
+		// hold, so no live entry remains over units that are already spent.
 		for (const id of ids) expect(await holdFor(id)).toBeUndefined();
 		// Committed units stay gone — a completion must never return them.
 		for (const { sku } of skus) expect(await h.onHand(sku)).toBe(4);

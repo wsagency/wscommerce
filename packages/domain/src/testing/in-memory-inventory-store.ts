@@ -41,6 +41,12 @@ export interface InMemoryInventoryStoreOptions {
 	seed?: ReadonlyArray<{ sku: string; onHand: number }>;
 }
 
+function assertSafeQuantity(quantity: number): void {
+	if (!Number.isSafeInteger(quantity) || quantity < 0) {
+		throw new RangeError("Inventory quantity must be a non-negative safe integer");
+	}
+}
+
 /**
  * The IO-free fake — the first `InventoryStore` adapter (Phase 0 step 0.2c).
  *
@@ -172,7 +178,9 @@ export class InMemoryInventoryStore implements InventoryStore {
 			row.qty = newQty;
 		} else if (delta < 0) {
 			// Decrease: unconditional partial release, always succeeds.
-			this.#onHand.set(row.sku, (this.#onHand.get(row.sku) ?? 0) + -delta);
+			const onHand = (this.#onHand.get(row.sku) ?? 0) + -delta;
+			assertSafeQuantity(onHand);
+			this.#onHand.set(row.sku, onHand);
 			row.qty = newQty;
 		}
 		const ok: ReserveResult = { ok: true, reservationId };
@@ -198,8 +206,10 @@ export class InMemoryInventoryStore implements InventoryStore {
 		if (row.state !== "held" && row.state !== "adopted") {
 			throw new Error(`cannot release reservation ${reservationId} in state ${row.state}`);
 		}
+		const onHand = (this.#onHand.get(row.sku) ?? 0) + row.qty;
+		assertSafeQuantity(onHand);
 		row.state = "released";
-		this.#onHand.set(row.sku, (this.#onHand.get(row.sku) ?? 0) + row.qty);
+		this.#onHand.set(row.sku, onHand);
 	}
 
 	/**
@@ -218,8 +228,10 @@ export class InMemoryInventoryStore implements InventoryStore {
 			return;
 		}
 		if (row.state !== "adopted" || row.orderId !== orderId) return;
+		const onHand = (this.#onHand.get(row.sku) ?? 0) + row.qty;
+		assertSafeQuantity(onHand);
 		row.state = "released";
-		this.#onHand.set(row.sku, (this.#onHand.get(row.sku) ?? 0) + row.qty);
+		this.#onHand.set(row.sku, onHand);
 	}
 
 	/**
@@ -362,6 +374,7 @@ export class InMemoryInventoryStore implements InventoryStore {
 		if (!this.#onHand.has(sku)) return { ok: false, reason: "UNKNOWN_SKU" };
 
 		const onHand = (this.#onHand.get(sku) ?? 0) + qty;
+		this.#assertSafeStockTotal(sku, onHand);
 		this.#onHand.set(sku, onHand);
 		const result: RestockResult = { ok: true, onHand };
 		this.#stockMovements.set(key, { sku, direction: "restock", qty, result });
@@ -378,6 +391,7 @@ export class InMemoryInventoryStore implements InventoryStore {
 		const replay = this.#replayStockMovement(key, sku, "absolute", quantity);
 		if (replay !== undefined) return replay as RestockResult;
 		if (!this.#onHand.has(sku)) return { ok: false, reason: "UNKNOWN_SKU" };
+		this.#assertSafeStockTotal(sku, quantity);
 		this.#onHand.set(sku, quantity);
 		const result: RestockResult = { ok: true, onHand: quantity };
 		this.#stockMovements.set(key, { sku, direction: "absolute", qty: quantity, result });
@@ -417,6 +431,20 @@ export class InMemoryInventoryStore implements InventoryStore {
 		const result: StockRemovalResult = { ok: true, onHand };
 		this.#stockMovements.set(key, { sku, direction: "removal", qty, result });
 		return { ...result };
+	}
+
+	#assertSafeStockTotal(sku: string, onHand: number): void {
+		assertSafeQuantity(onHand);
+		let total = onHand;
+		for (const row of this.#reservations.values()) {
+			if (row.sku !== sku || (row.state !== "held" && row.state !== "adopted")) continue;
+			if (row.qty > Number.MAX_SAFE_INTEGER - total) {
+				throw new RangeError(
+					"Inventory available quantity plus held units exceeds the safe integer limit",
+				);
+			}
+			total += row.qty;
+		}
 	}
 
 	/** Shared stock-movement replay resolver: returns the recorded result for a

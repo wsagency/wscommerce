@@ -162,6 +162,26 @@ function assertPositiveInt(value: number, method: string, field: string): void {
 	}
 }
 
+/** Released units must remain exactly representable, even after an absolute target. */
+function assertSafeStockTotal(onHand: number, holds: Readonly<Record<string, HoldEntry>>): void {
+	if (!Number.isSafeInteger(onHand) || onHand < 0) {
+		throw new RangeError("Inventory available quantity must be a non-negative safe integer");
+	}
+	let total = onHand;
+	for (const hold of Object.values(holds)) {
+		if (
+			!Number.isSafeInteger(hold.qty) ||
+			hold.qty <= 0 ||
+			hold.qty > Number.MAX_SAFE_INTEGER - total
+		) {
+			throw new RangeError(
+				"Inventory available quantity plus held units exceeds the safe integer limit",
+			);
+		}
+		total += hold.qty;
+	}
+}
+
 const OUT_OF_STOCK: ReserveResult = { ok: false, reason: "OUT_OF_STOCK" };
 
 /** Rounds `reserve` spends resolving its key document; see the loop's comment. */
@@ -369,8 +389,16 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 		// No hold and no terminal state: the reserve claim was abandoned before its
 		// inventory write. The SQL adapter sees a `pending` row here and raises the
 		// same loud anomaly.
-		if (hold === undefined) throw new ReservationCommitLostError(reservationId, "pending");
-		await this.#settle(index, reservationId, "committed");
+		if (hold === undefined) {
+			// A peer may have completed its terminal write and prune after our
+			// initial index read. Reclassify before reporting an abandoned claim.
+			const settled = await this.#mustIndex(reservationId);
+			await this.#prune(settled.sku, this.#pruneEntries(settled, reservationId), "commit");
+			if (settled.terminalState === "committed") return;
+			throw new ReservationCommitLostError(reservationId, settled.terminalState ?? "pending");
+		}
+		const winner = await this.#settle(index, reservationId, "committed");
+		if (winner !== "committed") throw new ReservationCommitLostError(reservationId, winner);
 	}
 
 	/** The `held|adopted → released` flip plus the stock return. */
@@ -387,9 +415,13 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 		}
 		const hold = await this.#liveHold(index, reservationId);
 		if (hold === undefined) {
-			throw new ReservationNotReleasableError(reservationId, "pending");
+			const settled = await this.#mustIndex(reservationId);
+			await this.#prune(settled.sku, this.#pruneEntries(settled, reservationId), "release");
+			if (settled.terminalState === "released") return;
+			throw new ReservationNotReleasableError(reservationId, settled.terminalState ?? "pending");
 		}
-		await this.#settle(index, reservationId, "released");
+		const winner = await this.#settle(index, reservationId, "released");
+		if (winner !== "released") throw new ReservationNotReleasableError(reservationId, winner);
 	}
 
 	/**
@@ -451,11 +483,6 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 			const index = indexes.get(id);
 			// Truly unknown: never folded into `lost`.
 			if (index === undefined) throw new ReservationNotFoundError(id);
-			if (index.terminalState === "committed") continue; // benign replay
-			if (index.terminalState !== undefined) {
-				lost.push(id); // released / failed ⇒ the COMMIT_LOST anomaly at settle
-				continue;
-			}
 			const group = bySku.get(index.sku) ?? [];
 			group.push({ id, index });
 			bySku.set(index.sku, group);
@@ -464,26 +491,26 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 		for (const [sku, group] of bySku) {
 			const doc = await this.#inventory.get(sku);
 			const holds = doc === null ? {} : normalizeInventoryDoc(doc).holds;
-			const prunable: PruneEntry[] = [];
-			for (const { id, index } of group) {
-				const hold = holds[index.idempotencyKey];
-				if (hold === undefined || hold.reservationId !== id) {
-					lost.push(id); // claim abandoned before its hold ⇒ `pending` at the SQL adapter
-					continue;
-				}
-				prunable.push({
-					reserveKey: index.idempotencyKey,
-					reservationId: id,
-					terminal: "committed",
-				});
-			}
-			if (prunable.length === 0) continue;
-			// The terminal records for EVERY id first, then one prune per SKU.
-			await Promise.all(
-				prunable.map((entry) =>
-					this.#recordTerminal(entry.reserveKey, entry.reservationId, "committed"),
-				),
+			// The terminal records for EVERY id first, then one prune per SKU. A
+			// terminal winner is immutable; the losing command must use that state
+			// for both its outcome and its prune, including interrupted replays.
+			const settled = await Promise.all(
+				group.map(async ({ id, index }) => {
+					if (index.terminalState !== undefined) return { id, index };
+					const hold = holds[index.idempotencyKey];
+					if (hold === undefined || hold.reservationId !== id) {
+						// A peer may already have pruned after our initial index read.
+						return { id, index: await this.#mustIndex(id) };
+					}
+					const winner = await this.#recordTerminal(index.idempotencyKey, id, "committed");
+					return { id, index: { ...index, terminalState: winner } };
+				}),
 			);
+			const prunable: PruneEntry[] = [];
+			for (const { id, index } of settled) {
+				if (index.terminalState !== "committed") lost.push(id);
+				prunable.push(...this.#pruneEntries(index, id));
+			}
 			await this.#prune(sku, prunable, "commitMany");
 		}
 		return { lost };
@@ -769,13 +796,16 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 				return written.applied ? casDone<void>(undefined) : CAS_RETRY;
 			}
 
+			const onHand = doc.onHand - delta;
+			const holds = {
+				...doc.holds,
+				[claim.reserveKey]: { ...hold, qty: claim.toQty, lastMovementKey: key },
+			};
+			assertSafeStockTotal(onHand, holds);
 			const written = await this.#inventory.compareAndSet(claim.sku, current.revision, {
 				...doc,
-				onHand: doc.onHand - delta,
-				holds: {
-					...doc.holds,
-					[claim.reserveKey]: { ...hold, qty: claim.toQty, lastMovementKey: key },
-				},
+				onHand,
+				holds,
 				appliedMovements: await this.#appendMovement(doc, {
 					key,
 					kind: "adjust",
@@ -1060,6 +1090,9 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 					onHand = doc.onHand - claim.qty;
 					moved = { ok: true, onHand };
 				}
+				// Check available + all retained holds in this same revision. A new
+				// reservation forces a retry and a fresh absolute-target bound check.
+				assertSafeStockTotal(onHand, doc.holds);
 
 				const written = await this.#inventory.compareAndSet(claim.sku, current.revision, {
 					...doc,
@@ -1192,13 +1225,14 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 		index: ReservationIndexDoc,
 		reservationId: string,
 		terminal: TerminalReservationState,
-	): Promise<void> {
-		await this.#recordTerminal(index.idempotencyKey, reservationId, terminal);
+	): Promise<TerminalReservationState> {
+		const winner = await this.#recordTerminal(index.idempotencyKey, reservationId, terminal);
 		await this.#prune(
 			index.sku,
-			[{ reserveKey: index.idempotencyKey, reservationId, terminal }],
+			this.#pruneEntries({ ...index, terminalState: winner }, reservationId),
 			terminal === "committed" ? "commit" : "release",
 		);
+		return winner;
 	}
 
 	/** Steps 1 and 2 of the settle: the reserve key's answer, then the terminal state. */
@@ -1206,11 +1240,13 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 		reserveKey: string,
 		reservationId: string,
 		terminal: TerminalReservationState,
-	): Promise<void> {
+	): Promise<TerminalReservationState> {
 		// A hold exists, so the reserve succeeded: that is the answer the key
 		// document must carry once the hold is gone.
 		await this.#markKeyTerminal(reserveKey, { ok: true, reservationId }, reservationId);
-		await this.#setTerminalState(reservationId, terminal);
+		const winner = await this.#setTerminalState(reservationId, terminal);
+		if (winner === undefined) throw new ReservationNotFoundError(reservationId);
+		return winner;
 	}
 
 	/** Move a reservation key document to its terminal outcome. First writer wins. */
@@ -1241,17 +1277,18 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 	async #setTerminalState(
 		reservationId: string,
 		terminal: TerminalReservationState,
-	): Promise<void> {
-		await this.#cas<void>("reservationTerminalState", async () => {
+	): Promise<TerminalReservationState | undefined> {
+		return this.#cas<TerminalReservationState | undefined>("reservationTerminalState", async () => {
 			const current = await this.#index.getVersioned(reservationId);
-			if (current === null || current.value.terminalState !== undefined) {
-				return casDone<void>(undefined);
+			if (current === null) return casDone(undefined);
+			if (current.value.terminalState !== undefined) {
+				return casDone(current.value.terminalState);
 			}
 			const written = await this.#index.compareAndSet(reservationId, current.revision, {
 				...current.value,
 				terminalState: terminal,
 			});
-			return written.applied ? casDone<void>(undefined) : CAS_RETRY;
+			return written.applied ? casDone(terminal) : CAS_RETRY;
 		});
 	}
 
@@ -1279,6 +1316,7 @@ export class EmdashInventoryStore implements InventoryStore, HoldDeadlineStamper
 				changed = true;
 			}
 			if (!changed) return casDone<void>(undefined);
+			assertSafeStockTotal(onHand, holds);
 			const written = await this.#inventory.compareAndSet(sku, current.revision, {
 				...doc,
 				onHand,

@@ -702,15 +702,14 @@ describeEachDialect("EmdashInventoryStore crash seams", (ctx) => {
 			expect(await onHand(SKUS[1])).toBe(8);
 			expect(await holdCount(SKUS[1])).toBe(1);
 
-			// A REPLAY of the same batch: every already-committed id is a no-op, and the
-			// unreached SKU is finished.
+			// A REPLAY of the same batch heals terminal-but-unpruned ids and finishes
+			// the unreached SKU without consuming any units a second time.
 			expect(await store.commitMany(ids)).toEqual({ lost: [] });
 			expect(await holdCount(SKUS[2])).toBe(0);
 			expect(await onHand(SKUS[2])).toBe(8);
-			// `commitMany` skips an id that is ALREADY terminal, so SKU 2's orphaned
-			// prune is not what completes it — the singular `commit` any replayer (and
-			// the order-intent sweeper) runs is, and it completes it exactly once.
-			expect(await holdCount(SKUS[1])).toBe(1);
+			// The batch itself completed SKU 2's interrupted prune. Singular replay
+			// now has no remaining work, and remains harmless on repetition.
+			expect(await holdCount(SKUS[1])).toBe(0);
 			await expect(store.commit(id2)).resolves.toBeUndefined();
 			expect(await holdCount(SKUS[1])).toBe(0);
 			await expect(store.commit(id2)).resolves.toBeUndefined();
