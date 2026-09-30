@@ -1412,27 +1412,32 @@ crowd: 50 racers, a 24-attempt ceiling, and nobody retries at all.
 
 ## Contention budget
 
-R2 has no structural fix — the aggregate is written by read-modify-write, so a hot
-SKU retries — which makes the measured retry depth a **permanent** budget rather
-than an interim number. `test/inventory-crash-seams.dialects.test.ts` exports
-`CAS_ATTEMPT_BUDGET` and asserts it on Postgres:
+The SKU aggregate is written by read-modify-write, so a hot SKU retries within a
+**permanent bounded budget**. `CAS_MAX_ATTEMPTS` remains 24; the inventory race suite
+independently pins that value so a ceiling change requires an explicit test update.
 
-**Contention budget: measured max CAS attempts M=5/N=50 (20 loops) → 5–6,
-M=1/N=100 → 2; budget asserted at 8 (< `CAS_MAX_ATTEMPTS` = 24).**
+The old measurements of 5–6 attempts for M5/N50 and 2 for M1/N100 preceded durable
+failed-reserve witnesses. A reserve that already claimed its key now records its
+failed decision in the SKU aggregate before promoting the terminal receipt. This
+prevents a same-key success from racing the failure and losing stock. Failed claimed
+reserves therefore contend even after stock reaches zero: depth depends on the
+claimed crowd, not only the number of units.
 
-**`CAS_MAX_ATTEMPTS` is 24, and it was 12.** The ceiling has to cover the WORSE of the
-two document bounds, and the refunds increment showed that it did not. The inventory
-bound is the units: at most M writes succeed before the guard turns every remaining
-caller into a clean `OUT_OF_STOCK`, so depth tracks M. The ORDER-document bound is
-money movements, and it is roughly `2 × (refunds that fit) + 1` — each gateway refund
-writes twice (reserve, then finalize) and the ceiling-reaching one folds the
-`→ refunded` flip into its second write — so a 1,000-cent ceiling refunded 100 at a
-time is 21 peer writes on one document. The extra attempts only buy jittered backoff
-(capped at `CAS_MAX_DELAY_MS` = 50 ms per sleep) on a path that would otherwise raise
-`StorageContentionError`; no invariant depends on the number, and every per-shape
-assertion bounds the measured depth AT or BELOW the constant, so raising it cannot
-turn a failing shape green. The one hand-set budget, `CAS_ATTEMPT_BUDGET` = 8, is
-unchanged.
+Before updating the stale assertion, PostgreSQL 16 measured **15 / 13 attempts in
+GitHub CI and 18 / 23 locally** for M5/N50 (20 loops) / M1/N100 (one loop). These are
+observations, not promises of a maximum below 24 on another machine. The race checks
+the hard ceiling, every command outcome, original-key recovery of typed busy refusals,
+stable replay, unique winning holds and exact stock conservation. A crowded SKU may
+return retryable `StorageContentionError`; it must not report a contention failure as
+`OUT_OF_STOCK` or silently drop a command. Retry with the original idempotency key.
+
+The ORDER-document bound includes money movements: each gateway refund writes twice
+(reserve, then finalize), and the ceiling-reaching one folds the `→ refunded` flip
+into its second write. Ten partial refunds can create 21 peer writes on one document.
+The jittered backoff is capped at `CAS_MAX_DELAY_MS` = 50 ms per sleep. No financial
+or stock invariant depends on increasing the ceiling; production retry behavior was
+unchanged by correcting the inventory test contract. Coupon tests retain their own
+separate hand-set budget of 8.
 
 The ORDER races measure the same budget on a different shape, and one of them sits
 closer to the ceiling: single-line checkout (M=5, N=40, 8 loops) → **6–7**, and
